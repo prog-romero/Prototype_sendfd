@@ -1,0 +1,1 @@
+/usr/bin/cc  -Wall -Wextra -O2 -g CMakeFiles/test_tlspeek.dir/test/test_tlspeek.c.o -o test_tlspeek  -Wl,-rpath,/usr/local/lib libtlspeek.a /usr/local/lib/libwolfssl.so.44.0.1 

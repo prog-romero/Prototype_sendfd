@@ -1,0 +1,2 @@
+/usr/bin/ar qc libtlspeek.a CMakeFiles/tlspeek.dir/lib/tlspeek.c.o CMakeFiles/tlspeek.dir/lib/tlspeek_crypto.c.o CMakeFiles/tlspeek.dir/lib/tlspeek_serial.c.o CMakeFiles/tlspeek.dir/common/sendfd.c.o CMakeFiles/tlspeek.dir/common/unix_socket.c.o
+/usr/bin/ranlib libtlspeek.a
