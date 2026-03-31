@@ -1,0 +1,8 @@
+Mode,Connections,RPS,AvgLatency_ms,P99Latency_ms
+nginx_proxy,50,1934.35,44.29,313.56
+nginx_proxy,100,2941.22,48.09,250.29
+nginx_proxy,300,4149.00,76.83,258.40
+nginx_proxy,500,3898.91,129.58,431.44
+nginx_proxy,700,3652.92,196.40,718.56
+nginx_proxy,900,4109.85,216.64,696.22
+nginx_proxy,1000,3292.96,269.06,767.71

@@ -1,1 +1,1 @@
-/usr/bin/cc  -Wall -Wextra -O2 -g CMakeFiles/gateway.dir/gateway/gateway.c.o CMakeFiles/gateway.dir/gateway/router.c.o -o gateway  -Wl,-rpath,/usr/local/lib libtlspeek.a /usr/local/lib/libwolfssl.so.44.0.1 -lpthread 
+/usr/bin/cc -O3 -DQUIET -Wall -Wextra -O2 -g CMakeFiles/gateway.dir/gateway/gateway.c.o CMakeFiles/gateway.dir/gateway/router.c.o -o gateway  -Wl,-rpath,/usr/local/lib libtlspeek.a /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/src/.libs/libwolfssl.so -lpthread 

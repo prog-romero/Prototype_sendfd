@@ -1,0 +1,8 @@
+Mode,Connections,RPS,AvgLatency_ms,P99Latency_ms
+hotpotato,50,67.87,12.35,144.16
+hotpotato,100,47.87,11.44,75.93
+hotpotato,300,41.12,13.53,151.39
+hotpotato,500,43.37,15.17,153.58
+hotpotato,700,38.09,13.16,149.99
+hotpotato,900,30.83,16.32,161.10
+hotpotato,1000,14.79,15.97,190.76

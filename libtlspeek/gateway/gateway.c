@@ -39,7 +39,7 @@
 #include "router.h"
 
 #define MAX_WORKERS   8
-#define LISTEN_BACKLOG 16
+#define LISTEN_BACKLOG 4096
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* TCP server socket setup                                                      */
@@ -52,6 +52,9 @@ static int create_tcp_listener(int port)
 
     int opt = 1;
     setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
+    setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
 
     struct sockaddr_in addr = {0};
     addr.sin_family      = AF_INET;
@@ -78,8 +81,10 @@ static void handle_connection(
     WOLFSSL_CTX *wctx,
     int          n_workers)
 {
+#ifndef QUIET
     fprintf(stderr,
             "\n[gw] ─── New connection: client_fd=%d ───\n", client_fd);
+#endif
 
     /* 1. Create wolfSSL session */
     WOLFSSL *ssl = wolfSSL_new(wctx);
@@ -113,8 +118,10 @@ static void handle_connection(
         close(client_fd);
         return;
     }
+#ifndef QUIET
     fprintf(stderr, "[gw] TLS handshake complete — cipher: %s\n",
             wolfSSL_get_cipher_name(ssl));
+#endif
 
     /* 4. Verify keys were captured by the keylog callback */
     if (!peek_ctx.keys_ready) {
@@ -192,7 +199,7 @@ static void handle_connection(
      *    Connect on-demand to the worker's Unix socket (matches Romero_New pattern).
      */
     char sock_path[64];
-    snprintf(sock_path, sizeof(sock_path), "/tmp/worker_%d.sock", worker_id);
+    snprintf(sock_path, sizeof(sock_path), "worker_%d.sock", worker_id);
     
     int uds_fd = unix_client_connect(sock_path);
     if (uds_fd < 0) {
@@ -210,7 +217,9 @@ static void handle_connection(
     }
 
     close(uds_fd);
+#ifndef QUIET
     fprintf(stderr, "[gw] ─── Connection handed off to worker %d ───\n\n", worker_id);
+#endif
 }
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -237,12 +246,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Ignore SIGPIPE — handle broken connections gracefully */
+    /* Ignore SIGPIPE and SIGCHLD */
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
 
     /* ── wolfSSL initialisation ── */
     wolfSSL_Init();
-    wolfSSL_Debugging_ON();  /* verbose wolfSSL logs to stderr */
+    /* wolfSSL_Debugging_ON(); */
 
     /* Use compatibility method and restrict via SetMinVersion later */
     WOLFSSL_CTX *wctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
@@ -296,28 +306,40 @@ int main(int argc, char *argv[])
             "\n[gw] Gateway ready. Listening on :%d, %d worker(s)\n\n",
             port, n_workers);
 
-    /* ── Main accept() loop (single-threaded, no threads per spec) ── */
-    while (1) {
-        struct sockaddr_in client_addr;
-        socklen_t addrlen = sizeof(client_addr);
+    /* ── Pre-forked Worker Pool (Nginx-style) ── */
+    int num_gw_processes = 4; /* Increased for better localhost performance */
+    fprintf(stderr, "[gw] Forking %d gateway worker processes...\n", num_gw_processes);
 
-        int client_fd = accept(tcp_listen_fd,
-                               (struct sockaddr *)&client_addr,
-                               &addrlen);
-        if (client_fd < 0) {
-            perror("[gw] accept");
-            continue;
+    for (int i = 0; i < num_gw_processes; i++) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            /* Child process: Accept and handle connections */
+            while (1) {
+                struct sockaddr_in client_addr;
+                socklen_t addrlen = sizeof(client_addr);
+
+                int client_fd = accept(tcp_listen_fd,
+                                       (struct sockaddr *)&client_addr,
+                                       &addrlen);
+                if (client_fd < 0) {
+                    if (errno == EINTR) continue;
+                    perror("[gw-child] accept");
+                    continue;
+                }
+
+                /* In pre-forked mode, we handle the connection directly without forking again */
+                handle_connection(client_fd, wctx, n_workers);
+            }
+            exit(0);
+        } else if (pid < 0) {
+            perror("[gw] fork");
         }
-
-        char client_ip[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
-        fprintf(stderr, "[gw] Accepted TCP connection from %s:%d (fd=%d)\n",
-                client_ip, ntohs(client_addr.sin_port), client_fd);
-
-        handle_connection(client_fd, wctx, n_workers);
     }
 
-    /* Cleanup (unreachable in prototype) */
+    /* Master process: Wait for children */
+    while (wait(NULL) > 0);
+
+    /* Cleanup */
     close(tcp_listen_fd);
     wolfSSL_CTX_free(wctx);
     wolfSSL_Cleanup();

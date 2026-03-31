@@ -25,6 +25,7 @@
 #include <string.h>
 #include <signal.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include <errno.h>
 
 #include <wolfssl/options.h>
@@ -36,7 +37,7 @@
 #include "unix_socket.h"
 #include "handler.h"
 
-#define UNIX_BACKLOG  8
+#define UNIX_BACKLOG  4096
 #define REQUEST_BUFSZ 65536
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -50,121 +51,117 @@
  */
 static void handle_incoming_fd(int conn_fd, WOLFSSL_CTX *wctx, int worker_id)
 {
-    fprintf(stderr,
-            "\n[worker-%d] ─── Receiving fd from gateway ───\n", worker_id);
+    char cmsg_buf[CMSG_SPACE(sizeof(int))];
+    memset(cmsg_buf, 0, sizeof(cmsg_buf));
 
-    /* 1. Receive the file descriptor and TLS serial state */
-    int              client_fd = -1;
     tlspeek_serial_t serial;
     memset(&serial, 0, sizeof(serial));
 
-    if (recvfd_with_state(conn_fd, &client_fd, &serial, sizeof(serial)) != 0) {
-        fprintf(stderr, "[worker-%d] recvfd_with_state failed\n", worker_id);
+    struct iovec iov = {
+        .iov_base = &serial,
+        .iov_len  = sizeof(serial),
+    };
+
+    struct msghdr msg = {
+        .msg_name       = NULL,
+        .msg_namelen    = 0,
+        .msg_iov        = &iov,
+        .msg_iovlen     = 1,
+        .msg_control    = cmsg_buf,
+        .msg_controllen = sizeof(cmsg_buf),
+        .msg_flags      = 0,
+    };
+
+#ifndef QUIET
+    fprintf(stderr, "[worker-%d] Waiting for handoff (Migration OR Proxy)...\n", worker_id);
+#endif
+
+    ssize_t n = recvmsg(conn_fd, &msg, 0);
+    if (n <= 0) {
+        if (n < 0) perror("recvmsg");
         return;
     }
 
-    fprintf(stderr,
-            "[worker-%d] Received client_fd=%d from gateway\n",
-            worker_id, client_fd);
+    int client_fd = -1;
+    int is_migration = 0;
 
-    /* 2. Validate magic */
-    if (serial.magic != TLSPEEK_MAGIC) {
-        fprintf(stderr,
-                "[worker-%d] ERROR: bad magic 0x%08X (expected 0x%08X)\n",
-                worker_id, serial.magic, TLSPEEK_MAGIC);
-        close(client_fd);
-        return;
-    }
-    fprintf(stderr, "[worker-%d] Serial magic OK. cipher=0x%04X (blob_sz=%u, request_len=%d)\n",
-            worker_id, serial.cipher_suite, serial.blob_sz, serial.request_len);
-
-    /* 3. Create a new wolfSSL session and RESTORE the exported session state.
-     *
-     * In the zero-copy approach, the gateway only peeked at the data.
-     * The worker MUST call wolfSSL_read() to actually consume the records.
-     */
-    WOLFSSL *ssl = wolfSSL_new(wctx);
-    if (!ssl) {
-        fprintf(stderr, "[worker-%d] wolfSSL_new failed\n", worker_id);
-        close(client_fd);
-        return;
-    }
-
-    /* Pattern: Set FD, Import, then Set FD again as a correction */
-    wolfSSL_set_fd(ssl, client_fd);
-
-    fprintf(stderr, "[worker-%d] Restoring TLS session state...\n", worker_id);
-    if (tlspeek_restore(ssl, &serial) != 0) {
-        fprintf(stderr, "[worker-%d] tlspeek_restore failed\n", worker_id);
-        wolfSSL_free(ssl);
-        close(client_fd);
-        return;
-    }
-    
-    /* Correction post-import: ensure the restored session uses the socket FD */
-    wolfSSL_set_fd(ssl, client_fd);
-
-    /* 4. Read the HTTP request from the encrypted session.
-     *
-     * IMPORTANT: the gateway only PEEKED at this data using tls_read_peek().
-     * The kernel buffer still contains the original records. wolfSSL_read()
-     * will now actually consume those records from the socket.
-     */
-    char request[8192];
-    memset(request, 0, sizeof(request));
-
-    fprintf(stderr, "[worker-%d] wolfSSL_read()...\n", worker_id);
-    int req_len = wolfSSL_read(ssl, request, (int)sizeof(request) - 1);
-    if (req_len <= 0) {
-        int err = wolfSSL_get_error(ssl, req_len);
-        char errstr[80];
-        wolfSSL_ERR_error_string((unsigned long)err, errstr);
-        fprintf(stderr, "[worker-%d] wolfSSL_read failed: %d (%s)\n", worker_id, err, errstr);
-        wolfSSL_free(ssl);
-        close(client_fd);
-        return;
-    }
-    request[req_len] = '\0';
-    fprintf(stderr, "[worker-%d] Successfully read %d bytes from kernel buffer: %.50s...\n", 
-            worker_id, req_len, request);
-
-    /* 5. Handle the request and build a response */
-    char *response = handle_http_request(request, req_len, worker_id);
-    if (!response) {
-        fprintf(stderr, "[worker-%d] handle_http_request: malloc failed\n", worker_id);
-        wolfSSL_free(ssl);
-        close(client_fd);
-        return;
-    }
-
-    /* 6. Send HTTPS response directly to the client */
-    fprintf(stderr, "[worker-%d] wolfSSL_write() response...\n", worker_id);
-    int resp_len = (int)strlen(response);
-    int written  = wolfSSL_write(ssl, response, resp_len);
-    if (written != resp_len) {
-        int err = wolfSSL_get_error(ssl, written);
-        char errstr[80];
-        wolfSSL_ERR_error_string((unsigned long)err, errstr);
-        fprintf(stderr,
-                "[worker-%d] wolfSSL_write: wrote %d of %d bytes, err=%s\n",
-                worker_id, written, resp_len, errstr);
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+    if (cmsg && cmsg->cmsg_type == SCM_RIGHTS) {
+        client_fd = *((int *)CMSG_DATA(cmsg));
+        is_migration = 1;
     } else {
-        fprintf(stderr,
-                "[worker-%d] Sent %d bytes response directly to client\n",
-                worker_id, written);
+        /* Plain HTTP Proxy Mode: the client_fd IS the conn_fd */
+        client_fd = conn_fd;
     }
 
-    free(response);
+    if (is_migration) {
+#ifndef QUIET
+        fprintf(stderr, "[worker-%d] MODE: TLS Migration (client_fd=%d)\n", worker_id, client_fd);
+#endif
+        /* 1. RESTORE the exported session state. */
+        WOLFSSL *ssl = wolfSSL_new(wctx);
+        if (!ssl) {
+            close(client_fd);
+            return;
+        }
 
-    /* 7. Clean shutdown */
-    fprintf(stderr, "[worker-%d] wolfSSL_shutdown()\n", worker_id);
-    wolfSSL_shutdown(ssl);
-    wolfSSL_free(ssl);
-    close(client_fd);
+        wolfSSL_set_fd(ssl, client_fd);
+        if (tlspeek_restore(ssl, &serial) != 0) {
+            fprintf(stderr, "[worker-%d] tlspeek_restore failed\n", worker_id);
+            wolfSSL_free(ssl);
+            close(client_fd);
+            return;
+        }
+        wolfSSL_set_fd(ssl, client_fd);
 
-    fprintf(stderr,
-            "[worker-%d] ─── Request handled, connection closed ───\n\n",
-            worker_id);
+        /* 2. Handle Keep-Alive requests */
+        while (1) {
+            char request[8192];
+            int req_len = wolfSSL_read(ssl, request, (int)sizeof(request) - 1);
+            if (req_len <= 0) break;
+            request[req_len] = '\0';
+
+            char *response = handle_http_request(request, req_len, worker_id);
+            if (!response) break;
+            int resp_len = (int)strlen(response);
+            int written  = wolfSSL_write(ssl, response, resp_len);
+            free(response);
+            if (written != resp_len) break;
+        }
+        wolfSSL_shutdown(ssl);
+        wolfSSL_free(ssl);
+        close(client_fd);
+    } else {
+#ifndef QUIET
+        fprintf(stderr, "[worker-%d] MODE: Nginx Proxy (Direct UDS)\n", worker_id);
+#endif
+        /* Plain HTTP Logic (Nginx Proxy) */
+        while (1) {
+            char request[8192];
+            int req_len;
+            
+            if (n > 0) {
+                /* Use initial data from recvmsg */
+                memcpy(request, &serial, (n > (ssize_t)sizeof(request)-1) ? sizeof(request)-1 : (size_t)n);
+                req_len = n;
+                n = 0; /* Reset for next iteration */
+            } else {
+                req_len = read(client_fd, request, sizeof(request) - 1);
+            }
+            
+            if (req_len <= 0) break;
+            request[req_len] = '\0';
+
+            char *response = handle_http_request(request, req_len, worker_id);
+            if (!response) break;
+            int resp_len = (int)strlen(response);
+            int written  = write(client_fd, response, resp_len);
+            free(response);
+            if (written != resp_len) break;
+        }
+        /* In Proxy mode, the socket is managed by Nginx/Worker loop, we close it here as it was accepted */
+        close(client_fd);
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -193,11 +190,13 @@ int main(int argc, char *argv[])
             "[worker-%d] Starting (cert=%s key=%s)\n",
             worker_id, cert_file, key_file);
 
+    /* Ignore SIGPIPE and SIGCHLD */
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
 
     /* ── wolfSSL init ── */
     wolfSSL_Init();
-    wolfSSL_Debugging_ON();
+    /* wolfSSL_Debugging_ON(); */
 
     /*
      * Use server method — the worker is acting as the server side of
@@ -230,7 +229,7 @@ int main(int argc, char *argv[])
 
     /* ── Create Unix socket ── */
     char sock_path[64];
-    snprintf(sock_path, sizeof(sock_path), "/tmp/worker_%d.sock", worker_id);
+    snprintf(sock_path, sizeof(sock_path), "worker_%d.sock", worker_id);
 
     int listen_fd = unix_server_socket(sock_path, UNIX_BACKLOG);
     if (listen_fd < 0) {
@@ -242,20 +241,32 @@ int main(int argc, char *argv[])
             "[worker-%d] Ready. Waiting for connections on %s\n\n",
             worker_id, sock_path);
 
-    /* ── Main loop: accept gateway connections ── */
+    /* ── Main loop: accept gateway connections (On-demand fork) ── */
+    signal(SIGCHLD, SIG_IGN);
     while (1) {
-        /*
-         * Each accept() gives us a new connection FROM THE GATEWAY
-         * (not from the client directly).  The gateway sends one fd
-         * per HTTP request over this connection.
-         */
         int conn_fd = unix_accept(listen_fd);
-        if (conn_fd < 0) continue;
+        if (conn_fd < 0) {
+            if (errno == EINTR) continue;
+            continue;
+        }
 
-        handle_incoming_fd(conn_fd, wctx, worker_id);
-
-        /* Close the gateway→worker control connection after handling */
-        close(conn_fd);
+        pid_t pid = fork();
+        if (pid == 0) {
+            /* Child process */
+            close(listen_fd);
+            handle_incoming_fd(conn_fd, wctx, worker_id);
+            close(conn_fd);
+            
+            wolfSSL_CTX_free(wctx);
+            wolfSSL_Cleanup();
+            exit(0);
+        } else if (pid > 0) {
+            /* Parent process */
+            close(conn_fd);
+        } else {
+            perror("[worker] fork");
+            close(conn_fd);
+        }
     }
 
     /* Cleanup (unreachable in prototype) */

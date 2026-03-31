@@ -1,0 +1,3809 @@
+[gw] Certificate and key loaded
+[gw] Session-level secret callback enabled
+[gw] TCP listener on port 8445 (fd=3)
+
+[gw] Gateway ready. Listening on :8445, 2 worker(s)
+
+[gw] Forking 4 gateway worker processes...
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[gw] wolfSSL_accept failed: -308 (error state on socket)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[keylog] Callback called (id=3, sz=48)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 78236d5081899b9f18f1be27
+[crypto] nonce computed for seq_num=0: 43d8c0d9f13c3f7b8bb7e191
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 160f7efe30a18b06fc3cfcab
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: a5ce00dd7ed69a9d82b8948a
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: f655ecc4985c74b0c4b2d365
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Calling tls_read_peek()...
+[keylog] Callback called (id=1, sz=48)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[keylog] Callback called (id=2, sz=48)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: f7008c4d517dcd85097d6279
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 5f9012450bf7973dda17552a
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[crypto] nonce computed for seq_num=0: 7c694dda8735e25e185f9260
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] nonce computed for seq_num=0: 62cd5d62349af1d294ca714f
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[gw] tls_read_peek() returned 53 bytes
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[gw] tls_read_peek() returned 53 bytes
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] → worker 0 (default)
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[gw] Routing to worker 0
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 7633f8dce0e4639bd2f8399d
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 6eeea944f84bbb441d351ede
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=6, sz=48)
+[unix] Connected to worker_0.sock (fd=5)
+[keylog] Callback called (id=4, sz=48)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 5a53d852abaee2e03e91dbd0
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 8843ddfd787ec66de20d9767
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[unix] Connected to worker_0.sock (fd=5)
+[gw] wolfSSL_tls_export OK: 347 bytes
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: a1ebb219e63888e62d45425b
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[gw] Calling tls_read_peek()...
+[keylog] Callback called (id=4, sz=48)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[keylog] Callback called (id=3, sz=48)
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: a99bfeb1489a0cd2bd59e7d9
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] nonce computed for seq_num=0: 88fe2495e7287781b48562ff
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[unix] Connected to worker_0.sock (fd=5)
+[unix] Connected to worker_0.sock (fd=5)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: ff4cad766a56814685989673
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[keylog] Callback called (id=3, sz=48)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 0f4b253201339049176d8475
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 46fece6e9da9848e567d2dc1
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: cf71bd6184b4a0d5d8cc664e
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[keylog] Callback called (id=1, sz=48)
+[gw] Routing to worker 0
+[keylog] Callback called (id=2, sz=48)
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[keylog] Callback called (id=6, sz=48)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: eea7427989e84cfca868e8f7
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 74af8be3a6e439d2304ddbe5
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[keylog] Callback called (id=1, sz=48)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[keylog] Callback called (id=2, sz=48)
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: ab490702f089e4d0c089fec7
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] Calling tls_read_peek()...
+[gw] wolfSSL_tls_export OK: 347 bytes
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 2870fb98597733696c1750c7
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[unix] Connected to worker_0.sock (fd=5)
+[gw] wolfSSL_tls_export OK: 347 bytes
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[gw] Calling tls_read_peek()...
+[keylog] Callback called (id=4, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] nonce computed for seq_num=0: a32cf6b36b544d9244e8f546
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[keylog] Callback called (id=3, sz=48)
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] tls_read_peek() returned 53 bytes
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: d175e6594b236f5425c59316
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 193e1ee2a62254280765de48
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: b1cb21f31154e6e3606b4abf
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 9620cb35082a791b1e71cce2
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: fb0d665f2f04c45cb530faff
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 54b966409cada3fc1b21b8ee
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: ca07782af53d71d929f5c39f
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=6, sz=48)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 6e81bbc6295f9125ac0661ac
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: f91e314eae591f299c25b124
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] Calling tls_read_peek()...
+[gw] wolfSSL_tls_export OK: 347 bytes
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 751a8872d975e13f4acfb2b0
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 32b536f42a56b6198cadd439
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 62ff98e3f9052cf7d002e274
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 62382df56a861aff02c1c98e
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 4c6a505392c2bde66070a3fc
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[gw] Calling tls_read_peek()...
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[router] → worker 0 (default)
+[crypto] nonce computed for seq_num=0: f37016183daf57eaf21fb744
+[gw] Routing to worker 0
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[gw] wolfSSL_tls_export OK: 347 bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[gw] Performing TLS handshake...
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 30b3e12a54fd4cf2b3a5b4a3
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: cf1031ed0527409a03c921cb
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: f06b5976357833be22be93d6
+[crypto] nonce computed for seq_num=0: 0cfa3204547ddae00a052865
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: e08ba66ccb87b91a1314a93d
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[keylog] Callback called (id=6, sz=48)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] nonce computed for seq_num=0: 9c9ab470f31e349512f1cdc4
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[keylog] Callback called (id=3, sz=48)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[gw] tls_read_peek() returned 53 bytes
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[router] → worker 0 (default)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: fc62847513fe31b6d91f9fd1
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 73dae24ca025de3e9ed37287
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] Performing TLS handshake...
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=1, sz=48)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 5efc3869a7ba80ecd5add008
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 301b763ae9ac88065ebae5fc
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=6, sz=48)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[crypto] nonce computed for seq_num=0: d8a08b2fe8d4ab04ae037ec4
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] nonce computed for seq_num=0: 89a7865f973da677f3e56bcd
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[gw] tls_read_peek() returned 53 bytes
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[gw] tls_read_peek() returned 53 bytes
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] → worker 0 (default)
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[gw] Routing to worker 0
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 88a655e8017fb3b1822adcb7
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: dd7d722674a1722afe82f940
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 935c04ad42cef942d889972d
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] Calling tls_read_peek()...
+[gw] wolfSSL_tls_export OK: 347 bytes
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: ecf61df3e6cae772d101c9bc
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 91f37d595030396d7768ff6a
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[keylog] Callback called (id=6, sz=48)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 71d01114f1f5fe5c32ad009a
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[gw] Calling tls_read_peek()...
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[keylog] Callback called (id=3, sz=48)
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] nonce computed for seq_num=0: 967c3af54a3eb9ac3e44cb72
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: b54f0d265b3d1584baf00af2
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[unix] Connected to worker_0.sock (fd=5)
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[gw] Calling tls_read_peek()...
+[keylog] Callback called (id=4, sz=48)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: ec8b7beaaf8cd0aa178a0b2c
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[keylog] Callback called (id=3, sz=48)
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: bc3def7cd9bd4b55250248cb
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 706596d0a1180866ee7cdd56
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 14717a36d26d3ff3784d4de2
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[gw] Routing to worker 0
+[crypto] nonce computed for seq_num=0: a83d70d7857bc46203b8ec90
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[gw] wolfSSL_tls_export OK: 347 bytes
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 2dce95714f7e6aef42550335
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 876899fcbe016d4ee43f0367
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[gw] Calling tls_read_peek()...
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: f75d8a68ce2a38c286bf484b
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] Performing TLS handshake...
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: d53482ebbd14487cfdc41ba7
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 453ed488fa4891c160f18bc6
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[gw] Performing TLS handshake...
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 81bed80c2a1f872d5b40db6c
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[unix] Connected to worker_0.sock (fd=5)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: dc94334a6f67fc700982939b
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: b36ca2535c0dd1b49ab3734e
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: c287d8965bf030d95eb60616
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 3f0bd812031dd187945500b3
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: d613732fbbdb26af05e3b7db
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: a398ee5350899b73507dcaba
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: caef924ee2ffd5f61c7efa40
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] Calling tls_read_peek()...
+[gw] wolfSSL_tls_export OK: 347 bytes
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 5a417b66d27443df374cce24
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[unix] Connected to worker_0.sock (fd=5)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[gw] Performing TLS handshake...
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: f354ded48a7ab65de2255692
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: b962ae391ea80a01648337b4
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 2762f8347b85d89959949f49
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: f0f597c22b7da038199f8297
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 9137f160e76fe93e364951d0
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 7cdd1df8dfc09318d6622649
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 46aec17f8fe835db62dc8321
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: aa1efc859001f678f4c3275b
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: fd7287ce40a58cfa0a5bafc9
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: ec7b9624bf3d23282ca748c9
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[crypto] nonce computed for seq_num=0: 411a6f6bbddef6d0450434b7
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] Performing TLS handshake...
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 57d570e00b4a082139b57a1a
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 88520cefbef39701958b9c8c
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 11de57a2a00af7462ff61d79
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[gw] Calling tls_read_peek()...
+[unix] Connected to worker_0.sock (fd=5)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 58627c89be81c9ed0d3a919e
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[gw] Performing TLS handshake...
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 4e4bed746631f9a2970737d5
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 7db6f3d1678010269c541a2d
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 225ba446dbdcdc0fa28880ab
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[gw] Performing TLS handshake...
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=1, sz=48)
+[keylog] Callback called (id=2, sz=48)
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 0d72959f8009b63855ae130f
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[gw] Calling tls_read_peek()...
+[router] → worker 0 (default)
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[gw] Routing to worker 0
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[gw] wolfSSL_tls_export OK: 347 bytes
+[crypto] nonce computed for seq_num=0: 863878da552064a97cbc9e16
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it
+[keylog] Callback called (id=6, sz=48)
+[keylog] Callback called (id=4, sz=48)
+[keylog] Intercepted SERVER_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[keylog] Callback called (id=3, sz=48)
+[keylog] Intercepted CLIENT_TRAFFIC_SECRET (48 bytes)
+[crypto] HKDF-Expand-Label(label="tls13 key", out_len=32, hkdf_label_len=13, hash=7)
+[crypto] HKDF-Expand-Label(label="tls13 iv", out_len=12, hkdf_label_len=12, hash=7)
+[gw] Calling tls_read_peek()...
+[tlspeek] MSG_PEEK recv on fd=4 (up to 16405 bytes)...
+[tlspeek] MSG_PEEK got 75 bytes — kernel buffer UNCHANGED
+[tlspeek] TLS record: type=0x17 version=0x0303 len=70
+[crypto] nonce computed for seq_num=0: 3d0438851a3752677131a368
+[tlspeek] Decrypting: ct_len=54 tag_offset=54
+[crypto] AES-GCM stateless decrypt OK, 54 plaintext bytes
+[tlspeek] Inner content type = 0x17, plaintext_len=53
+[tlspeek] SUCCESS: 53 plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (0)
+[gw] tls_read_peek() returned 53 bytes
+[gw] Peeked Request: GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+[router] Routing decision for:
+GET /sum?a=10&b=20 HTTP/1.1
+Host: localhost:8445
+
+
+...
+[router] → worker 0 (default)
+[gw] Routing to worker 0
+[gw] wolfSSL_tls_export OK: 347 bytes
+[unix] Connected to worker_0.sock (fd=5)
+[sendfd] Sending fd=4 with 24592 bytes of TLS state over unix_sock=5
+[sendfd] Closed gateway copy of fd=4 — worker now owns it

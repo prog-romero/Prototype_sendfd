@@ -1,0 +1,8 @@
+Mode,Connections,RPS,AvgLatency_ms,P99Latency_ms
+nginx_direct,50,2398.42,38.73,299.45
+nginx_direct,100,3453.22,44.54,257.02
+nginx_direct,300,4590.44,77.45,359.50
+nginx_direct,500,4589.37,111.80,373.38
+nginx_direct,700,4755.97,146.72,410.50
+nginx_direct,900,4325.77,207.20,562.27
+nginx_direct,1000,3172.90,280.99,750.41

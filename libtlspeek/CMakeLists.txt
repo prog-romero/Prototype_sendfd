@@ -5,7 +5,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -g")
 
 # ─── wolfSSL ───────────────────────────────────────────────────────────────────
 # Use specific system-installed wolfSSL version that contains custom migration symbols
-set(WOLFSSL_LIB "/usr/local/lib/libwolfssl.so.44.0.1")
+set(WOLFSSL_LIB "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/src/.libs/libwolfssl.so")
 set(WOLFSSL_INCLUDE "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl")
 include_directories(${WOLFSSL_INCLUDE})
 
