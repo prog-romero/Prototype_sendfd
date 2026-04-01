@@ -27,9 +27,40 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <sys/epoll.h>
+#include <fcntl.h>
 
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
+
+#define MAX_EVENTS 2048
+#define MAX_FDS 65536
+
+static void set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+typedef struct {
+    int active;
+    int is_migration;
+    WOLFSSL *ssl;
+} conn_state_t;
+
+static conn_state_t clients[MAX_FDS] = {0};
+
+static void close_client(int epfd, int fd) {
+    if (!clients[fd].active) return;
+    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+    if (clients[fd].is_migration && clients[fd].ssl) {
+        wolfSSL_shutdown(clients[fd].ssl);
+        wolfSSL_free(clients[fd].ssl);
+    }
+    close(fd);
+    memset(&clients[fd], 0, sizeof(conn_state_t));
+}
+
+// Wolfssl headers moved up
 
 #include "tlspeek.h"
 #include "tlspeek_serial.h"
@@ -42,127 +73,7 @@
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 
-/*
- * handle_incoming_fd() — Called for each fd received from the gateway.
- *
- * conn_fd    : the already-accepted Unix socket connection from the gateway
- * wctx       : the worker's wolfSSL_CTX (pre-loaded cert)
- * worker_id  : used in log messages and HTTP headers
- */
-static void handle_incoming_fd(int conn_fd, WOLFSSL_CTX *wctx, int worker_id)
-{
-    char cmsg_buf[CMSG_SPACE(sizeof(int))];
-    memset(cmsg_buf, 0, sizeof(cmsg_buf));
-
-    tlspeek_serial_t serial;
-    memset(&serial, 0, sizeof(serial));
-
-    struct iovec iov = {
-        .iov_base = &serial,
-        .iov_len  = sizeof(serial),
-    };
-
-    struct msghdr msg = {
-        .msg_name       = NULL,
-        .msg_namelen    = 0,
-        .msg_iov        = &iov,
-        .msg_iovlen     = 1,
-        .msg_control    = cmsg_buf,
-        .msg_controllen = sizeof(cmsg_buf),
-        .msg_flags      = 0,
-    };
-
-#ifndef QUIET
-    fprintf(stderr, "[worker-%d] Waiting for handoff (Migration OR Proxy)...\n", worker_id);
-#endif
-
-    ssize_t n = recvmsg(conn_fd, &msg, 0);
-    if (n <= 0) {
-        if (n < 0) perror("recvmsg");
-        return;
-    }
-
-    int client_fd = -1;
-    int is_migration = 0;
-
-    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-    if (cmsg && cmsg->cmsg_type == SCM_RIGHTS) {
-        client_fd = *((int *)CMSG_DATA(cmsg));
-        is_migration = 1;
-    } else {
-        /* Plain HTTP Proxy Mode: the client_fd IS the conn_fd */
-        client_fd = conn_fd;
-    }
-
-    if (is_migration) {
-#ifndef QUIET
-        fprintf(stderr, "[worker-%d] MODE: TLS Migration (client_fd=%d)\n", worker_id, client_fd);
-#endif
-        /* 1. RESTORE the exported session state. */
-        WOLFSSL *ssl = wolfSSL_new(wctx);
-        if (!ssl) {
-            close(client_fd);
-            return;
-        }
-
-        wolfSSL_set_fd(ssl, client_fd);
-        if (tlspeek_restore(ssl, &serial) != 0) {
-            fprintf(stderr, "[worker-%d] tlspeek_restore failed\n", worker_id);
-            wolfSSL_free(ssl);
-            close(client_fd);
-            return;
-        }
-        wolfSSL_set_fd(ssl, client_fd);
-
-        /* 2. Handle Keep-Alive requests */
-        while (1) {
-            char request[8192];
-            int req_len = wolfSSL_read(ssl, request, (int)sizeof(request) - 1);
-            if (req_len <= 0) break;
-            request[req_len] = '\0';
-
-            char *response = handle_http_request(request, req_len, worker_id);
-            if (!response) break;
-            int resp_len = (int)strlen(response);
-            int written  = wolfSSL_write(ssl, response, resp_len);
-            free(response);
-            if (written != resp_len) break;
-        }
-        wolfSSL_shutdown(ssl);
-        wolfSSL_free(ssl);
-        close(client_fd);
-    } else {
-#ifndef QUIET
-        fprintf(stderr, "[worker-%d] MODE: Nginx Proxy (Direct UDS)\n", worker_id);
-#endif
-        /* Plain HTTP Logic (Nginx Proxy) */
-        while (1) {
-            char request[8192];
-            int req_len;
-            
-            if (n > 0) {
-                /* Use initial data from recvmsg */
-                memcpy(request, &serial, (n > (ssize_t)sizeof(request)-1) ? sizeof(request)-1 : (size_t)n);
-                req_len = n;
-                n = 0; /* Reset for next iteration */
-            } else {
-                req_len = read(client_fd, request, sizeof(request) - 1);
-            }
-            
-            if (req_len <= 0) break;
-            request[req_len] = '\0';
-
-            char *response = handle_http_request(request, req_len, worker_id);
-            if (!response) break;
-            int resp_len = (int)strlen(response);
-            int written  = write(client_fd, response, resp_len);
-            free(response);
-            if (written != resp_len) break;
-        }
-        /* In Proxy mode, the socket is managed by Nginx/Worker loop, we close it here as it was accepted */
-        close(client_fd);
-    }
-}
+// handle_incoming_fd removed, integrated entirely into epoll loop.
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 
@@ -241,31 +152,148 @@ int main(int argc, char *argv[])
             "[worker-%d] Ready. Waiting for connections on %s\n\n",
             worker_id, sock_path);
 
-    /* ── Main loop: accept gateway connections (On-demand fork) ── */
+    /* ── Main loop: Epoll Multiplexing ── */
     signal(SIGCHLD, SIG_IGN);
-    while (1) {
-        int conn_fd = unix_accept(listen_fd);
-        if (conn_fd < 0) {
-            if (errno == EINTR) continue;
-            continue;
-        }
+    
+    set_nonblocking(listen_fd);
+    int epfd = epoll_create1(0);
+    struct epoll_event ev, events[MAX_EVENTS];
+    ev.events = EPOLLIN;
+    ev.data.fd = listen_fd;
+    epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &ev);
 
-        pid_t pid = fork();
-        if (pid == 0) {
-            /* Child process */
-            close(listen_fd);
-            handle_incoming_fd(conn_fd, wctx, worker_id);
-            close(conn_fd);
-            
-            wolfSSL_CTX_free(wctx);
-            wolfSSL_Cleanup();
-            exit(0);
-        } else if (pid > 0) {
-            /* Parent process */
-            close(conn_fd);
-        } else {
-            perror("[worker] fork");
-            close(conn_fd);
+    fprintf(stderr, "[worker-%d] Entering epoll loop...\n", worker_id);
+
+    while (1) {
+        int nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+        if (nfds < 0 && errno == EINTR) continue;
+
+        for (int i = 0; i < nfds; i++) {
+            int fd = events[i].data.fd;
+
+            if (fd == listen_fd) {
+                while (1) {
+                    int conn_fd = unix_accept(listen_fd);
+                    if (conn_fd < 0) break; // EWOULDBLOCK
+
+                    char cmsg_buf[CMSG_SPACE(sizeof(int))];
+                    memset(cmsg_buf, 0, sizeof(cmsg_buf));
+                    tlspeek_serial_t serial;
+                    memset(&serial, 0, sizeof(serial));
+                    struct iovec iov = { .iov_base = &serial, .iov_len = sizeof(serial) };
+                    struct msghdr msg = {
+                        .msg_iov = &iov, .msg_iovlen = 1,
+                        .msg_control = cmsg_buf, .msg_controllen = sizeof(cmsg_buf)
+                    };
+
+                    ssize_t n = recvmsg(conn_fd, &msg, 0);
+                    if (n <= 0) {
+                        close(conn_fd);
+                        continue;
+                    }
+
+                    int client_fd = -1;
+                    int is_migration = 0;
+                    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+                    if (cmsg && cmsg->cmsg_type == SCM_RIGHTS) {
+                        client_fd = *((int *)CMSG_DATA(cmsg));
+                        is_migration = 1;
+                        close(conn_fd); 
+                    } else {
+                        client_fd = conn_fd; 
+                    }
+
+                    set_nonblocking(client_fd);
+
+                    if (is_migration) {
+                        WOLFSSL *ssl = wolfSSL_new(wctx);
+                        if (!ssl) { close(client_fd); continue; }
+                        wolfSSL_set_fd(ssl, client_fd);
+                        if (tlspeek_restore(ssl, &serial) != 0) {
+                            wolfSSL_free(ssl); close(client_fd); continue;
+                        }
+                        wolfSSL_set_fd(ssl, client_fd);
+                        
+                        clients[client_fd].active = 1;
+                        clients[client_fd].is_migration = 1;
+                        clients[client_fd].ssl = ssl;
+                    } else {
+                        clients[client_fd].active = 1;
+                        clients[client_fd].is_migration = 0;
+                        clients[client_fd].ssl = NULL;
+                        
+                        if (n > 0 && n <= (ssize_t)sizeof(serial)) {
+                            char request[8192];
+                            memcpy(request, &serial, n);
+                            request[n] = '\0';
+                            char *response = handle_http_request(request, n, worker_id);
+                            if (response) {
+                                int written = write(client_fd, response, strlen(response));
+                                (void)written;
+                                free(response);
+                            }
+                        }
+                    }
+
+                    struct epoll_event c_ev;
+                    c_ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+                    c_ev.data.fd = client_fd;
+                    epoll_ctl(epfd, EPOLL_CTL_ADD, client_fd, &c_ev);
+                }
+            } else {
+                int c_fd = fd;
+                if (!clients[c_fd].active) continue;
+                
+                char request[8192];
+                int req_len = 0;
+                
+                if (clients[c_fd].is_migration) {
+                    req_len = wolfSSL_read(clients[c_fd].ssl, request, sizeof(request) - 1);
+                } else {
+                    req_len = read(c_fd, request, sizeof(request) - 1);
+                }
+
+                if (req_len > 0) {
+                    request[req_len] = '\0';
+                    char *response = handle_http_request(request, req_len, worker_id);
+                    if (response) {
+                        int resp_len = strlen(response);
+                        int total_written = 0;
+                        if (clients[c_fd].is_migration) {
+                            while(total_written < resp_len) {
+                                int written = wolfSSL_write(clients[c_fd].ssl, response + total_written, resp_len - total_written);
+                                if (written > 0) total_written += written;
+                                else {
+                                    int err = wolfSSL_get_error(clients[c_fd].ssl, written);
+                                    if (err == WOLFSSL_ERROR_WANT_READ || err == WOLFSSL_ERROR_WANT_WRITE) break; 
+                                    free(response);
+                                    goto close_client_now;
+                                }
+                            }
+                        } else {
+                            int written_plain = write(c_fd, response, resp_len);
+                            (void)written_plain;
+                        }
+                        free(response);
+                    } else {
+                        goto close_client_now;
+                    }
+                } else if (req_len < 0) {
+                    if (clients[c_fd].is_migration) {
+                        int err = wolfSSL_get_error(clients[c_fd].ssl, req_len);
+                        if (err == WOLFSSL_ERROR_WANT_READ || err == WOLFSSL_ERROR_WANT_WRITE) continue;
+                    } else {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                    }
+                    goto close_client_now;
+                } else {
+                    goto close_client_now;
+                }
+                continue;
+                
+            close_client_now:
+                close_client(epfd, c_fd);
+            }
         }
     }
 

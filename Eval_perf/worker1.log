@@ -2,3 +2,4 @@
 [unix] Server listening on worker_1.sock (fd=3)
 [worker-1] Ready. Waiting for connections on worker_1.sock
 
+[worker-1] Entering epoll loop...

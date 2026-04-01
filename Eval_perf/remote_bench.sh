@@ -14,8 +14,8 @@ if [ -z "$SERVER_IP" ] || [ -z "$MODE" ] || [ -z "$URL_PATH" ]; then
 fi
 
 URL="https://${SERVER_IP}:8445${URL_PATH}"
-# Expanded concurrency sampling (10 points)
-CONCURRENCY=(50 100 200 300 400 500 600 700 800 1000)
+# Expanded concurrency sampling (15 points up to 1000)
+CONCURRENCY=(50 100 150 200 250 300 350 400 500 600 700 800 900 950 1000)
 DURATION="30s"
 THREADS=4 # Increased threads for client-side capacity
 

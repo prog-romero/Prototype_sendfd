@@ -53,7 +53,16 @@ def generate_plots():
     plt.savefig('latency.png', dpi=300)
     plt.close()
 
-    # 4. Errors
+    # 4. Latency (P99)
+    plt.figure(figsize=(10, 6))
+    sns.lineplot(data=df, x='Connections', y='P99Latency_ms', hue='Mode', marker='o', palette=palette)
+    plt.title('99th Percentile (P99) Latency comparison (ms)', fontsize=15)
+    plt.ylabel('P99 Latency (ms)')
+    plt.xlabel('Concurrency (Connections)')
+    plt.savefig('latency_p99.png', dpi=300)
+    plt.close()
+
+    # 5. Errors
     plt.figure(figsize=(10, 6))
     sns.lineplot(data=df, x='Connections', y='TotalErrors', hue='Mode', marker='x', palette=palette)
     plt.title('Total Socket Errors & Timeouts', fontsize=15)

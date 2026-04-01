@@ -16,10 +16,19 @@
 #include <signal.h>
 #include <unistd.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <sys/epoll.h>
+#include <fcntl.h>
+
+#define MAX_EVENTS 2048
+#define MAX_FDS 65536
+
+static void set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
 
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
@@ -31,41 +40,7 @@
 #define BACKLOG 16384
 #define NUM_LISTENERS 2
 
-void handle_connection(int client_fd, WOLFSSL_CTX* ctx, int worker_id) {
-    /* Set TCP_NODELAY for lower latency */
-    int nodelay = 1;
-    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-
-    WOLFSSL* ssl = wolfSSL_new(ctx);
-    if (!ssl) {
-        close(client_fd);
-        return;
-    }
-
-    wolfSSL_set_fd(ssl, client_fd);
-
-    if (wolfSSL_accept(ssl) == SSL_SUCCESS) {
-        while (1) {
-            char request[8192];
-            int req_len = wolfSSL_read(ssl, request, (int)sizeof(request) - 1);
-            if (req_len <= 0) break;
-            request[req_len] = '\0';
-
-            /* Use the same handler as the prototype */
-            char *response = handle_http_request(request, req_len, worker_id);
-            if (!response) break;
-
-            int resp_len = (int)strlen(response);
-            int written  = wolfSSL_write(ssl, response, resp_len);
-            free(response);
-            if (written != resp_len) break;
-        }
-    }
-
-    wolfSSL_shutdown(ssl);
-    wolfSSL_free(ssl);
-    close(client_fd);
-}
+// handle_connection removed, integrated into epoll
 
 int main(int argc, char** argv) {
     int port = (argc > 1) ? atoi(argv[1]) : 8445;
@@ -104,21 +79,97 @@ int main(int argc, char** argv) {
             }
             listen(sockfd, BACKLOG);
 
-            while (1) {
-                struct sockaddr_in clientAddr;
-                socklen_t clientLen = sizeof(clientAddr);
-                int client_fd = accept(sockfd, (struct sockaddr*)&clientAddr, &clientLen);
-                if (client_fd < 0) {
-                    if (errno == EINTR) continue;
-                    continue;
-                }
+            set_nonblocking(sockfd);
+            int epfd = epoll_create1(0);
+            struct epoll_event ev, events[MAX_EVENTS];
+            ev.events = EPOLLIN;
+            ev.data.fd = sockfd;
+            epoll_ctl(epfd, EPOLL_CTL_ADD, sockfd, &ev);
+            
+            WOLFSSL* ssl_map[MAX_FDS] = {0};
 
-                if (fork() == 0) {
-                    close(sockfd);
-                    handle_connection(client_fd, ctx, i);
-                    exit(0);
+            while (1) {
+                int nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+                if (nfds < 0 && errno == EINTR) continue;
+
+                for (int j = 0; j < nfds; j++) {
+                    int fd = events[j].data.fd;
+
+                    if (fd == sockfd) {
+                        while (1) {
+                            struct sockaddr_in clientAddr;
+                            socklen_t clientLen = sizeof(clientAddr);
+                            int client_fd = accept(sockfd, (struct sockaddr*)&clientAddr, &clientLen);
+                            if (client_fd < 0) break;
+                            
+                            set_nonblocking(client_fd);
+                            int nodelay = 1;
+                            setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+                            WOLFSSL* ssl = wolfSSL_new(ctx);
+                            if (!ssl) {
+                                close(client_fd);
+                                continue;
+                            }
+                            wolfSSL_set_fd(ssl, client_fd);
+                            ssl_map[client_fd] = ssl;
+
+                            struct epoll_event client_ev;
+                            client_ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+                            client_ev.data.fd = client_fd;
+                            epoll_ctl(epfd, EPOLL_CTL_ADD, client_fd, &client_ev);
+                        }
+                    } else {
+                        WOLFSSL *ssl = ssl_map[fd];
+                        if (!ssl) continue;
+
+                        if (!wolfSSL_is_init_finished(ssl)) {
+                            int ret = wolfSSL_accept(ssl);
+                            if (ret != SSL_SUCCESS) {
+                                int err = wolfSSL_get_error(ssl, ret);
+                                if (err == WOLFSSL_ERROR_WANT_READ || err == WOLFSSL_ERROR_WANT_WRITE) continue;
+                                goto close_client;
+                            }
+                            continue;
+                        }
+
+                        char request[8192];
+                        int req_len = wolfSSL_read(ssl, request, sizeof(request) - 1);
+                        if (req_len > 0) {
+                            request[req_len] = '\0';
+                            char *response = handle_http_request(request, req_len, i);
+                            if (response) {
+                                int resp_len = strlen(response);
+                                int total_written = 0;
+                                while (total_written < resp_len) {
+                                    int written = wolfSSL_write(ssl, response + total_written, resp_len - total_written);
+                                    if (written > 0) {
+                                        total_written += written;
+                                    } else {
+                                        int err = wolfSSL_get_error(ssl, written);
+                                        if (err == WOLFSSL_ERROR_WANT_READ || err == WOLFSSL_ERROR_WANT_WRITE) break;
+                                        free(response);
+                                        goto close_client;
+                                    }
+                                }
+                                free(response);
+                            } else goto close_client;
+                        } else if (req_len < 0) {
+                            int err = wolfSSL_get_error(ssl, req_len);
+                            if (err == WOLFSSL_ERROR_WANT_READ || err == WOLFSSL_ERROR_WANT_WRITE) continue;
+                            goto close_client;
+                        } else {
+                            goto close_client;
+                        }
+                        continue;
+                        
+                    close_client:
+                        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                        wolfSSL_free(ssl);
+                        ssl_map[fd] = NULL;
+                        close(fd);
+                    }
                 }
-                close(client_fd);
             }
             exit(0);
         }

@@ -1,0 +1,66 @@
+[ 42%] Built target tlspeek
+[ 64%] Built target gateway
+[ 71%] Building C object CMakeFiles/worker.dir/worker/worker.c.o
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:44:5: error: unknown type name ‘WOLFSSL’
+   44 |     WOLFSSL *ssl;
+      |     ^~~~~~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c: In function ‘close_client’:
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:53:9: warning: implicit declaration of function ‘wolfSSL_shutdown’ [-Wimplicit-function-declaration]
+   53 |         wolfSSL_shutdown(clients[fd].ssl);
+      |         ^~~~~~~~~~~~~~~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:54:9: warning: implicit declaration of function ‘wolfSSL_free’ [-Wimplicit-function-declaration]
+   54 |         wolfSSL_free(clients[fd].ssl);
+      |         ^~~~~~~~~~~~
+In file included from /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:61:
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/wolfssl/ssl.h: At top level:
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/wolfssl/ssl.h:1481:30: warning: conflicting types for ‘wolfSSL_free’; have ‘void(WOLFSSL *)’
+ 1481 | WOLFSSL_ABI WOLFSSL_API void wolfSSL_free(WOLFSSL* ssl);
+      |                              ^~~~~~~~~~~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:54:9: note: previous implicit declaration of ‘wolfSSL_free’ with type ‘void(WOLFSSL *)’
+   54 |         wolfSSL_free(clients[fd].ssl);
+      |         ^~~~~~~~~~~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c: In function ‘main’:
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:217:48: warning: assignment to ‘int *’ from incompatible pointer type ‘WOLFSSL *’ [-Wincompatible-pointer-types]
+  217 |                         clients[client_fd].ssl = ssl;
+      |                                                ^
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:248:57: warning: passing argument 1 of ‘wolfSSL_read’ from incompatible pointer type [-Wincompatible-pointer-types]
+  248 |                     req_len = wolfSSL_read(clients[c_fd].ssl, request, sizeof(request) - 1);
+      |                                            ~~~~~~~~~~~~~^~~~
+      |                                                         |
+      |                                                         int *
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/wolfssl/ssl.h:1416:52: note: expected ‘WOLFSSL *’ but argument is of type ‘int *’
+ 1416 | WOLFSSL_ABI WOLFSSL_API int  wolfSSL_read(WOLFSSL* ssl, void* data, int sz);
+      |                                           ~~~~~~~~~^~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:261:74: warning: passing argument 1 of ‘wolfSSL_write’ from incompatible pointer type [-Wincompatible-pointer-types]
+  261 |                                 int written = wolfSSL_write(clients[c_fd].ssl, response + total_written, resp_len - total_written);
+      |                                                             ~~~~~~~~~~~~~^~~~
+      |                                                                          |
+      |                                                                          int *
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/wolfssl/ssl.h:1413:14: note: expected ‘WOLFSSL *’ but argument is of type ‘int *’
+ 1413 |     WOLFSSL* ssl, const void* data, int sz);
+      |     ~~~~~~~~~^~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:264:78: warning: passing argument 1 of ‘wolfSSL_get_error’ from incompatible pointer type [-Wincompatible-pointer-types]
+  264 |                                     int err = wolfSSL_get_error(clients[c_fd].ssl, written);
+      |                                                                 ~~~~~~~~~~~~~^~~~
+      |                                                                              |
+      |                                                                              int *
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/wolfssl/ssl.h:1490:57: note: expected ‘WOLFSSL *’ but argument is of type ‘int *’
+ 1490 | WOLFSSL_ABI WOLFSSL_API int  wolfSSL_get_error(WOLFSSL* ssl, int ret);
+      |                                                ~~~~~~~~~^~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:279:66: warning: passing argument 1 of ‘wolfSSL_get_error’ from incompatible pointer type [-Wincompatible-pointer-types]
+  279 |                         int err = wolfSSL_get_error(clients[c_fd].ssl, req_len);
+      |                                                     ~~~~~~~~~~~~~^~~~
+      |                                                                  |
+      |                                                                  int *
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/wolfssl/ssl.h:1490:57: note: expected ‘WOLFSSL *’ but argument is of type ‘int *’
+ 1490 | WOLFSSL_ABI WOLFSSL_API int  wolfSSL_get_error(WOLFSSL* ssl, int ret);
+      |                                                ~~~~~~~~~^~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:229:33: warning: ignoring return value of ‘write’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  229 |                                 write(client_fd, response, strlen(response));
+      |                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/worker/worker.c:271:29: warning: ignoring return value of ‘write’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  271 |                             write(c_fd, response, resp_len);
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+make[2]: *** [CMakeFiles/worker.dir/build.make:76 : CMakeFiles/worker.dir/worker/worker.c.o] Erreur 1
+make[1]: *** [CMakeFiles/Makefile2:141 : CMakeFiles/worker.dir/all] Erreur 2
+make: *** [Makefile:91 : all] Erreur 2

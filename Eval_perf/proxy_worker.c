@@ -7,8 +7,16 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <sys/epoll.h>
+#include <fcntl.h>
 
 #define BACKLOG 4096
+#define MAX_EVENTS 2048
+
+static void set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
 
 void handle_client(int client_fd, int id) {
     while (1) {
@@ -74,24 +82,73 @@ int main(int argc, char *argv[]) {
 
     #include <signal.h>
     signal(SIGCHLD, SIG_IGN);
-
 #ifndef QUIET
-    printf("[proxy-worker-%d] Listening on %s (On-demand forking)\n", id, sock_path);
+    printf("[proxy-worker-%d] Listening on %s (Epoll Event Loop)\n", id, sock_path);
 #endif
 
+    set_nonblocking(listen_fd);
+    int epfd = epoll_create1(0);
+    struct epoll_event ev, events[MAX_EVENTS];
+    ev.events = EPOLLIN;
+    ev.data.fd = listen_fd;
+    epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &ev);
+
     while (1) {
-        int client_fd = accept(listen_fd, NULL, NULL);
-        if (client_fd < 0) {
+        int nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+        if (nfds < 0) {
             if (errno == EINTR) continue;
-            continue;
+            break;
         }
-        
-        if (fork() == 0) {
-            close(listen_fd);
-            handle_client(client_fd, id);
-            exit(0);
+
+        for (int i = 0; i < nfds; i++) {
+            int fd = events[i].data.fd;
+
+            if (fd == listen_fd) {
+                while (1) {
+                    int client_fd = accept(listen_fd, NULL, NULL);
+                    if (client_fd < 0) break; // EWOULDBLOCK
+                    set_nonblocking(client_fd);
+                    struct epoll_event client_ev;
+                    client_ev.events = EPOLLIN;
+                    client_ev.data.fd = client_fd;
+                    epoll_ctl(epfd, EPOLL_CTL_ADD, client_fd, &client_ev);
+                }
+            } else {
+                char buffer[8192];
+                int n = read(fd, buffer, sizeof(buffer) - 1);
+                if (n > 0) {
+                    buffer[n] = '\0';
+                    double a = 0, b = 0;
+                    const char *pa = strstr(buffer, "a=");
+                    if (pa) a = atof(pa + 2);
+                    const char *pb = strstr(buffer, "b=");
+                    if (pb) b = atof(pb + 2);
+
+                    char body[256];
+                    int body_len = snprintf(body, sizeof(body), 
+                        "{\"mode\":\"proxy\",\"worker\":%d,\"result\":%.2f}\n", 
+                        id, (strstr(buffer, "/sum") ? (a+b) : (a*b)));
+                    
+                    char response[1024];
+                    int resp_len = snprintf(response, sizeof(response),
+                        "HTTP/1.1 200 OK\r\n"
+                        "Content-Type: application/json\r\n"
+                        "Content-Length: %d\r\n"
+                        "Connection: keep-alive\r\n"
+                        "\r\n"
+                        "%s",
+                        body_len, body);
+                    
+                    int written = write(fd, response, resp_len);
+                    (void)written;
+                } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    continue;
+                } else {
+                    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                    close(fd);
+                }
+            }
         }
-        close(client_fd);
     }
     return 0;
 }
