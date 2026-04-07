@@ -236,7 +236,7 @@ int main(int argc, char *argv[])
                     }
 
                     struct epoll_event c_ev;
-                    c_ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+                    c_ev.events = EPOLLIN;
                     c_ev.data.fd = client_fd;
                     epoll_ctl(epfd, EPOLL_CTL_ADD, client_fd, &c_ev);
                 }

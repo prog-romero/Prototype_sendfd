@@ -75,7 +75,7 @@ run_phase() {
     
     URL="https://127.0.0.1:8445${path}"
     CONCURRENCY=(50 100 150 200 250 300 350 400 500 600 700 800 900 950 1000)
-    DURATION="50s"
+    DURATION="10s"
     THREADS=4
     
     CSV_NAME="results_${mode}.csv"

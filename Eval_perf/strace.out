@@ -1,0 +1,195 @@
+execve("./direct_tls_server", ["./direct_tls_server"], 0x7ffff959d8c8 /* 80 vars */) = 0
+brk(NULL)                               = 0x646c3cfac000
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x73594f40f000
+access("/etc/ld.so.preload", R_OK)      = -1 ENOENT (Aucun fichier ou dossier de ce nom)
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=92455, ...}) = 0
+mmap(NULL, 92455, PROT_READ, MAP_PRIVATE, 3, 0) = 0x73594f3f8000
+close(3)                                = 0
+openat(AT_FDCWD, "/usr/local/lib/libwolfssl.so.44", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0755, st_size=1413464, ...}) = 0
+mmap(NULL, 1274776, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x73594f2c0000
+mmap(0x73594f2ee000, 786432, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x2e000) = 0x73594f2ee000
+mmap(0x73594f3ae000, 245760, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xee000) = 0x73594f3ae000
+mmap(0x73594f3ea000, 28672, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x12a000) = 0x73594f3ea000
+mmap(0x73594f3f1000, 25496, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x73594f3f1000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\220\243\2\0\0\0\0\0"..., 832) = 832
+pread64(3, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 784, 64) = 784
+fstat(3, {st_mode=S_IFREG|0755, st_size=2125328, ...}) = 0
+pread64(3, "\6\0\0\0\4\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 784, 64) = 784
+mmap(NULL, 2170256, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x73594f000000
+mmap(0x73594f028000, 1605632, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x28000) = 0x73594f028000
+mmap(0x73594f1b0000, 323584, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1b0000) = 0x73594f1b0000
+mmap(0x73594f1ff000, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1fe000) = 0x73594f1ff000
+mmap(0x73594f205000, 52624, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x73594f205000
+close(3)                                = 0
+openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libm.so.6", O_RDONLY|O_CLOEXEC) = 3
+read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+fstat(3, {st_mode=S_IFREG|0644, st_size=952616, ...}) = 0
+mmap(NULL, 950296, PROT_READ, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x73594ef17000
+mmap(0x73594ef27000, 520192, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x10000) = 0x73594ef27000
+mmap(0x73594efa6000, 360448, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x8f000) = 0x73594efa6000
+mmap(0x73594effe000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xe7000) = 0x73594effe000
+close(3)                                = 0
+mmap(NULL, 12288, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x73594f2bd000
+arch_prctl(ARCH_SET_FS, 0x73594f2be1c0) = 0
+set_tid_address(0x73594f2be490)         = 856007
+set_robust_list(0x73594f2be4a0, 24)     = 0
+rseq(0x73594f2beae0, 0x20, 0, 0x53053053) = 0
+mprotect(0x73594f1ff000, 16384, PROT_READ) = 0
+mprotect(0x73594effe000, 4096, PROT_READ) = 0
+mprotect(0x73594f3ea000, 16384, PROT_READ) = 0
+mprotect(0x646c3a4c8000, 4096, PROT_READ) = 0
+mprotect(0x73594f44d000, 8192, PROT_READ) = 0
+prlimit64(0, RLIMIT_STACK, NULL, {rlim_cur=8192*1024, rlim_max=RLIM64_INFINITY}) = 0
+munmap(0x73594f3f8000, 92455)           = 0
+rt_sigaction(SIGCHLD, {sa_handler=SIG_IGN, sa_mask=[CHLD], sa_flags=SA_RESTORER|SA_RESTART, sa_restorer=0x73594f045330}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+rt_sigaction(SIGPIPE, {sa_handler=SIG_IGN, sa_mask=[PIPE], sa_flags=SA_RESTORER|SA_RESTART, sa_restorer=0x73594f045330}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+getpid()                                = 856007
+getrandom("\x60\x4f\x96\xf7\xae\xed\x2a\x22", 8, GRND_NONBLOCK) = 8
+brk(NULL)                               = 0x646c3cfac000
+brk(0x646c3cfcd000)                     = 0x646c3cfcd000
+getrandom("\x96\x63\xff\x26\xf6\x22\xe8\xcf\x0c\xec\xe6\x1c\xe1\x32\xbf\x31\x85\x16\x13\x68\x50\x8e\x7c\x4c\xd5\x8d\x58\x25\xc3\xd3\xc9\xbb"..., 52, 0) = 52
+openat(AT_FDCWD, "../libtlspeek/certs/server.crt", O_RDONLY) = 3
+lseek(3, 0, SEEK_CUR)                   = 0
+fstat(3, {st_mode=S_IFREG|0664, st_size=1671, ...}) = 0
+fstat(3, {st_mode=S_IFREG|0664, st_size=1671, ...}) = 0
+lseek(3, 0, SEEK_SET)                   = 0
+read(3, "-----BEGIN CERTIFICATE-----\nMIIE"..., 1671) = 1671
+lseek(3, 1671, SEEK_SET)                = 1671
+close(3)                                = 0
+openat(AT_FDCWD, "/etc/localtime", O_RDONLY|O_CLOEXEC) = 3
+fstat(3, {st_mode=S_IFREG|0644, st_size=2962, ...}) = 0
+fstat(3, {st_mode=S_IFREG|0644, st_size=2962, ...}) = 0
+read(3, "TZif2\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\r\0\0\0\r\0\0\0\0"..., 4096) = 2962
+lseek(3, -1863, SEEK_CUR)               = 1099
+read(3, "TZif2\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\r\0\0\0\r\0\0\0\0"..., 4096) = 1863
+close(3)                                = 0
+openat(AT_FDCWD, "../libtlspeek/certs/server.key", O_RDONLY) = 3
+lseek(3, 0, SEEK_CUR)                   = 0
+fstat(3, {st_mode=S_IFREG|0600, st_size=1708, ...}) = 0
+fstat(3, {st_mode=S_IFREG|0600, st_size=1708, ...}) = 0
+lseek(3, 0, SEEK_SET)                   = 0
+read(3, "-----BEGIN PRIVATE KEY-----\nMIIE"..., 1708) = 1708
+lseek(3, 1708, SEEK_SET)                = 1708
+close(3)                                = 0
+fstat(1, {st_mode=S_IFREG|0664, st_size=5675, ...}) = 0
+clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLDstrace: Process 856008 attached
+, child_tidptr=0x73594f2be490) = 856008
+[pid 856008] set_robust_list(0x73594f2be4a0, 24 <unfinished ...>
+[pid 856007] clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD <unfinished ...>
+[pid 856008] <... set_robust_list resumed>) = 0
+[pid 856008] socket(AF_INET, SOCK_STREAM, IPPROTO_IP) = 3
+[pid 856008] setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4strace: Process 856009 attached
+ <unfinished ...>
+[pid 856007] <... clone resumed>, child_tidptr=0x73594f2be490) = 856009
+[pid 856008] <... setsockopt resumed>)  = 0
+[pid 856007] wait4(-1,  <unfinished ...>
+[pid 856009] set_robust_list(0x73594f2be4a0, 24 <unfinished ...>
+[pid 856008] setsockopt(3, SOL_SOCKET, SO_REUSEPORT, [1], 4 <unfinished ...>
+[pid 856009] <... set_robust_list resumed>) = 0
+[pid 856008] <... setsockopt resumed>)  = 0
+[pid 856009] socket(AF_INET, SOCK_STREAM, IPPROTO_IP <unfinished ...>
+[pid 856008] bind(3, {sa_family=AF_INET, sin_port=htons(8445), sin_addr=inet_addr("0.0.0.0")}, 16 <unfinished ...>
+[pid 856009] <... socket resumed>)      = 3
+[pid 856009] setsockopt(3, SOL_SOCKET, SO_REUSEADDR, [1], 4 <unfinished ...>
+[pid 856008] <... bind resumed>)        = 0
+[pid 856009] <... setsockopt resumed>)  = 0
+[pid 856008] listen(3, 16384 <unfinished ...>
+[pid 856009] setsockopt(3, SOL_SOCKET, SO_REUSEPORT, [1], 4) = 0
+[pid 856008] <... listen resumed>)      = 0
+[pid 856009] bind(3, {sa_family=AF_INET, sin_port=htons(8445), sin_addr=inet_addr("0.0.0.0")}, 16 <unfinished ...>
+[pid 856008] fcntl(3, F_GETFL <unfinished ...>
+[pid 856009] <... bind resumed>)        = 0
+[pid 856008] <... fcntl resumed>)       = 0x2 (flags O_RDWR)
+[pid 856009] listen(3, 16384 <unfinished ...>
+[pid 856008] fcntl(3, F_SETFL, O_RDWR|O_NONBLOCK <unfinished ...>
+[pid 856009] <... listen resumed>)      = 0
+[pid 856008] <... fcntl resumed>)       = 0
+[pid 856009] fcntl(3, F_GETFL <unfinished ...>
+[pid 856008] epoll_create1(0 <unfinished ...>
+[pid 856009] <... fcntl resumed>)       = 0x2 (flags O_RDWR)
+[pid 856008] <... epoll_create1 resumed>) = 4
+[pid 856009] fcntl(3, F_SETFL, O_RDWR|O_NONBLOCK <unfinished ...>
+[pid 856008] epoll_ctl(4, EPOLL_CTL_ADD, 3, {events=EPOLLIN, data={u32=3, u64=3}} <unfinished ...>
+[pid 856009] <... fcntl resumed>)       = 0
+[pid 856008] <... epoll_ctl resumed>)   = 0
+[pid 856009] epoll_create1(0)           = 4
+[pid 856009] epoll_ctl(4, EPOLL_CTL_ADD, 3, {events=EPOLLIN, data={u32=3, u64=3}}) = 0
+[pid 856009] epoll_wait(4,  <unfinished ...>
+[pid 856008] epoll_wait(4,  <unfinished ...>
+[pid 856009] <... epoll_wait resumed>[{events=EPOLLIN, data={u32=3, u64=3}}], 2048, -1) = 1
+[pid 856009] accept(3, {sa_family=AF_INET, sin_port=htons(30588), sin_addr=inet_addr("127.0.0.1")}, [16]) = 5
+[pid 856009] fcntl(5, F_GETFL)          = 0x2 (flags O_RDWR)
+[pid 856009] fcntl(5, F_SETFL, O_RDWR|O_NONBLOCK) = 0
+[pid 856009] setsockopt(5, SOL_TCP, TCP_NODELAY, [1], 4) = 0
+[pid 856009] getpid()                   = 856009
+[pid 856009] getrandom("\x25\x0c\xc8\x63\x67\xa3\x8f\x61\xec\xfb\xaf\xb7\xf3\xff\xf4\x30\xb8\xfa\x30\xf8\x5b\x48\x93\xa8\xe4\xd1\xbf\x5b\xec\x37\xa1\x46"..., 52, 0) = 52
+[pid 856009] epoll_ctl(4, EPOLL_CTL_ADD, 5, {events=EPOLLIN|EPOLLOUT|EPOLLET, data={u32=5, u64=5}}) = 0
+[pid 856009] accept(3, 0x7ffc9436fc70, [16]) = -1 EAGAIN (Ressource temporairement non disponible)
+[pid 856009] epoll_wait(4, [{events=EPOLLOUT, data={u32=5, u64=5}}], 2048, -1) = 1
+[pid 856009] recvfrom(5, 0x646c3cfb0fd0, 5, 0, NULL, NULL) = -1 EAGAIN (Ressource temporairement non disponible)
+[pid 856009] epoll_wait(4, [{events=EPOLLIN|EPOLLOUT, data={u32=5, u64=5}}], 2048, -1) = 1
+[pid 856009] recvfrom(5, "\26\3\1\2\0", 5, 0, NULL, NULL) = 5
+[pid 856009] recvfrom(5, "\1\0\1\374\3\3\37S\246\356\324\311\313\255{\254\326\255%\261S\345\231\234\343}\201.\3016\347\250"..., 512, 0, NULL, NULL) = 512
+[pid 856009] sendto(5, "\26\3\3\0X\2\0\0T\3\3\317!\255t\345\232a\21\276\35\214\2\36e\270\221\302\242\21\26z"..., 93, 0, NULL, 0) = 93
+[pid 856009] recvfrom(5, 0x646c3cfb0fd0, 5, 0, NULL, NULL) = -1 EAGAIN (Ressource temporairement non disponible)
+[pid 856009] epoll_wait(4, [{events=EPOLLIN|EPOLLOUT, data={u32=5, u64=5}}], 2048, -1) = 1
+[pid 856009] recvfrom(5, "\24\3\3\0\1", 5, 0, NULL, NULL) = 5
+[pid 856009] recvfrom(5, "\1", 1, 0, NULL, NULL) = 1
+[pid 856009] recvfrom(5, "\26\3\3\2\0", 5, 0, NULL, NULL) = 5
+[pid 856009] recvfrom(5, "\1\0\1\374\3\3\37S\246\356\324\311\313\255{\254\326\255%\261S\345\231\234\343}\201.\3016\347\250"..., 512, 0, NULL, NULL) = 512
+[pid 856009] getpid()                   = 856009
+[pid 856009] getpid()                   = 856009
+[pid 856009] getpid()                   = 856009
+[pid 856009] getpid()                   = 856009
+[pid 856009] sendto(5, "\26\3\3\0\233\2\0\0\227\3\3\31g\361'\340+\3744\2G\227\304\206O\223+\330\32\356v\345"..., 160, 0, NULL, 0) = 160
+[pid 856009] getpid()                   = 856009
+[pid 856009] getpid()                   = 856009
+[pid 856009] openat(AT_FDCWD, "sslkeylog.log", O_WRONLY|O_CREAT|O_APPEND, 0666) = 6
+[pid 856009] lseek(6, 0, SEEK_END)      = 0
+[pid 856009] fstat(6, {st_mode=S_IFREG|0664, st_size=0, ...}) = 0
+[pid 856009] write(6, "CLIENT_HANDSHAKE_TRAFFIC_SECRET "..., 194) = 194
+[pid 856009] close(6)                   = 0
+[pid 856009] openat(AT_FDCWD, "sslkeylog.log", O_WRONLY|O_CREAT|O_APPEND, 0666) = 6
+[pid 856009] lseek(6, 0, SEEK_END)      = 194
+[pid 856009] fstat(6, {st_mode=S_IFREG|0664, st_size=194, ...}) = 0
+[pid 856009] write(6, "SERVER_HANDSHAKE_TRAFFIC_SECRET "..., 194) = 194
+[pid 856009] close(6)                   = 0
+[pid 856009] sendto(5, "\27\3\3\0+\342\225k\250 \317j\256\312)\351\311x\202\357\345\36\254\312h\203\335\235v\312\304\n"..., 48, 0, NULL, 0) = 48
+[pid 856009] sendto(5, "\27\3\3\4\307U,\307\254\316\347%\23\226\240S\217\276@\7\221~\334\331st,\3151[\177\204"..., 1228, 0, NULL, 0) = 1228
+[pid 856009] getpid()                   = 856009
+[pid 856009] getpid()                   = 856009
+[pid 856009] sendto(5, "\27\3\3\1\31\213kt,\"\264~\346Ex\4\237F\212\22};\25\360\3\367\277\20\300|O\262"..., 286, 0, NULL, 0) = 286
+[pid 856009] openat(AT_FDCWD, "sslkeylog.log", O_WRONLY|O_CREAT|O_APPEND, 0666) = 6
+[pid 856009] lseek(6, 0, SEEK_END)      = 388
+[pid 856009] fstat(6, {st_mode=S_IFREG|0664, st_size=388, ...}) = 0
+[pid 856009] write(6, "CLIENT_TRAFFIC_SECRET_0 1f53a6ee"..., 186) = 186
+[pid 856009] close(6)                   = 0
+[pid 856009] openat(AT_FDCWD, "sslkeylog.log", O_WRONLY|O_CREAT|O_APPEND, 0666) = 6
+[pid 856009] lseek(6, 0, SEEK_END)      = 574
+[pid 856009] fstat(6, {st_mode=S_IFREG|0664, st_size=574, ...}) = 0
+[pid 856009] write(6, "SERVER_TRAFFIC_SECRET_0 1f53a6ee"..., 186) = 186
+[pid 856009] close(6)                   = 0
+[pid 856009] sendto(5, "\27\3\3\0EW\341\0J\356\225\240\326\332\355\307\16\"[\355\7/f\231\264'\26vJ^s\25"..., 74, 0, NULL, 0) = 74
+[pid 856009] recvfrom(5, 0x646c3cfb0fd0, 5, 0, NULL, NULL) = -1 EAGAIN (Ressource temporairement non disponible)
+[pid 856009] epoll_wait(4, [{events=EPOLLIN|EPOLLOUT, data={u32=5, u64=5}}], 2048, -1) = 1
+[pid 856009] recvfrom(5, "\27\3\3\0E", 5, 0, NULL, NULL) = 5
+[pid 856009] recvfrom(5, "N\216f\301\220\251k\243\337\215\356\ft\210\337\33\250\355\222I\312\26\36\226\246\2758\35\30\325\7\206"..., 69, 0, NULL, NULL) = 69
+[pid 856009] epoll_wait(4, [{events=EPOLLIN|EPOLLOUT, data={u32=5, u64=5}}], 2048, -1) = 1
+[pid 856009] recvfrom(5, "\27\3\3\0k", 5, 0, NULL, NULL) = 5
+[pid 856009] recvfrom(5, "\363\331\247\323\304\310'\304\1\236\352;\273\250\320h=\363\237Z\222E\327\202\235]\335s#\302\20\301"..., 107, 0, NULL, NULL) = 107
+[pid 856009] sendto(5, "\27\3\3\0\256\212\353V\333\1\"\r\221\237,\22\262ss\22\310\tK#\362\2020*\327\t\217\4"..., 179, 0, NULL, 0) = 179
+[pid 856009] epoll_wait(4, [{events=EPOLLIN|EPOLLOUT, data={u32=5, u64=5}}], 2048, -1) = 1
+[pid 856009] recvfrom(5, "\27\3\3\0\23", 5, 0, NULL, NULL) = 5
+[pid 856009] recvfrom(5, "\254\177\7\330\331\207<\264\353\243,7|\305O6>\353\353", 19, 0, NULL, NULL) = 19
+[pid 856009] epoll_ctl(4, EPOLL_CTL_DEL, 5, NULL) = 0
+[pid 856009] close(5)                   = 0
+[pid 856009] epoll_wait(4,  <unfinished ...>
+[pid 856007] <... wait4 resumed>NULL, 0, NULL) = ? ERESTARTSYS (To be restarted if SA_RESTART is set)
+strace: Process 856007 detached
+strace: Process 856008 detached
+strace: Process 856009 detached

@@ -3,6 +3,10 @@
  * Harmonized with the Prototype's worker logic for fair comparison.
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #ifndef WOLFSSL_TLS13
 #define WOLFSSL_TLS13
 #endif
@@ -38,12 +42,13 @@ static void set_nonblocking(int fd) {
 #define CERT_FILE "../libtlspeek/certs/server.crt"
 #define KEY_FILE  "../libtlspeek/certs/server.key"
 #define BACKLOG 16384
-#define NUM_LISTENERS 2
+#define DEFAULT_LISTENERS 100
 
 // handle_connection removed, integrated into epoll
 
 int main(int argc, char** argv) {
     int port = (argc > 1) ? atoi(argv[1]) : 8445;
+    int num_listeners = (argc > 2) ? atoi(argv[2]) : DEFAULT_LISTENERS;
 
     signal(SIGCHLD, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
@@ -58,9 +63,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("[direct-tls] Starting harmonized baseline on port %d (%d listeners)...\n", port, NUM_LISTENERS);
+    printf("[direct-tls] Starting baseline on port %d with %d listeners (SO_REUSEPORT load-balanced)...\n", port, num_listeners);
 
-    for (int i = 0; i < NUM_LISTENERS; i++) {
+    for (int i = 0; i < num_listeners; i++) {
         if (fork() == 0) {
             int sockfd = socket(AF_INET, SOCK_STREAM, 0);
             int opt = 1;
@@ -115,7 +120,7 @@ int main(int argc, char** argv) {
                             ssl_map[client_fd] = ssl;
 
                             struct epoll_event client_ev;
-                            client_ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
+                            client_ev.events = EPOLLIN;
                             client_ev.data.fd = client_fd;
                             epoll_ctl(epfd, EPOLL_CTL_ADD, client_fd, &client_ev);
                         }
@@ -130,7 +135,7 @@ int main(int argc, char** argv) {
                                 if (err == WOLFSSL_ERROR_WANT_READ || err == WOLFSSL_ERROR_WANT_WRITE) continue;
                                 goto close_client;
                             }
-                            continue;
+                            // FALL THROUGH to read because TLS buffer may already contain parsed HTTP data!
                         }
 
                         char request[8192];

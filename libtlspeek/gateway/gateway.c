@@ -38,7 +38,7 @@
 #include "unix_socket.h"
 #include "router.h"
 
-#define MAX_WORKERS   8
+#define MAX_WORKERS   256  /* Increased for fair evaluation with many workers */
 #define LISTEN_BACKLOG 4096
 
 /* ─────────────────────────────────────────────────────────────────────────── */
