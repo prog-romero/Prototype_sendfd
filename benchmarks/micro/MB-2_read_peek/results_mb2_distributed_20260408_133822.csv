@@ -1,0 +1,131 @@
+
+╔════════════════════════════════════════════════════════════╗
+║  MB-2 BENCHMARK - read_peek() vs wolfSSL_read() overhead  ║
+╚════════════════════════════════════════════════════════════╝
+
+Server: 192.168.2.2:19446
+Payload sizes: 256B, 1KiB, 4KiB
+Iterations per size: 1000
+
+
+════════════════════════════════════════════════════════════
+Testing payload size: 256B
+════════════════════════════════════════════════════════════
+
+[MB-2-A] wolfSSL_read() only: payload=256 bytes, iterations=1000
+  ✓ Connected to server
+  Measuring Config A...
+    [100/1000]
+    [200/1000]
+    [300/1000]
+    [400/1000]
+    [500/1000]
+    [600/1000]
+    [700/1000]
+    [800/1000]
+    [900/1000]
+    [1000/1000]
+  ✓ Config A complete
+[MB-2-B] tls_read_peek() + wolfSSL_read(): payload=256 bytes, iterations=1000
+  ✓ Connected to server
+  Measuring Config B...
+    [100/1000]
+    [200/1000]
+    [300/1000]
+    [400/1000]
+    [500/1000]
+    [600/1000]
+    [700/1000]
+    [800/1000]
+    [900/1000]
+    [1000/1000]
+  ✓ Config B complete
+
+>>> Results for 256B:
+    Config A (read only):    19.28 ± 54.92 µs
+    Config B (peek + read):  35.23 ± 88.85 µs
+    Overhead:                15.96 µs (+82.8%)
+
+════════════════════════════════════════════════════════════
+Testing payload size: 1KiB
+════════════════════════════════════════════════════════════
+
+[MB-2-A] wolfSSL_read() only: payload=1024 bytes, iterations=1000
+  ✓ Connected to server
+  Measuring Config A...
+    [100/1000]
+    [200/1000]
+    [300/1000]
+    [400/1000]
+    [500/1000]
+    [600/1000]
+    [700/1000]
+    [800/1000]
+    [900/1000]
+    [1000/1000]
+  ✓ Config A complete
+[MB-2-B] tls_read_peek() + wolfSSL_read(): payload=1024 bytes, iterations=1000
+  ✓ Connected to server
+  Measuring Config B...
+    [100/1000]
+    [200/1000]
+    [300/1000]
+    [400/1000]
+    [500/1000]
+    [600/1000]
+    [700/1000]
+    [800/1000]
+    [900/1000]
+    [1000/1000]
+  ✓ Config B complete
+
+>>> Results for 1KiB:
+    Config A (read only):    2035.61 ± 63214.16 µs
+    Config B (peek + read):  2036.57 ± 63217.76 µs
+    Overhead:                0.96 µs (+0.0%)
+
+════════════════════════════════════════════════════════════
+Testing payload size: 4KiB
+════════════════════════════════════════════════════════════
+
+[MB-2-A] wolfSSL_read() only: payload=4096 bytes, iterations=1000
+  ✓ Connected to server
+  Measuring Config A...
+    [100/1000]
+    [200/1000]
+    [300/1000]
+    [400/1000]
+    [500/1000]
+    [600/1000]
+    [700/1000]
+    [800/1000]
+    [900/1000]
+    [1000/1000]
+  ✓ Config A complete
+[MB-2-B] tls_read_peek() + wolfSSL_read(): payload=4096 bytes, iterations=1000
+  ✓ Connected to server
+  Measuring Config B...
+    [100/1000]
+    [200/1000]
+    [300/1000]
+    [400/1000]
+    [500/1000]
+    [600/1000]
+    [700/1000]
+    [800/1000]
+    [900/1000]
+    [1000/1000]
+  ✓ Config B complete
+
+>>> Results for 4KiB:
+    Config A (read only):    2029.48 ± 63228.75 µs
+    Config B (peek + read):  2029.76 ± 63222.68 µs
+    Overhead:                0.28 µs (+0.0%)
+
+[✓] Benchmark complete. Results above in CSV format.
+256,A,1000,19275.89,19.28,54.92,0
+256,B,1000,35231.68,35.23,88.85,0
+1024,A,1000,2035608.02,2035.61,63214.16,500
+1024,B,1000,2036565.69,2036.57,63217.76,1500
+4096,A,1000,2029478.19,2029.48,63228.75,900
+4096,B,1000,2029756.32,2029.76,63222.68,1900

@@ -27,21 +27,24 @@
 #define BACKLOG 1
 #define TIMEOUT_SEC 30
 
-/* Test payload sizes */
-#define N_SIZES 3
-static const size_t PAYLOAD_SIZES[N_SIZES] = {256, 1024, 4096};
-static const char *SIZE_NAMES[N_SIZES] = {"256B", "1KiB", "4KiB"};
+/* Test payload sizes - 15 samples [test data points] logarithmically distributed [spread out on a log scale] */
+#define N_SIZES 15
+#define MAX_PAYLOAD_SIZE 32768
 
-/* Payload data for testing */
-static unsigned char test_payload_256b[256];
-static unsigned char test_payload_1kb[1024];
-static unsigned char test_payload_4kb[4096];
-
-static unsigned char *test_payloads[N_SIZES] = {
-    test_payload_256b,
-    test_payload_1kb,
-    test_payload_4kb
+static const size_t PAYLOAD_SIZES[N_SIZES] = {
+    256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768
 };
+
+static const char *SIZE_NAMES[N_SIZES] = {
+    "256B", "384B", "512B", "768B", "1KB", "1.5KB", "2KB", "3KB", 
+    "4KB", "6KB", "8KB", "12KB", "16KB", "24KB", "32KB"
+};
+
+/* Large static buffer for all payloads */
+static unsigned char payload_buffer[32768];
+
+/* Pointers to each payload section [part] */
+static unsigned char *test_payloads[N_SIZES];
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* Global state */
@@ -65,15 +68,16 @@ static void signal_handler(int sig) {
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 static void init_test_payloads(void) {
-    /* Fill with recognizable pattern for validation */
-    for (int i = 0; i < 256; i++)
-        test_payload_256b[i] = (unsigned char)(i % 256);
+    /* Fill large buffer with recognizable pattern [recognizable design] for validation [checking] */
+    for (int i = 0; i < MAX_PAYLOAD_SIZE; i++)
+        payload_buffer[i] = (unsigned char)(i % 256);
     
-    for (int i = 0; i < 1024; i++)
-        test_payload_1kb[i] = (unsigned char)(i % 256);
-    
-    for (int i = 0; i < 4096; i++)
-        test_payload_4kb[i] = (unsigned char)(i % 256);
+    /* Set up pointers [references] to each payload size section [part] */
+    size_t offset = 0;
+    for (int i = 0; i < N_SIZES; i++) {
+        test_payloads[i] = payload_buffer + offset;
+        offset += PAYLOAD_SIZES[i];
+    }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────── */

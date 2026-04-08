@@ -49,7 +49,7 @@ fi
 # Run benchmarks
 echo ""
 echo -e "${YELLOW}[2/3] Running benchmarks...${NC}"
-echo "  Payload sizes: 256B, 1KiB, 4KiB"
+echo "  Payload sizes: 256B to 32KB (15 samples [test data points])"
 echo "  Configurations: A (read), B (peek+read)"
 echo ""
 

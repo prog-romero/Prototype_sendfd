@@ -34,17 +34,40 @@ class MB2Analyzer:
             sys.exit(1)
         
         with open(self.csv_file, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                size = int(row['payload_size_bytes']) if 'payload_size_bytes' in row else int(row['payload_size'])
-                config = row['config']
-                avg_time = float(row['avg_time_per_iteration_us'] if 'avg_time_per_iteration_us' in row else row['avg_time_per_iter'])
-                stddev_time = float(row['stddev_us'] if 'stddev_us' in row else row['stddev'])
-                
-                if size not in self.data:
-                    self.data[size] = {}
-                
-                self.data[size][config] = {'avg': avg_time, 'stddev': stddev_time}
+            lines = f.readlines()
+        
+        # Find where CSV data starts (after header lines)
+        csv_start = 0
+        for i, line in enumerate(lines):
+            # Skip header lines and empty lines
+            if line.strip() and not line.startswith('═') and not line.startswith('│') and not line.startswith('['):
+                # Check if this line looks like CSV data (starts with number)
+                if line.strip()[0].isdigit():
+                    csv_start = i
+                    break
+        
+        # Parse CSV data (format: payload_size,config,iterations,total_time,avg_time,stddev,failed_count)
+        for line in lines[csv_start:]:
+            line = line.strip()
+            if not line or line.startswith('['):
+                continue
+            
+            try:
+                parts = line.split(',')
+                if len(parts) >= 5:
+                    size = int(parts[0])
+                    config = parts[1].strip()
+                    # avg_time is at index 4
+                    avg_time = float(parts[4])
+                    # stddev is at index 5
+                    stddev_time = float(parts[5]) if len(parts) > 5 else 0.0
+                    
+                    if size not in self.data:
+                        self.data[size] = {}
+                    
+                    self.data[size][config] = {'avg': avg_time, 'stddev': stddev_time}
+            except (ValueError, IndexError):
+                continue
     
     def plot_overhead(self, output_file='plot_mb2.png'):
         """Create line chart of overhead vs payload size"""
@@ -66,10 +89,18 @@ class MB2Analyzer:
                 overhead_stds.append(0)
         
         # Create figure
-        fig, ax = plt.subplots(figsize=(12, 7))
+        fig, ax = plt.subplots(figsize=(14, 8))
         
-        # Convert sizes to display names
-        size_labels = ['256 B', '1 KiB', '4 KiB']
+        # Generate display labels for sizes
+        def size_to_label(size_bytes):
+            if size_bytes >= 1024 * 1024:
+                return f"{size_bytes // (1024*1024)} MB"
+            elif size_bytes >= 1024:
+                return f"{size_bytes // 1024} KB"
+            else:
+                return f"{size_bytes} B"
+        
+        size_labels = [size_to_label(s) for s in sizes]
         x_pos = np.arange(len(sizes))
         
         # Plot line with error bars
