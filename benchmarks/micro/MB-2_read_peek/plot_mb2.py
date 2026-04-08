@@ -158,9 +158,16 @@ class MB2Analyzer:
         
         # Labels and title
         ax.set_xlabel('Payload Size', fontsize=13, fontweight='bold')
-        ax.set_ylabel('Time (µs)', fontsize=13, fontweight='bold')
+        ax.set_ylabel('Time (µs) [Microseconds]', fontsize=13, fontweight='bold')
         ax.set_title('MB-2: Configuration Comparison - read() Only vs peek() + read()\nShowing both configurations side-by-side with overhead percentages',
                     fontsize=15, fontweight='bold', pad=20)
+        
+        # Add unit conversion note on the graph
+        conversion_text = 'Scale Factor: 1000 ns = 1 µs\n(Values divided by 1000 iterations)'
+        ax.text(0.02, 0.98, conversion_text, transform=ax.transAxes,
+               fontsize=10, verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='#ecf0f1', alpha=0.8, edgecolor='#34495e', linewidth=1.5),
+               family='monospace')
         
         # X-axis
         ax.set_xticks(x_pos)
