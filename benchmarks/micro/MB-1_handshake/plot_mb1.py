@@ -83,43 +83,53 @@ class MB1Analyzer:
         means_b = [stats[c]['B']['mean'] for c in counts]
         stds_b = [stats[c]['B']['std'] for c in counts]
         
-        # Create figure
-        fig, ax = plt.subplots(figsize=(12, 6))
+        # Create figure with more space
+        fig, ax = plt.subplots(figsize=(14, 8))
         
         # Plot bars
         bars_a = ax.bar(x - width/2, means_a, width, label='Config A: Vanilla wolfSSL',
                        color='#3498db', alpha=0.8, edgecolor='black', linewidth=1.5,
-                       yerr=stds_a, capsize=5, error_kw={'elinewidth': 2, 'capthick': 2})
+                       yerr=stds_a, capsize=6, error_kw={'elinewidth': 1.5, 'capthick': 2})
         
         bars_b = ax.bar(x + width/2, means_b, width, label='Config B: With keylog callback',
                        color='#e74c3c', alpha=0.8, edgecolor='black', linewidth=1.5,
-                       yerr=stds_b, capsize=5, error_kw={'elinewidth': 2, 'capthick': 2})
+                       yerr=stds_b, capsize=6, error_kw={'elinewidth': 1.5, 'capthick': 2})
         
         # Labels and title
-        ax.set_xlabel('Number of Handshakes', fontsize=12, fontweight='bold')
-        ax.set_ylabel('Time per Handshake (µs)', fontsize=12, fontweight='bold')
+        ax.set_xlabel('Number of Handshakes', fontsize=13, fontweight='bold')
+        ax.set_ylabel('Time per Handshake (µs)', fontsize=13, fontweight='bold')
         ax.set_title('MB-1: TLS 1.3 Handshake Rate Comparison\nlibtlspeek Overhead Analysis',
-                    fontsize=14, fontweight='bold', pad=20)
+                    fontsize=15, fontweight='bold', pad=25)
         
         # X-axis
         ax.set_xticks(x)
-        ax.set_xticklabels([f'{c:,}' for c in counts], fontsize=11)
+        ax.set_xticklabels([f'{c:,}' for c in counts], fontsize=12)
         
         # Grid
         ax.grid(axis='y', alpha=0.3, linestyle='--', linewidth=0.7)
         ax.set_axisbelow(True)
         
-        # Legend
-        ax.legend(loc='upper left', fontsize=11, framealpha=0.95)
+        # Legend at right side, outside plot area
+        ax.legend(loc='upper left', fontsize=12, framealpha=0.95, 
+                 bbox_to_anchor=(1.01, 1), borderaxespad=0)
         
-        # Add value labels on bars
-        for bars in [bars_a, bars_b]:
-            for bar in bars:
+        # Get y-axis max to calculate offset for labels
+        y_max = max(max(means_a) + max(stds_a), max(means_b) + max(stds_b)) * 1.1
+        
+        # Add value labels on bars with proper spacing above error bars
+        for bars, stds in [(bars_a, stds_a), (bars_b, stds_b)]:
+            for i, (bar, std) in enumerate(zip(bars, stds)):
                 height = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width()/2., height,
-                       f'{height:.1f}', ha='center', va='bottom', fontsize=9)
+                # Position text above error bar
+                y_pos = height + std + (y_max * 0.02)  # Add 2% padding
+                ax.text(bar.get_x() + bar.get_width()/2., y_pos,
+                       f'{height:.1f}', ha='center', va='bottom', 
+                       fontsize=10, fontweight='bold')
         
-        # Tight layout
+        # Set y-axis limit with extra space at top for labels
+        ax.set_ylim(0, y_max * 1.15)
+        
+        # Tight layout with extra space
         plt.tight_layout()
         
         # Save
