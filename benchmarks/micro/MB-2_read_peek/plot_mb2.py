@@ -70,30 +70,43 @@ class MB2Analyzer:
                 continue
     
     def plot_overhead(self, output_file='plot_mb2.png'):
-        """Create line chart of overhead vs payload size"""
+        """Create grouped bar chart showing both Config A and Config B"""
         sizes = sorted(self.data.keys())
         
-        overhead_values = []
-        overhead_stds = []
+        config_a_values = []
+        config_b_values = []
+        config_a_stds = []
+        config_b_stds = []
         overhead_percentages = []
         
         for size in sizes:
+            if 'A' in self.data[size]:
+                a = self.data[size]['A']
+                config_a_values.append(a['avg'])
+                config_a_stds.append(a['stddev'])
+            else:
+                config_a_values.append(0)
+                config_a_stds.append(0)
+            
+            if 'B' in self.data[size]:
+                b = self.data[size]['B']
+                config_b_values.append(b['avg'])
+                config_b_stds.append(b['stddev'])
+            else:
+                config_b_values.append(0)
+                config_b_stds.append(0)
+            
             if 'A' in self.data[size] and 'B' in self.data[size]:
                 a = self.data[size]['A']
                 b = self.data[size]['B']
                 overhead = b['avg'] - a['avg']
-                overhead_std = np.sqrt(a['stddev']**2 + b['stddev']**2)
                 overhead_pct = (overhead / a['avg'] * 100) if a['avg'] > 0 else 0
-                overhead_values.append(overhead)
-                overhead_stds.append(overhead_std)
                 overhead_percentages.append(overhead_pct)
             else:
-                overhead_values.append(0)
-                overhead_stds.append(0)
                 overhead_percentages.append(0)
         
         # Create figure
-        fig, ax = plt.subplots(figsize=(14, 8))
+        fig, ax = plt.subplots(figsize=(15, 8))
         
         # Generate display labels for sizes
         def size_to_label(size_bytes):
@@ -106,32 +119,47 @@ class MB2Analyzer:
         
         size_labels = [size_to_label(s) for s in sizes]
         x_pos = np.arange(len(sizes))
+        bar_width = 0.35
         
-        # Plot line with error bars
-        ax.errorbar(x_pos, overhead_values, yerr=overhead_stds, 
-                   fmt='o-', linewidth=2.5, markersize=10, 
-                   capsize=8, capthick=2, 
-                   label='Overhead (peek cost)',
-                   color='#e74c3c', ecolor='#c0392b', elinewidth=2)
+        # Plot grouped bars
+        bars_a = ax.bar(x_pos - bar_width/2, config_a_values, bar_width,
+                       yerr=config_a_stds, capsize=5,
+                       label='Config A: read() only',
+                       color='#3498db', edgecolor='#2980b9', linewidth=1.5, alpha=0.85,
+                       error_kw={'elinewidth': 2, 'ecolor': '#2980b9', 'capthick': 2})
         
-        # Add value labels WITH PERCENTAGES [showing the % overhead]
-        for i, (x, y, std, pct) in enumerate(zip(x_pos, overhead_values, overhead_stds, overhead_percentages)):
-            # Absolute [actual numerical] value in µs
-            ax.text(x, y + std + 50, f'{y:.1f} µs', 
-                   ha='center', va='bottom', fontsize=10, fontweight='bold', color='#2c3e50')
-            # Percentage label [showing the % value]
-            ax.text(x, y + std + 100, f'({pct:.1f}%)', 
-                   ha='center', va='bottom', fontsize=11, fontweight='bold', 
-                   color='#e74c3c', bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.3))
+        bars_b = ax.bar(x_pos + bar_width/2, config_b_values, bar_width,
+                       yerr=config_b_stds, capsize=5,
+                       label='Config B: peek() + read()',
+                       color='#e74c3c', edgecolor='#c0392b', linewidth=1.5, alpha=0.85,
+                       error_kw={'elinewidth': 2, 'ecolor': '#c0392b', 'capthick': 2})
+        
+        # Add value labels on bars
+        for i, (bar_a, bar_b, pct) in enumerate(zip(bars_a, bars_b, overhead_percentages)):
+            # Config A value
+            height_a = bar_a.get_height()
+            ax.text(bar_a.get_x() + bar_a.get_width()/2, height_a + config_a_stds[i] + 5,
+                   f'{config_a_values[i]:.1f}µs',
+                   ha='center', va='bottom', fontsize=9, fontweight='bold', color='#2980b9')
+            
+            # Config B value
+            height_b = bar_b.get_height()
+            ax.text(bar_b.get_x() + bar_b.get_width()/2, height_b + config_b_stds[i] + 5,
+                   f'{config_b_values[i]:.1f}µs',
+                   ha='center', va='bottom', fontsize=9, fontweight='bold', color='#c0392b')
+            
+            # Overhead percentage centered between the two bars
+            max_height = max(height_a + config_a_stds[i], height_b + config_b_stds[i])
+            ax.text(x_pos[i], max_height + 25,
+                   f'+{pct:.1f}%',
+                   ha='center', va='bottom', fontsize=11, fontweight='bold',
+                   color='#27ae60',
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='#f0f0f0', edgecolor='#27ae60', linewidth=2))
         
         # Labels and title
         ax.set_xlabel('Payload Size', fontsize=13, fontweight='bold')
-        ax.set_ylabel('Overhead (µs)', fontsize=13, fontweight='bold')
-        
-        # Labels and title
-        ax.set_xlabel('Payload Size', fontsize=13, fontweight='bold')
-        ax.set_ylabel('Overhead (µs)', fontsize=13, fontweight='bold')
-        ax.set_title('MB-2: tls_read_peek() Overhead vs Payload Size\nIncrease in time due to double decryption',
+        ax.set_ylabel('Time (µs)', fontsize=13, fontweight='bold')
+        ax.set_title('MB-2: Configuration Comparison - read() Only vs peek() + read()\nShowing both configurations side-by-side with overhead percentages',
                     fontsize=15, fontweight='bold', pad=20)
         
         # X-axis
@@ -139,7 +167,7 @@ class MB2Analyzer:
         ax.set_xticklabels(size_labels, fontsize=12)
         
         # Grid
-        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.7)
+        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.7, axis='y')
         ax.set_axisbelow(True)
         
         # Legend
@@ -222,7 +250,7 @@ def main():
     analyzer.print_summary()
     
     print("Generating graph...")
-    fig, ax = analyzer.plot_grouped_bars(args.output) if hasattr(analyzer, 'plot_grouped_bars') else analyzer.plot_overhead(args.output)
+    fig, ax = analyzer.plot_overhead(args.output)
     
     if not args.no_display:
         try:
