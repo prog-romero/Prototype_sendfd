@@ -74,7 +74,21 @@ else
     echo -e "${RED}✗ Project structure invalid${NC}"
     exit 1
 fi
+# Check if all required scripts are present [ensure all necessary files exist]
+echo -e "${YELLOW}[2.5/3] Verifying required scripts...${NC}"
+cd "$PROJECT_ROOT/benchmarks/micro/MB-2_read_peek"
 
+REQUIRED_FILES=("plot_mb2.py" "full_sync_to_pi.sh" "setup_and_compile.sh" "run_benchmark.sh")
+for file in "${REQUIRED_FILES[@]}"; do
+    if [ ! -f "$file" ]; then
+        echo -e "${YELLOW}  Restoring $file from git...${NC}"
+        git checkout "$file" > /dev/null 2>&1 || {
+            echo -e "${RED}  ✗ Cannot restore $file${NC}"
+            exit 1
+        }
+    fi
+    echo -e "  ${GREEN}✓${NC} $file present"
+done
 echo -e "${YELLOW}[3/3] Checking required tools...${NC}"
 for tool in gcc ssh rsync python3; do
     if command -v $tool &> /dev/null; then
@@ -197,6 +211,17 @@ echo -e "${YELLOW}════════════════════�
 echo -e "${YELLOW}STEP 6: GENERATE VISUALIZATION${NC}"
 echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
 echo ""
+
+cd "$PROJECT_ROOT/benchmarks/micro/MB-2_read_peek"
+
+# Ensure plot_mb2.py exists [make sure the plotting script is available]
+if [ ! -f "plot_mb2.py" ]; then
+    echo -e "${YELLOW}[!] Restoring plot_mb2.py from git...${NC}"
+    git checkout plot_mb2.py > /dev/null 2>&1 || {
+        echo -e "${RED}ERROR: Cannot restore plot_mb2.py${NC}"
+        exit 1
+    }
+fi
 
 LATEST_RESULT=$(ls -t results_mb2_distributed_*.csv 2>/dev/null | head -1)
 if [ -n "$LATEST_RESULT" ]; then

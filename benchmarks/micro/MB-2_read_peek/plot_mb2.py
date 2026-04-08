@@ -75,6 +75,7 @@ class MB2Analyzer:
         
         overhead_values = []
         overhead_stds = []
+        overhead_percentages = []
         
         for size in sizes:
             if 'A' in self.data[size] and 'B' in self.data[size]:
@@ -82,11 +83,14 @@ class MB2Analyzer:
                 b = self.data[size]['B']
                 overhead = b['avg'] - a['avg']
                 overhead_std = np.sqrt(a['stddev']**2 + b['stddev']**2)
+                overhead_pct = (overhead / a['avg'] * 100) if a['avg'] > 0 else 0
                 overhead_values.append(overhead)
                 overhead_stds.append(overhead_std)
+                overhead_percentages.append(overhead_pct)
             else:
                 overhead_values.append(0)
                 overhead_stds.append(0)
+                overhead_percentages.append(0)
         
         # Create figure
         fig, ax = plt.subplots(figsize=(14, 8))
@@ -110,10 +114,19 @@ class MB2Analyzer:
                    label='Overhead (peek cost)',
                    color='#e74c3c', ecolor='#c0392b', elinewidth=2)
         
-        # Add value labels
-        for i, (x, y, std) in enumerate(zip(x_pos, overhead_values, overhead_stds)):
-            ax.text(x, y + std + 50, f'{y:.0f} µs', 
-                   ha='center', va='bottom', fontsize=11, fontweight='bold')
+        # Add value labels WITH PERCENTAGES [showing the % overhead]
+        for i, (x, y, std, pct) in enumerate(zip(x_pos, overhead_values, overhead_stds, overhead_percentages)):
+            # Absolute [actual numerical] value in µs
+            ax.text(x, y + std + 50, f'{y:.1f} µs', 
+                   ha='center', va='bottom', fontsize=10, fontweight='bold', color='#2c3e50')
+            # Percentage label [showing the % value]
+            ax.text(x, y + std + 100, f'({pct:.1f}%)', 
+                   ha='center', va='bottom', fontsize=11, fontweight='bold', 
+                   color='#e74c3c', bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.3))
+        
+        # Labels and title
+        ax.set_xlabel('Payload Size', fontsize=13, fontweight='bold')
+        ax.set_ylabel('Overhead (µs)', fontsize=13, fontweight='bold')
         
         # Labels and title
         ax.set_xlabel('Payload Size', fontsize=13, fontweight='bold')
