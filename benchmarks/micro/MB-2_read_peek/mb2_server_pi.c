@@ -27,21 +27,20 @@
 #define BACKLOG 1
 #define TIMEOUT_SEC 30
 
-/* Test payload sizes - 15 samples [test data points] logarithmically distributed [spread out on a log scale] */
-#define N_SIZES 15
-#define MAX_PAYLOAD_SIZE 32768
+/* Test payload sizes - 5 samples [test data points] covering small to medium range */
+#define N_SIZES 5
+#define MAX_PAYLOAD_SIZE 1024
 
 static const size_t PAYLOAD_SIZES[N_SIZES] = {
-    256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768
+    256, 384, 512, 768, 1024
 };
 
 static const char *SIZE_NAMES[N_SIZES] = {
-    "256B", "384B", "512B", "768B", "1KB", "1.5KB", "2KB", "3KB", 
-    "4KB", "6KB", "8KB", "12KB", "16KB", "24KB", "32KB"
+    "256B", "384B", "512B", "768B", "1KB"
 };
 
 /* Large static buffer for all payloads */
-static unsigned char payload_buffer[32768];
+static unsigned char payload_buffer[1024];
 
 /* Pointers to each payload section [part] */
 static unsigned char *test_payloads[N_SIZES];

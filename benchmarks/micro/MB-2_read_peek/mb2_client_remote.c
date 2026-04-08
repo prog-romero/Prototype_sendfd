@@ -6,7 +6,7 @@
  *   Config A: wolfSSL_read() only
  *   Config B: tls_read_peek() + wolfSSL_read()
  * 
- * For each payload size: 256B to 32KB (15 sizes total)
+ * For each payload size: 256B to 1KB (5 sizes total)
  */
 
 #include <stdio.h>
@@ -29,16 +29,15 @@
 
 #define MB2_PORT 19446
 #define TIMEOUT_SEC 30
-#define N_SIZES 15
+#define N_SIZES 5
 #define ITERATIONS 1000
 
 static const size_t PAYLOAD_SIZES[N_SIZES] = {
-    256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768
+    256, 384, 512, 768, 1024
 };
 
 static const char *SIZE_NAMES[N_SIZES] = {
-    "256B", "384B", "512B", "768B", "1KB", "1.5KB", "2KB", "3KB", 
-    "4KB", "6KB", "8KB", "12KB", "16KB", "24KB", "32KB"
+    "256B", "384B", "512B", "768B", "1KB"
 };
 
 /* ─────────────────────────────────────────────────────────────────────────── */
