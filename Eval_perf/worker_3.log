@@ -1,5 +1,0 @@
-[worker-3] Starting (cert=../libtlspeek/certs/server.crt key=../libtlspeek/certs/server.key)
-[unix] Server listening on worker_3.sock (fd=3)
-[worker-3] Ready. Waiting for connections on worker_3.sock
-
-[worker-3] Entering epoll loop...
