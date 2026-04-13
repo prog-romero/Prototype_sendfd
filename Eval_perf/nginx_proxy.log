@@ -1,0 +1,7 @@
+2026/04/02 00:28:56 [warn] 101621#101621: the "user" directive makes sense only if the master process runs with super-user privileges, ignored in /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/Eval_perf/nginx_active.conf:1
+2026/04/02 00:28:56 [emerg] 101621#101621: bind() to 0.0.0.0:8445 failed (98: Address already in use)
+2026/04/02 00:28:56 [emerg] 101621#101621: bind() to 0.0.0.0:8445 failed (98: Address already in use)
+2026/04/02 00:28:56 [emerg] 101621#101621: bind() to 0.0.0.0:8445 failed (98: Address already in use)
+2026/04/02 00:28:56 [emerg] 101621#101621: bind() to 0.0.0.0:8445 failed (98: Address already in use)
+2026/04/02 00:28:56 [emerg] 101621#101621: bind() to 0.0.0.0:8445 failed (98: Address already in use)
+2026/04/02 00:28:56 [emerg] 101621#101621: still could not bind()
