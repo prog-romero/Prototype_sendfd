@@ -1,0 +1,12 @@
+# Local build caches and exported artifacts
+/.buildx-cache/
+/dist/
+
+# Python cache
+**/__pycache__/
+*.pyc
+
+# Generated benchmark outputs for Scenario A
+/benchmarks/micro/micro-bench1-initale-time/client/*_results.csv
+/benchmarks/micro/micro-bench1-initale-time/client/*.png
+/benchmarks/micro/micro-bench1-initale-time/client/*.pdf

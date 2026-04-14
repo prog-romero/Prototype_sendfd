@@ -4,9 +4,20 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -O2 -g")
 
 # ─── wolfSSL ───────────────────────────────────────────────────────────────────
-# Use specific system-installed wolfSSL version that contains custom migration symbols
-set(WOLFSSL_LIB "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl/src/.libs/libwolfssl.so")
-set(WOLFSSL_INCLUDE "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl")
+# Use a wolfSSL build that contains the custom migration symbols.
+# Default to the wolfssl/ directory adjacent to this repo, but allow overrides.
+set(WOLFSSL_ROOT "${CMAKE_SOURCE_DIR}/../wolfssl" CACHE PATH "Path to wolfSSL source tree")
+set(WOLFSSL_INCLUDE "${WOLFSSL_ROOT}" CACHE PATH "Path to wolfSSL headers")
+set(WOLFSSL_LIB "${WOLFSSL_ROOT}/src/.libs/libwolfssl.so" CACHE FILEPATH "Path to libwolfssl shared library")
+
+if(NOT EXISTS "${WOLFSSL_LIB}")
+    message(FATAL_ERROR "WOLFSSL_LIB not found at: ${WOLFSSL_LIB}. Build wolfSSL first (see build_pi.sh), or set -DWOLFSSL_LIB=...")
+endif()
+
+if(NOT EXISTS "${WOLFSSL_INCLUDE}/wolfssl/ssl.h")
+    message(FATAL_ERROR "WOLFSSL_INCLUDE does not look like a wolfSSL source tree: ${WOLFSSL_INCLUDE}. Set -DWOLFSSL_INCLUDE=...")
+endif()
+
 include_directories(${WOLFSSL_INCLUDE})
 
 # Ensure the linker adds the correct directory to the RPATH for runtime loading

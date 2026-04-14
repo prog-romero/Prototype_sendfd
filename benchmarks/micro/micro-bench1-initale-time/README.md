@@ -1,130 +1,307 @@
-# micro-bench1-initale-time — Scenario A (Initial) elemental timing
+# micro-bench1-initale-time — Scenario A (Initial mode)
 
-This benchmark implements **Scenario A: Initial mode** from the meeting report.
+This benchmark measures the elemental time spent between the end of the TLS handshake and the moment the function worker starts handling the request.
 
-## Goal
-Measure the time between:
-- **After TLS handshake** on the gateway side (handshake excluded), and
-- The moment the **worker reads**:
-  - **HTTP headers**, or
-  - **Full payload** (for the payload-size sweep)
+The benchmark has been validated in both modes:
+- Vanilla: `500/500` successful rows (`HTTP 200`)
+- Prototype: `500/500` successful rows (`HTTP 200`)
 
-## Two versions
+Vanilla and prototype are meant to be run one after the other, not at the same time.
 
-### 1) Vanilla (classic proxy)
-- The **real faasd/OpenFaaS gateway** is used.
-- **No migration**.
-- TLS is handled in front of the gateway (wolfSSL termination), then the request is forwarded (payload-dependent cost).
+## 1. What is measured
 
-### 2) Prototype (migration)
-- A **patched upstream OpenFaaS gateway/provider** integrates **wolfSSL + libtlspeek**.
-- After handshake: `tls_read_peek()` for routing, then **serialize TLS state + `sendfd` (SCM_RIGHTS)** to the selected worker.
-- Worker restores TLS state and serves the request (payload should not be forwarded by the gateway).
+Condition:
+- One new TLS connection per request
+- `Connection: close`
+- Same Raspberry Pi machine for gateway/proxy/provider/function, so the same monotonic clock is used everywhere
 
-## Prerequisites (Raspberry Pi)
-- `faasd` must be installed and the gateway must be reachable on `http://127.0.0.1:8080/`.
+Measured fields:
+- `delta_header_ns`: time from the benchmark start point to the instant the worker has the HTTP headers available
+- `delta_body_ns`: time from the benchmark start point to the instant the worker has fully consumed the request body
+- `client_rtt_ns`: end-to-end client-side request time on the laptop/workstation
 
-Use the helper scripts:
-- `pi_install_faasd.sh`
-- `pi_verify_faasd.sh`
+Start point in each mode:
+- Vanilla: right after TLS handshake in the frontal TLS proxy, before forwarding to the real `faasd` gateway on `:8080`
+- Prototype: right after TLS handshake in the patched gateway on `:9443`, before `tls_read_peek()`, TLS-state serialization, and `sendfd`
 
-## Status
+## 2. Pipelines under test
 
-### Vanilla (ready)
-The **vanilla Scenario A** pipeline is implemented:
+### Vanilla
 
-`client (HTTPS, Connection: close)` → `wolfSSL TLS proxy` → `faasd gateway (HTTP :8080)` → `timing-fn (HTTP)`
+Path:
 
-The proxy injects `X-Bench-T0-Ns` (monotonic ns) **after TLS handshake**, and the function reports:
-- `delta_header_ns`: proxy t0 → function handler entry ("headers read")
-- `delta_body_ns`: proxy t0 → function finished consuming request body
+`client (HTTPS)` -> `wolfSSL TLS proxy :8443` -> `faasd gateway :8080` -> `timing-fn (HTTP, C container)`
 
-### Prototype (pending)
-Upstream gateway/provider patching + TLS migration workers are not wired here yet.
+Key points:
+- Real upstream `faasd` gateway is used
+- TLS is terminated by the frontal proxy, not by the function
+- The function container is a C HTTP server that reads headers and then drains the body
 
-## Run — Vanilla Scenario A
+### Prototype
 
-### Quick re-run (copy/paste)
+Path:
 
-Run these commands from your laptop/workstation (the machine where you run the Python client and build/push the function image):
+`client (HTTPS)` -> `patched faasd gateway :9443` -> `tls_read_peek()` -> `serialize TLS state + sendfd(SCM_RIGHTS)` -> `timing-fn worker (C container, direct TLS I/O)`
+
+Key points:
+- Patched `faasd` provider mounts `/run/tlsmigrate` into function containers
+- Patched gateway uses `wolfSSL + libtlspeek`
+- Worker verifies ownership with worker-side `tls_read_peek()`, restores TLS state, then reads headers and body directly on the migrated TLS socket
+
+## 3. Files involved
+
+Main benchmark files:
+- `benchmarks/micro/micro-bench1-initale-time/client/run_payload_sweep.py`
+- `benchmarks/micro/micro-bench1-initale-time/client/plot_vanilla_vs_proto.py`
+- `benchmarks/micro/micro-bench1-initale-time/function/timing_fn/timing_fn.c`
+- `prototype/faasd_tlsmigrate/function/timing-fn/timing_fn_worker.c`
+
+Prototype infrastructure:
+- `prototype/faasd_tlsmigrate/gateway/`
+- `prototype/faasd_tlsmigrate/provider/`
+- `prototype/faasd_tlsmigrate/scripts/build_copy_enable_proto_gateway.sh`
+- `prototype/faasd_tlsmigrate/scripts/pi_enable_proto_gateway.sh`
+- `prototype/faasd_tlsmigrate/scripts/pi_restore_vanilla_gateway.sh`
+
+## 4. One-time prerequisites
+
+On the Pi:
+- `faasd` installed and working
+- `faas-cli` installed and logged in at least once
+- repository cloned at `~/Prototype_sendfd`
+
+Quick health check on the Pi:
 
 ```bash
-# Set your Pi IP once
+curl -sS http://127.0.0.1:8080/healthz
+```
+
+If you need to sync files from the laptop to the Pi:
+
+```bash
 export PI_IP=192.168.2.2
+export PI_SSH=romero@${PI_IP}
 
 cd ~/Prototype_sendfd
 
-# 1) (Recommended) keep Pi and laptop in sync
-rsync -az --delete benchmarks/micro/micro-bench1-initale-time/ \
-  romero@${PI_IP}:~/Prototype_sendfd/benchmarks/micro/micro-bench1-initale-time/
+ssh ${PI_SSH} 'mkdir -p ~/Prototype_sendfd/prototype ~/Prototype_sendfd/benchmarks/micro'
 
-# 2) Build + push the function image (arm64) to a registry
-# NOTE: this tag expires after 24h, so re-run this step when you re-run later.
+rsync -az --delete prototype/faasd_tlsmigrate/ \
+  ${PI_SSH}:~/Prototype_sendfd/prototype/faasd_tlsmigrate/
+
+rsync -az --delete benchmarks/micro/micro-bench1-initale-time/ \
+  ${PI_SSH}:~/Prototype_sendfd/benchmarks/micro/micro-bench1-initale-time/
+```
+
+## 5. Quick re-run — Vanilla
+
+Run from the laptop/workstation:
+
+```bash
+export PI_IP=192.168.2.2
+export PI_SSH=romero@${PI_IP}
+
+cd ~/Prototype_sendfd
+
+# Sync the benchmark folder
+rsync -az --delete benchmarks/micro/micro-bench1-initale-time/ \
+  ${PI_SSH}:~/Prototype_sendfd/benchmarks/micro/micro-bench1-initale-time/
+
+# Build and push the function image (expires after 24h on ttl.sh)
 cd benchmarks/micro/micro-bench1-initale-time/function/timing_fn
 docker buildx build --platform linux/arm64 -t ttl.sh/timing-fn-bench:24h --push .
 cd -
 
-# 3) (First time only) login on the Pi (uses sudo, so allocate a TTY)
-ssh -t romero@${PI_IP} \
+# First time only if needed
+ssh -t ${PI_SSH} \
   'export OPENFAAS_URL=http://127.0.0.1:8080; sudo cat /var/lib/faasd/secrets/basic-auth-password | faas-cli login -u admin --password-stdin'
 
-# 4) Deploy (or rolling-update) the function on the Pi
-ssh romero@${PI_IP} \
-  'cd ~/Prototype_sendfd && faas-cli deploy -f benchmarks/micro/micro-bench1-initale-time/function/stack.yml'
+# Deploy function
+ssh ${PI_SSH} \
+  'cd ~/Prototype_sendfd && export OPENFAAS_URL=http://127.0.0.1:8080 && faas-cli deploy -f benchmarks/micro/micro-bench1-initale-time/function/stack.yml'
 
-# 5) Start the TLS proxy on the Pi (background)
-ssh romero@${PI_IP} \
+# Start proxy in background
+ssh ${PI_SSH} \
   'cd ~/Prototype_sendfd && nohup bash benchmarks/micro/micro-bench1-initale-time/vanilla_proxy/run_on_pi.sh >/tmp/tls_proxy.log 2>&1 < /dev/null &'
 
-# 6) Run the payload sweep (writes the final CSV)
+# Smoke test
+curl -k https://${PI_IP}:8443/function/timing-fn
+
+# Run sweep
 python3 benchmarks/micro/micro-bench1-initale-time/client/run_payload_sweep.py \
-  --host "${PI_IP}" \
+  --host ${PI_IP} \
+  --port 8443 \
   --out benchmarks/micro/micro-bench1-initale-time/client/vanilla_results.csv \
   --requests 50
-
-# 7) Inspect the result quickly
-head -n 5 benchmarks/micro/micro-bench1-initale-time/client/vanilla_results.csv
 ```
 
-Notes:
-- If the proxy is already running and you see “Address already in use”, stop the existing `tls_proxy` process on the Pi, then re-run step 5.
-- `ttl.sh/...:24h` expires automatically; if you re-run later and deploy fails to pull, just re-run step 2.
+Expected result:
+- `vanilla_results.csv` contains `500` rows with `http_status=200`
 
-### (Recommended) Sync this benchmark folder to the Pi
-If the Pi doesn't have this directory yet (it is currently untracked in git), copy it from your client machine:
-- `cd Prototype_sendfd`
-- `rsync -az --delete benchmarks/micro/micro-bench1-initale-time/ romero@<PI_IP>:~/Prototype_sendfd/benchmarks/micro/micro-bench1-initale-time/`
+## 6. Quick re-run — Prototype
 
-### 0) Verify faasd on the Pi
-Run on the Pi:
-- `cd ~/Prototype_sendfd && bash benchmarks/micro/micro-bench1-initale-time/pi_verify_faasd.sh`
+Run from the laptop/workstation:
 
-### 1) Build + deploy the timing function
-Build the container image on a machine with Docker (x86 is fine):
-- `cd benchmarks/micro/micro-bench1-initale-time/function/timing_fn`
-- `docker buildx build --platform linux/arm64 -t ttl.sh/timing-fn-bench:24h --push .`
+```bash
+export PI_IP=192.168.2.2
+export PI_SSH=romero@${PI_IP}
 
-Note: `faasd-provider` always pulls images from a registry during deploy/update, so importing the image into containerd with `ctr images import` is not sufficient.
+cd ~/Prototype_sendfd
 
-Deploy with `faas-cli` on the Pi:
-- `export OPENFAAS_URL=http://127.0.0.1:8080`
-- `sudo cat /var/lib/faasd/secrets/basic-auth-password | faas-cli login -u admin --password-stdin`  # first time only
-- `faas-cli deploy -f benchmarks/micro/micro-bench1-initale-time/function/stack.yml`
+# Sync benchmark and prototype files
+ssh ${PI_SSH} 'mkdir -p ~/Prototype_sendfd/prototype ~/Prototype_sendfd/benchmarks/micro'
+rsync -az --delete prototype/faasd_tlsmigrate/ \
+  ${PI_SSH}:~/Prototype_sendfd/prototype/faasd_tlsmigrate/
+rsync -az --delete benchmarks/micro/micro-bench1-initale-time/ \
+  ${PI_SSH}:~/Prototype_sendfd/benchmarks/micro/micro-bench1-initale-time/
 
-### 2) Run the wolfSSL TLS front-end proxy
-Run on the Pi (from the repo clone):
-- `bash benchmarks/micro/micro-bench1-initale-time/vanilla_proxy/run_on_pi.sh`
+# Build and push the prototype function image (expires after 24h on ttl.sh)
+docker buildx build --platform linux/arm64 \
+  -f prototype/faasd_tlsmigrate/function/timing-fn/Dockerfile \
+  -t ttl.sh/timing-fn-tlsmigrate:24h \
+  --push .
 
-If you want to keep it running in the background:
-- `nohup bash benchmarks/micro/micro-bench1-initale-time/vanilla_proxy/run_on_pi.sh >/tmp/tls_proxy.log 2>&1 < /dev/null &`
+# Build/copy/import/enable the prototype gateway locally on the Pi
+# Enter the Pi sudo password when the helper reaches the import step.
+BUILD_PROGRESS=plain PI_SSH=${PI_SSH} \
+  bash prototype/faasd_tlsmigrate/scripts/build_copy_enable_proto_gateway.sh
 
-Defaults:
-- Listens on `0.0.0.0:8443`
-- Forwards to `127.0.0.1:8080`
-- Uses certs from `libtlspeek/certs/`
+# Build and install the patched provider on the Pi
+bash prototype/faasd_tlsmigrate/provider/build_faasd_arm64.sh
+PI_SSH=${PI_SSH} bash prototype/faasd_tlsmigrate/provider/pi_install_proto_provider.sh
 
-### 3) Run the client payload sweep
-Run on the client machine (your x86 laptop/desktop):
-- `python3 benchmarks/micro/micro-bench1-initale-time/client/run_payload_sweep.py --host <PI_IP> --out benchmarks/micro/micro-bench1-initale-time/client/vanilla_results.csv --requests 50`
+# First time only if needed
+ssh -t ${PI_SSH} \
+  'export OPENFAAS_URL=http://127.0.0.1:8080; sudo cat /var/lib/faasd/secrets/basic-auth-password | faas-cli login -u admin --password-stdin'
 
-The CSV contains one line per request with `delta_header_ns` and `delta_body_ns`.
+# Deploy prototype function
+ssh ${PI_SSH} \
+  'cd ~/Prototype_sendfd && export OPENFAAS_URL=http://127.0.0.1:8080 && faas-cli deploy -f prototype/faasd_tlsmigrate/function/stack.yml && faas-cli list'
+
+# Smoke test
+curl -k https://${PI_IP}:9443/function/timing-fn
+
+# Run sweep
+python3 benchmarks/micro/micro-bench1-initale-time/client/run_payload_sweep.py \
+  --host ${PI_IP} \
+  --port 9443 \
+  --out benchmarks/micro/micro-bench1-initale-time/client/proto_results.csv \
+  --requests 50
+```
+
+Expected result:
+- `proto_results.csv` contains `500` rows with `http_status=200`
+
+## 7. If the gateway helper already copied the tar but stopped on sudo
+
+If `build_copy_enable_proto_gateway.sh` reached `[scp]` and then stopped on the Pi import step, do not rebuild. Resume manually:
+
+```bash
+export PI_IP=192.168.2.2
+export PI_SSH=romero@${PI_IP}
+
+ssh -t ${PI_SSH} \
+  'sudo ctr -n openfaas images import /tmp/faasd-gateway-tlsmigrate-arm64.tar && sudo ctr -n openfaas images ls | grep -F "docker.io/local/faasd-gateway-tlsmigrate:arm64"'
+
+ssh -t ${PI_SSH} \
+  'cd ~/Prototype_sendfd && PROTO_GATEWAY_IMAGE=docker.io/local/faasd-gateway-tlsmigrate:arm64 bash prototype/faasd_tlsmigrate/scripts/pi_enable_proto_gateway.sh'
+```
+
+## 8. Generate plots
+
+Body completion plots:
+
+```bash
+python3 benchmarks/micro/micro-bench1-initale-time/client/plot_vanilla_vs_proto.py \
+  --metric body \
+  --no-display
+```
+
+Header-time plots:
+
+```bash
+python3 benchmarks/micro/micro-bench1-initale-time/client/plot_vanilla_vs_proto.py \
+  --metric header \
+  --curve-output benchmarks/micro/micro-bench1-initale-time/client/header_time_mean_vs_size.png \
+  --hist-output benchmarks/micro/micro-bench1-initale-time/client/header_time_histogram.png \
+  --no-display
+```
+
+Generated artifacts:
+- `benchmarks/micro/micro-bench1-initale-time/client/vanilla_results.csv`
+- `benchmarks/micro/micro-bench1-initale-time/client/proto_results.csv`
+- `benchmarks/micro/micro-bench1-initale-time/client/time_mean_vs_size.png`
+- `benchmarks/micro/micro-bench1-initale-time/client/time_histogram.png`
+- `benchmarks/micro/micro-bench1-initale-time/client/header_time_mean_vs_size.png`
+- `benchmarks/micro/micro-bench1-initale-time/client/header_time_histogram.png`
+
+## 9. Restore back to vanilla
+
+```bash
+export PI_IP=192.168.2.2
+export PI_SSH=romero@${PI_IP}
+
+ssh -t ${PI_SSH} \
+  'cd ~/Prototype_sendfd && bash prototype/faasd_tlsmigrate/scripts/pi_restore_vanilla_gateway.sh'
+
+PI_SSH=${PI_SSH} bash prototype/faasd_tlsmigrate/provider/pi_restore_vanilla_provider.sh
+```
+
+## 10. Troubleshooting
+
+### `faasd` is down on the Pi
+
+Check:
+
+```bash
+ssh ${PI_SSH} 'systemctl is-active faasd; systemctl status faasd --no-pager -l | sed -n "1,80p"'
+```
+
+### `curl -k https://<PI_IP>:9443/function/timing-fn` returns `Empty reply from server`
+
+Usually the gateway is up but the prototype function is not ready. Re-deploy and check the replica count:
+
+```bash
+ssh ${PI_SSH} \
+  'cd ~/Prototype_sendfd && export OPENFAAS_URL=http://127.0.0.1:8080 && faas-cli deploy -f prototype/faasd_tlsmigrate/function/stack.yml && faas-cli list'
+```
+
+Expected:
+- `timing-fn` at `Replicas: 1`
+
+### `faas-cli deploy` cannot pull the function image
+
+The `faasd` provider always pulls function images from a registry. Rebuild and push the function image again:
+
+```bash
+docker buildx build --platform linux/arm64 \
+  -f prototype/faasd_tlsmigrate/function/timing-fn/Dockerfile \
+  -t ttl.sh/timing-fn-tlsmigrate:24h \
+  --push .
+```
+
+and for vanilla:
+
+```bash
+cd benchmarks/micro/micro-bench1-initale-time/function/timing_fn
+docker buildx build --platform linux/arm64 -t ttl.sh/timing-fn-bench:24h --push .
+```
+
+### The vanilla proxy says `Address already in use`
+
+Stop the old proxy and relaunch:
+
+```bash
+ssh ${PI_SSH} 'pkill -f tls_proxy || true'
+ssh ${PI_SSH} \
+  'cd ~/Prototype_sendfd && nohup bash benchmarks/micro/micro-bench1-initale-time/vanilla_proxy/run_on_pi.sh >/tmp/tls_proxy.log 2>&1 < /dev/null &'
+```
+
+## 11. Local artifacts that should not be committed
+
+The following are generated locally and are ignored by the root `.gitignore`:
+- `.buildx-cache/`
+- `dist/`
+- benchmark CSV outputs
+- benchmark plot images and PDFs
+- `__pycache__/`

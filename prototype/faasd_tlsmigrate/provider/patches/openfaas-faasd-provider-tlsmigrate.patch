@@ -1,0 +1,32 @@
+diff --git a/pkg/provider/handlers/deploy.go b/pkg/provider/handlers/deploy.go
+index 2ed91bc..f6e4c44 100644
+--- a/pkg/provider/handlers/deploy.go
++++ b/pkg/provider/handlers/deploy.go
+@@ -141,6 +141,27 @@ func deploy(ctx context.Context, req types.FunctionDeployment, client *container
+ 		})
+ 	}
+ 
++	// Prototype support: allow a shared Unix-socket directory between the gateway
++	// (container) and the function containers, so the gateway can transfer the live
++	// client connection fd via SCM_RIGHTS.
++	//
++	// Host path is configurable to avoid hard-coding, but defaults to /var/lib/faasd.
++	// This mount is safe for vanilla too (it is unused unless a function uses it).
++	hostSocketDir := "/var/lib/faasd/tlsmigrate"
++	if v := os.Getenv("TLSMIGRATE_HOST_DIR"); len(v) > 0 {
++		hostSocketDir = v
++	}
++	if err := os.MkdirAll(hostSocketDir, 0777); err != nil {
++		log.Printf("[Deploy] warning: cannot create %s: %s", hostSocketDir, err)
++	} else {
++		mounts = append(mounts, specs.Mount{
++			Destination: "/run/tlsmigrate",
++			Type:        "bind",
++			Source:      hostSocketDir,
++			Options:     []string{"rbind", "rw"},
++		})
++	}
++
+ 	name := req.Service
+ 
+ 	labels, err := buildLabels(&req)
