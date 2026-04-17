@@ -1,0 +1,23 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  timing-ka-a:
+    image: ttl.sh/timing-fn-tlsmigrate-keepalive:24h
+    environment:
+      TLSMIGRATE_FUNCTION_NAME: timing-ka-a
+      TLSMIGRATE_SOCKET_DIR: /run/tlsmigrate
+      TLSMIGRATE_RELAY_SOCKET: /run/tlsmigrate/keepalive-relay.sock
+    labels:
+      com.openfaas.scale.zero: "false"
+
+  timing-ka-b:
+    image: ttl.sh/timing-fn-tlsmigrate-keepalive:24h
+    environment:
+      TLSMIGRATE_FUNCTION_NAME: timing-ka-b
+      TLSMIGRATE_SOCKET_DIR: /run/tlsmigrate
+      TLSMIGRATE_RELAY_SOCKET: /run/tlsmigrate/keepalive-relay.sock
+    labels:
+      com.openfaas.scale.zero: "false"

@@ -175,6 +175,11 @@ static void handle_connection(
     memset(&serial, 0, sizeof(serial));
     serial.magic = TLSPEEK_MAGIC;
     serial.cipher_suite = peek_ctx.cipher_suite;
+        memcpy(serial.client_write_key, peek_ctx.client_write_key,
+            sizeof(serial.client_write_key));
+        memcpy(serial.client_write_iv, peek_ctx.client_write_iv,
+            sizeof(serial.client_write_iv));
+        serial.read_seq_num = peek_ctx.read_seq_num;
 
     serial.blob_sz = TLSPEEK_MAX_EXPORT_SZ;
     int export_ret = wolfSSL_tls_export(ssl, serial.tls_blob, &serial.blob_sz);

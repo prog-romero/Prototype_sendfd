@@ -10,3 +10,13 @@
 /benchmarks/micro/micro-bench1-initale-time/client/*_results.csv
 /benchmarks/micro/micro-bench1-initale-time/client/*.png
 /benchmarks/micro/micro-bench1-initale-time/client/*.pdf
+
+# Generated benchmark outputs for Scenario B (keepalive)
+/benchmarks/micro/micro-bench2-keepalive/client/*.csv
+/benchmarks/micro/micro-bench2-keepalive/client/*.png
+/benchmarks/micro/micro-bench2-keepalive/client/*.pdf
+/benchmarks/micro/micro-bench2-keepalive/results/
+/benchmarks/micro/micro-bench2-keepalive/plots/
+
+# Compiled vanilla proxy binary (built on Pi via Makefile)
+/benchmarks/micro/micro-bench2-keepalive/vanilla_proxy/bench2_vanilla_proxy

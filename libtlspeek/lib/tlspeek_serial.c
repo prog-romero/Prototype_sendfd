@@ -23,6 +23,7 @@
 
 #include "tlspeek_serial.h"
 #include "tlspeek_crypto.h"
+#include "../common/tlspeek_log.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -38,6 +39,11 @@ void tlspeek_serialize(const tlspeek_ctx_t *ctx, tlspeek_serial_t *serial)
     memset(serial, 0, sizeof(*serial));
     serial->magic = TLSPEEK_MAGIC;
     serial->cipher_suite = (uint32_t)ctx->cipher_suite;
+    memcpy(serial->client_write_key, ctx->client_write_key,
+        sizeof(serial->client_write_key));
+    memcpy(serial->client_write_iv, ctx->client_write_iv,
+        sizeof(serial->client_write_iv));
+    serial->read_seq_num = ctx->read_seq_num;
 
     /*
      * Use the custom wolfSSL_tls_export() from the Migration_TLS fork
@@ -49,7 +55,7 @@ void tlspeek_serialize(const tlspeek_ctx_t *ctx, tlspeek_serial_t *serial)
     if (ret <= 0) {
         fprintf(stderr, "[serial] ERROR: wolfSSL_tls_export failed (%d)\n", ret);
     } else {
-        fprintf(stderr, "[serial] Serialized TLS session: %u bytes\n", serial->blob_sz);
+        TLSPEEK_VLOG("[serial] Serialized TLS session: %u bytes\n", serial->blob_sz);
     }
 }
 
@@ -72,6 +78,29 @@ int tlspeek_restore(WOLFSSL *ssl, const tlspeek_serial_t *serial)
         return -1;
     }
 
-    fprintf(stderr, "[serial] wolfSSL session state restored (%u bytes)\n", serial->blob_sz);
+    TLSPEEK_VLOG("[serial] wolfSSL session state restored (%u bytes)\n", serial->blob_sz);
+    return 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+int tlspeek_restore_peek_ctx(tlspeek_ctx_t *ctx, int tcp_fd,
+                             const tlspeek_serial_t *serial)
+{
+    if (!ctx || !serial || serial->magic != TLSPEEK_MAGIC || tcp_fd < 0) {
+        fprintf(stderr, "[serial] ERROR: invalid stateless peek restore input\n");
+        return -1;
+    }
+
+    memset(ctx, 0, sizeof(*ctx));
+    memcpy(ctx->client_write_key, serial->client_write_key,
+           sizeof(ctx->client_write_key));
+    memcpy(ctx->client_write_iv, serial->client_write_iv,
+           sizeof(ctx->client_write_iv));
+    ctx->read_seq_num = serial->read_seq_num;
+    ctx->cipher_suite = (tlspeek_cipher_t)serial->cipher_suite;
+    ctx->tcp_fd = tcp_fd;
+    ctx->keys_ready = 1;
+
     return 0;
 }

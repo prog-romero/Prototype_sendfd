@@ -61,6 +61,9 @@ typedef struct {
 typedef struct {
     uint32_t magic;
     uint32_t cipher_suite;
+    uint8_t  client_write_key[TLSPEEK_KEY_SIZE];
+    uint8_t  client_write_iv[TLSPEEK_IV_SIZE];
+    uint64_t read_seq_num;
     unsigned char tls_blob[TLSPEEK_MAX_EXPORT_SZ];
     unsigned int  blob_sz;
     char          http_request[TLSPEEK_MAX_REQUEST_SZ];
@@ -117,6 +120,18 @@ void tlspeek_serialize(const tlspeek_ctx_t *ctx, tlspeek_serial_t *serial);
  * @return 0 on success, -1 on error.
  */
 int tlspeek_restore(WOLFSSL *ssl, const tlspeek_serial_t *serial);
+
+/**
+ * tlspeek_restore_peek_ctx() — Rebuild the minimal stateless peek context.
+ *
+ * Used on the worker side when the caller wants to inspect encrypted data in
+ * the kernel buffer with tls_read_peek() before handing control back to
+ * wolfSSL_read().
+ *
+ * @return 0 on success, -1 on validation error.
+ */
+int tlspeek_restore_peek_ctx(tlspeek_ctx_t *ctx, int tcp_fd,
+                             const tlspeek_serial_t *serial);
 
 /**
  * tlspeek_free() — Release any resources held by the context.

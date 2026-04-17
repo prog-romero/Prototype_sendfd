@@ -2,7 +2,7 @@ diff --git a/pkg/provider/handlers/deploy.go b/pkg/provider/handlers/deploy.go
 index 2ed91bc..f6e4c44 100644
 --- a/pkg/provider/handlers/deploy.go
 +++ b/pkg/provider/handlers/deploy.go
-@@ -141,6 +141,27 @@ func deploy(ctx context.Context, req types.FunctionDeployment, client *container
+@@ -141,6 +141,46 @@ func deploy(ctx context.Context, req types.FunctionDeployment, client *container
  		})
  	}
  
@@ -23,6 +23,25 @@ index 2ed91bc..f6e4c44 100644
 +			Destination: "/run/tlsmigrate",
 +			Type:        "bind",
 +			Source:      hostSocketDir,
++			Options:     []string{"rbind", "rw"},
++		})
++	}
++
++	// bench2-keepalive prototype: shared Unix-socket directory so the bench2
++	// prototype gateway and the bench2 worker containers can exchange live TLS
++	// file descriptors via SCM_RIGHTS on /run/bench2.
++	// Host path defaults to /var/lib/faasd/bench2; override with BENCH2_HOST_DIR.
++	bench2HostDir := "/var/lib/faasd/bench2"
++	if v := os.Getenv("BENCH2_HOST_DIR"); len(v) > 0 {
++		bench2HostDir = v
++	}
++	if err := os.MkdirAll(bench2HostDir, 0777); err != nil {
++		log.Printf("[Deploy] warning: cannot create %s: %s", bench2HostDir, err)
++	} else {
++		mounts = append(mounts, specs.Mount{
++			Destination: "/run/bench2",
++			Type:        "bind",
++			Source:      bench2HostDir,
 +			Options:     []string{"rbind", "rw"},
 +		})
 +	}

@@ -7,6 +7,7 @@
  */
 
 #include "unix_socket.h"
+#include "tlspeek_log.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -47,7 +48,7 @@ int unix_server_socket(const char *path, int backlog)
         return -1;
     }
 
-    fprintf(stderr, "[unix] Server listening on %s (fd=%d)\n", path, fd);
+    TLSPEEK_VLOG("[unix] Server listening on %s (fd=%d)\n", path, fd);
     return fd;
 }
 
@@ -60,8 +61,8 @@ int unix_accept(int listen_fd)
         perror("[unix] accept() failed");
         return -1;
     }
-    fprintf(stderr, "[unix] Accepted connection on listen_fd=%d → conn_fd=%d\n",
-            listen_fd, conn_fd);
+    TLSPEEK_VLOG("[unix] Accepted connection on listen_fd=%d → conn_fd=%d\n",
+                 listen_fd, conn_fd);
     return conn_fd;
 }
 
@@ -86,6 +87,6 @@ int unix_client_connect(const char *path)
         return -1;
     }
 
-    fprintf(stderr, "[unix] Connected to %s (fd=%d)\n", path, fd);
+    TLSPEEK_VLOG("[unix] Connected to %s (fd=%d)\n", path, fd);
     return fd;
 }

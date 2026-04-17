@@ -9,6 +9,7 @@
  */
 
 #include "sendfd.h"
+#include "tlspeek_log.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -54,9 +55,8 @@ int sendfd_with_state(
     cmsg->cmsg_len   = CMSG_LEN(sizeof(int));
     memcpy(CMSG_DATA(cmsg), &fd_to_send, sizeof(int));
 
-    fprintf(stderr,
-            "[sendfd] Sending fd=%d with %zu bytes of TLS state over unix_sock=%d\n",
-            fd_to_send, payload_len, unix_sock);
+    TLSPEEK_VLOG("[sendfd] Sending fd=%d with %zu bytes of TLS state over unix_sock=%d\n",
+                 fd_to_send, payload_len, unix_sock);
 
     ssize_t sent = sendmsg(unix_sock, &msg, 0);
     if (sent < 0) {
@@ -70,9 +70,8 @@ int sendfd_with_state(
      * The worker now exclusively owns the connection.
      */
     close(fd_to_send);
-    fprintf(stderr,
-            "[sendfd] Closed gateway copy of fd=%d — worker now owns it\n",
-            fd_to_send);
+    TLSPEEK_VLOG("[sendfd] Closed gateway copy of fd=%d — worker now owns it\n",
+                 fd_to_send);
 
     return 0;
 }
@@ -103,9 +102,8 @@ int recvfd_with_state(
         .msg_flags      = 0,
     };
 
-    fprintf(stderr,
-            "[recvfd] Waiting for fd + TLS state on unix_sock=%d\n",
-            unix_sock);
+    TLSPEEK_VLOG("[recvfd] Waiting for fd + TLS state on unix_sock=%d\n",
+                 unix_sock);
 
     ssize_t rcvd = recvmsg(unix_sock, &msg, 0);
     if (rcvd < 0) {
@@ -139,9 +137,8 @@ int recvfd_with_state(
 
     memcpy(received_fd, CMSG_DATA(cmsg), sizeof(int));
 
-    fprintf(stderr,
-            "[recvfd] Received fd=%d with %zd bytes of TLS state\n",
-            *received_fd, rcvd);
+    TLSPEEK_VLOG("[recvfd] Received fd=%d with %zd bytes of TLS state\n",
+                 *received_fd, rcvd);
 
     return 0;
 }

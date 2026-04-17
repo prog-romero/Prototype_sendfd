@@ -3,9 +3,11 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -99,6 +101,75 @@ static long long parse_content_length(const char *headers, size_t headers_len) {
     return -1;
 }
 
+static bool parse_request_owner(const unsigned char *buf, size_t len,
+                                char *owner_out, size_t owner_out_sz) {
+    if (!buf || len == 0 || !owner_out || owner_out_sz == 0) {
+        return false;
+    }
+
+    size_t line_end = 0;
+    while (line_end < len && buf[line_end] != '\n') {
+        line_end++;
+    }
+    if (line_end == 0) {
+        return false;
+    }
+
+    const unsigned char *first_space = memchr(buf, ' ', line_end);
+    if (!first_space) {
+        return false;
+    }
+    const unsigned char *path = first_space + 1;
+    size_t path_len = line_end - (size_t)(path - buf);
+    const unsigned char *second_space = memchr(path, ' ', path_len);
+    if (!second_space) {
+        return false;
+    }
+
+    static const char prefix[] = "/function/";
+    size_t req_path_len = (size_t)(second_space - path);
+    if (req_path_len <= strlen(prefix) || memcmp(path, prefix, strlen(prefix)) != 0) {
+        return false;
+    }
+
+    const unsigned char *name = path + strlen(prefix);
+    size_t name_len = req_path_len - strlen(prefix);
+    for (size_t i = 0; i < name_len; i++) {
+        if (name[i] == '/' || name[i] == '?' || name[i] == ' ') {
+            name_len = i;
+            break;
+        }
+    }
+
+    if (name_len == 0 || name_len + 1 > owner_out_sz) {
+        return false;
+    }
+
+    memcpy(owner_out, name, name_len);
+    owner_out[name_len] = '\0';
+    return true;
+}
+
+static int peek_owner_from_kernel(int client_fd, const tlspeek_serial_t *serial,
+                                  char *owner_out, size_t owner_out_sz) {
+    tlspeek_ctx_t peek_ctx;
+    if (tlspeek_restore_peek_ctx(&peek_ctx, client_fd, serial) != 0) {
+        return -1;
+    }
+
+    unsigned char peek_buf[8192 + 1];
+    int peeked = tls_read_peek(&peek_ctx, peek_buf, sizeof(peek_buf) - 1);
+    if (peeked <= 0) {
+        tlspeek_free(&peek_ctx);
+        return -1;
+    }
+    peek_buf[peeked] = '\0';
+
+    int rc = parse_request_owner(peek_buf, (size_t)peeked, owner_out, owner_out_sz) ? 0 : -1;
+    tlspeek_free(&peek_ctx);
+    return rc;
+}
+
 static int write_all_tls(WOLFSSL *ssl, const void *buf, size_t len) {
     const unsigned char *p = (const unsigned char *)buf;
     size_t total = 0;
@@ -117,8 +188,27 @@ static int write_all_tls(WOLFSSL *ssl, const void *buf, size_t len) {
     return 0;
 }
 
-static int handle_one_request(WOLFSSL_CTX *wctx, int client_fd, const tlsmigrate_payload_t *payload) {
+static int handle_one_request(WOLFSSL_CTX *wctx, int client_fd, const tlsmigrate_payload_t *payload,
+                              const char *expected_function_name) {
     int rc = -1;
+
+    char request_owner[128];
+    if (peek_owner_from_kernel(client_fd, &payload->serial,
+                               request_owner, sizeof(request_owner)) != 0) {
+        return -1;
+    }
+    if (expected_function_name && expected_function_name[0] != '\0' &&
+        strcmp(request_owner, expected_function_name) != 0) {
+        fprintf(stderr,
+                "[timing-fn-worker] request owner mismatch: expected %s got %s\n",
+                expected_function_name,
+                request_owner);
+        return -1;
+    }
+
+    fprintf(stderr,
+            "[timing-fn-worker] owner verified via tls_read_peek: %s\n",
+            request_owner);
 
     WOLFSSL *ssl = wolfSSL_new(wctx);
     if (!ssl) {
@@ -132,8 +222,8 @@ static int handle_one_request(WOLFSSL_CTX *wctx, int client_fd, const tlsmigrate
     }
     wolfSSL_set_fd(ssl, client_fd);
 
-    // Read until end of headers (\r\n\r\n).
     unsigned char buf[65536 + 1];
+    // After the stateless ownership check, consume the request for real.
     size_t total = 0;
     ssize_t header_end = -1;
 
@@ -353,7 +443,7 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        (void)handle_one_request(wctx, client_fd, &payload);
+        (void)handle_one_request(wctx, client_fd, &payload, function_name);
         close(client_fd);
     }
 

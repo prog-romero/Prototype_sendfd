@@ -16,6 +16,7 @@
 #include "tlspeek.h"
 #include "tlspeek_crypto.h"
 #include "tlspeek_serial.h"
+#include "../common/tlspeek_log.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -102,11 +103,11 @@ int tlspeek_keylog_cb(WOLFSSL *ssl, int id, const unsigned char *secret,
     
     if (!ctx) {
         /* If we still have no context, we can't store the keys, but we should at least log that we were called */
-        fprintf(stderr, "[keylog] Callback called (id=%d, sz=%d) but NO CONTEXT FOUND\n", id, secretSz);
+        TLSPEEK_VLOG("[keylog] Callback called (id=%d, sz=%d) but NO CONTEXT FOUND\n", id, secretSz);
         return 0;
     }
 
-    fprintf(stderr, "[keylog] Callback called (id=%d, sz=%d)\n", id, secretSz);
+        TLSPEEK_VLOG("[keylog] Callback called (id=%d, sz=%d)\n", id, secretSz);
 
     /* 
      * Determine cipher suite from the secret size:
@@ -129,13 +130,13 @@ int tlspeek_keylog_cb(WOLFSSL *ssl, int id, const unsigned char *secret,
     }
 
     if (id == CLIENT_TRAFFIC_SECRET) {
-        fprintf(stderr, "[keylog] Intercepted CLIENT_TRAFFIC_SECRET (%d bytes)\n", secretSz);
+        TLSPEEK_VLOG("[keylog] Intercepted CLIENT_TRAFFIC_SECRET (%d bytes)\n", secretSz);
         derive_keys_from_raw_secret(ctx->client_write_key,
                                      ctx->client_write_iv,
                                      secret, secretSz,
                                      key_len, hash_algo);
     } else if (id == SERVER_TRAFFIC_SECRET) {
-        fprintf(stderr, "[keylog] Intercepted SERVER_TRAFFIC_SECRET (%d bytes)\n", secretSz);
+        TLSPEEK_VLOG("[keylog] Intercepted SERVER_TRAFFIC_SECRET (%d bytes)\n", secretSz);
         derive_keys_from_raw_secret(ctx->server_write_key,
                                      ctx->server_write_iv,
                                      secret, secretSz,
@@ -168,9 +169,8 @@ int tlspeek_init(tlspeek_ctx_t *ctx, WOLFSSL *ssl, int tcp_fd)
     ctx->read_seq_num  = 0;
     ctx->write_seq_num = 0;
 
-    fprintf(stderr,
-            "[tlspeek] Context initialized: tcp_fd=%d cipher=0x%04X\n",
-            tcp_fd, (unsigned)ctx->cipher_suite);
+    TLSPEEK_VLOG("[tlspeek] Context initialized: tcp_fd=%d cipher=0x%04X\n",
+                 tcp_fd, (unsigned)ctx->cipher_suite);
     return 0;
 }
 
@@ -187,9 +187,8 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
     /* ── Sub-step 2a: MSG_PEEK — read encrypted bytes WITHOUT consuming ── */
     uint8_t raw[TLSPEEK_HEADER_SIZE + TLSPEEK_MAX_RECORD + TLSPEEK_TAG_SIZE];
 
-    fprintf(stderr,
-            "[tlspeek] MSG_PEEK recv on fd=%d (up to %zu bytes)...\n",
-            ctx->tcp_fd, sizeof(raw));
+    TLSPEEK_VLOG("[tlspeek] MSG_PEEK recv on fd=%d (up to %zu bytes)...\n",
+                 ctx->tcp_fd, sizeof(raw));
 
     ssize_t raw_len = recv(ctx->tcp_fd, raw, sizeof(raw), MSG_PEEK);
     if (raw_len <= 0) {
@@ -200,9 +199,8 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
         return -1;
     }
 
-    fprintf(stderr,
-            "[tlspeek] MSG_PEEK got %zd bytes — kernel buffer UNCHANGED\n",
-            raw_len);
+    TLSPEEK_VLOG("[tlspeek] MSG_PEEK got %zd bytes — kernel buffer UNCHANGED\n",
+                 raw_len);
 
     /* ── Sub-step 2b: Parse TLS 1.3 record header (5 bytes) ── */
     if (raw_len < TLSPEEK_HEADER_SIZE) {
@@ -215,9 +213,8 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
     /* uint16 version     = raw[1..2] — should be 0x0303 */
     uint16_t record_len  = (uint16_t)((raw[3] << 8) | raw[4]);
 
-    fprintf(stderr,
-            "[tlspeek] TLS record: type=0x%02X version=0x%02X%02X len=%u\n",
-            record_type, raw[1], raw[2], record_len);
+    TLSPEEK_VLOG("[tlspeek] TLS record: type=0x%02X version=0x%02X%02X len=%u\n",
+                 record_type, raw[1], raw[2], record_len);
 
     if (record_type != 0x17) {
         fprintf(stderr,
@@ -256,9 +253,8 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
     const uint8_t *auth_tag   = ciphertext + ct_len;
     const uint8_t *aad        = raw;  /* TLS record header = AAD */
 
-    fprintf(stderr,
-            "[tlspeek] Decrypting: ct_len=%zu tag_offset=%zu\n",
-            ct_len, ct_len);
+    TLSPEEK_VLOG("[tlspeek] Decrypting: ct_len=%zu tag_offset=%zu\n",
+                 ct_len, ct_len);
 
     /* ── Sub-step 2d: Stateless AEAD decryption ── */
     uint8_t plaintext[TLSPEEK_MAX_RECORD];
@@ -314,9 +310,8 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
     size_t plaintext_len = ct_len - 1;  /* strip inner content type byte */
 
     uint8_t inner_type = plaintext[plaintext_len];
-    fprintf(stderr,
-            "[tlspeek] Inner content type = 0x%02X, plaintext_len=%zu\n",
-            inner_type, plaintext_len);
+    TLSPEEK_VLOG("[tlspeek] Inner content type = 0x%02X, plaintext_len=%zu\n",
+                 inner_type, plaintext_len);
 
     if (inner_type != 0x17) {
         fprintf(stderr,
@@ -329,10 +324,8 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
     size_t copy_len = plaintext_len < size ? plaintext_len : size;
     memcpy(buf, plaintext, copy_len);
 
-    fprintf(stderr,
-            "[tlspeek] SUCCESS: %zu plaintext bytes returned. "
-            "Kernel buffer UNCHANGED, seq_num UNCHANGED (%llu)\n",
-            copy_len, (unsigned long long)ctx->read_seq_num);
+    TLSPEEK_VLOG("[tlspeek] SUCCESS: %zu plaintext bytes returned. Kernel buffer UNCHANGED, seq_num UNCHANGED (%llu)\n",
+                 copy_len, (unsigned long long)ctx->read_seq_num);
 
     return (int)copy_len;
 }

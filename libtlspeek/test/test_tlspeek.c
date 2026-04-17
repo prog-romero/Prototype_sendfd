@@ -155,10 +155,19 @@ static void test_serialize(void)
     if (serial.cipher_suite == (uint32_t)ctx.cipher_suite) PASS();
     else FAIL("cipher_suite mismatch");
 
-    /* 
-     * Note: client_write_key and read_seq_num are no longer direct members of 
-     * tlspeek_serial_t (they are packed into the tls_blob).
-     */
+    TEST("client_write_key round-trips for stateless peek");
+    if (memcmp(serial.client_write_key, ctx.client_write_key,
+               sizeof(serial.client_write_key)) == 0) PASS();
+    else FAIL("client_write_key mismatch");
+
+    TEST("client_write_iv round-trips for stateless peek");
+    if (memcmp(serial.client_write_iv, ctx.client_write_iv,
+               sizeof(serial.client_write_iv)) == 0) PASS();
+    else FAIL("client_write_iv mismatch");
+
+    TEST("read_seq_num round-trips for stateless peek");
+    if (serial.read_seq_num == ctx.read_seq_num) PASS();
+    else FAIL("read_seq_num mismatch");
 }
 
 /* ─── Test 4: AES-GCM round-trip ────────────────────────────────────────── */

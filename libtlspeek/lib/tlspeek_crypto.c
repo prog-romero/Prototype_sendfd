@@ -10,6 +10,7 @@
  */
 
 #include "tlspeek_crypto.h"
+#include "../common/tlspeek_log.h"
 #include <wolfssl/options.h>
 
 #include <stdio.h>
@@ -42,12 +43,11 @@ void tls13_compute_nonce(
         nonce_out[11 - i] ^= (uint8_t)((seq_num >> (8 * i)) & 0xFF);
     }
 
-    fprintf(stderr, "[crypto] nonce computed for seq_num=%llu: "
-            "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
-            (unsigned long long)seq_num,
-            nonce_out[0],  nonce_out[1],  nonce_out[2],  nonce_out[3],
-            nonce_out[4],  nonce_out[5],  nonce_out[6],  nonce_out[7],
-            nonce_out[8],  nonce_out[9],  nonce_out[10], nonce_out[11]);
+    TLSPEEK_VLOG("[crypto] nonce computed for seq_num=%llu: %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
+                 (unsigned long long)seq_num,
+                 nonce_out[0],  nonce_out[1],  nonce_out[2],  nonce_out[3],
+                 nonce_out[4],  nonce_out[5],  nonce_out[6],  nonce_out[7],
+                 nonce_out[8],  nonce_out[9],  nonce_out[10], nonce_out[11]);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────── */
@@ -98,8 +98,8 @@ int aead_aes_gcm_decrypt(
         return -1;
     }
 
-    fprintf(stderr, "[crypto] AES-GCM stateless decrypt OK, %zu plaintext bytes\n",
-            ct_len);
+    TLSPEEK_VLOG("[crypto] AES-GCM stateless decrypt OK, %zu plaintext bytes\n",
+                 ct_len);
     return 0;
 }
 
@@ -141,9 +141,8 @@ int aead_chacha20_poly1305_decrypt(
         return -1;
     }
 
-    fprintf(stderr,
-            "[crypto] ChaCha20-Poly1305 stateless decrypt OK, %zu plaintext bytes\n",
-            ct_len);
+    TLSPEEK_VLOG("[crypto] ChaCha20-Poly1305 stateless decrypt OK, %zu plaintext bytes\n",
+                 ct_len);
     return 0;
 }
 
@@ -192,10 +191,8 @@ int tls13_hkdf_expand_label(
         pos += context_len;
     }
 
-    fprintf(stderr,
-            "[crypto] HKDF-Expand-Label(label=\"tls13 %s\", out_len=%zu, "
-            "hkdf_label_len=%zu, hash=%d)\n",
-            label, out_len, pos, hash_algo);
+    TLSPEEK_VLOG("[crypto] HKDF-Expand-Label(label=\"tls13 %s\", out_len=%zu, hkdf_label_len=%zu, hash=%d)\n",
+                 label, out_len, pos, hash_algo);
 
     /*
      * wc_HKDF_Expand() from wolfssl/wolfcrypt/kdf.h:

@@ -18,9 +18,59 @@ fi
 sudo mkdir -p /var/lib/faasd/tlsmigrate
 sudo chmod 777 /var/lib/faasd/tlsmigrate
 
-if [ ! -f "$BACKUP_FILE" ]; then
-  echo "[pi] backing up $COMPOSE_FILE -> $BACKUP_FILE"
-  sudo cp "$COMPOSE_FILE" "$BACKUP_FILE"
+if ! sudo test -f "$BACKUP_FILE"; then
+  if sudo env COMPOSE_FILE="$COMPOSE_FILE" python3 - <<'PY'
+import os
+import sys
+import yaml
+
+compose_file = os.environ['COMPOSE_FILE']
+with open(compose_file, 'r') as f:
+    doc = yaml.safe_load(f) or {}
+
+gw = ((doc.get('services') or {}).get('gateway') or {})
+image = str(gw.get('image') or '')
+env = gw.get('environment') or []
+ports = gw.get('ports') or []
+vols = gw.get('volumes') or []
+
+def has_tlsmigrate_env(seq):
+    if isinstance(seq, dict):
+        return any(k.startswith('TLSMIGRATE_') for k in seq)
+    if isinstance(seq, list):
+        return any(isinstance(x, str) and x.startswith('TLSMIGRATE_') for x in seq)
+    return False
+
+def has_9443(seq):
+    if not isinstance(seq, list):
+        return False
+    return any(isinstance(x, str) and x.split(':', 1)[0] == '9443' for x in seq)
+
+def has_tlsmigrate_mount(seq):
+    if not isinstance(seq, list):
+        return False
+    for item in seq:
+        if isinstance(item, dict) and item.get('source') == './tlsmigrate':
+            return True
+        if isinstance(item, str) and item.split(':', 1)[0] == './tlsmigrate':
+            return True
+    return False
+
+is_proto = (
+    'faasd-gateway-tlsmigrate' in image or
+    has_tlsmigrate_env(env) or
+    has_9443(ports) or
+    has_tlsmigrate_mount(vols)
+)
+
+sys.exit(1 if is_proto else 0)
+PY
+  then
+    echo "[pi] backing up $COMPOSE_FILE -> $BACKUP_FILE"
+    sudo cp "$COMPOSE_FILE" "$BACKUP_FILE"
+  else
+    echo "[pi] current compose already looks prototype-modified; not overwriting $BACKUP_FILE"
+  fi
 fi
 
 echo "[pi] patching gateway service in $COMPOSE_FILE"
