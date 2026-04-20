@@ -6,9 +6,13 @@ By default it sweeps alpha ∈ {0, 25, 50} × payload_size ∈ {10 fixed sizes,
 64 B → 1 MB}. You can override the alpha list, including the special value
 100, to generate one-alpha result files for fairness checks.
 
-Every combination runs exactly --num-requests requests ALL at the same fixed
-payload size. All results are written into ONE CSV so vanilla and proto can
-be compared side-by-side or on matched alpha slices.
+Every combination runs a fixed number of requests at the same payload size.
+By default the schedule uses more samples for small payloads and fewer for
+large ones, but you can override it and force the same request count for
+every payload size when you want a perfectly uniform per-payload comparison.
+
+All results are written into ONE CSV so vanilla and proto can be compared
+side-by-side or on matched alpha slices.
 
 Total combinations: 3 alpha × 10 sizes = 30 runs × ~68 requests avg = ~2040 rows.
 
@@ -26,16 +30,25 @@ Total combinations: 3 alpha × 10 sizes = 30 runs × ~68 requests avg = ~2040 ro
   # Vanilla evaluation
   python3 run_combined_sweep.py \\
       --host 192.168.2.2 --port 8444 \\
-      --label vanilla \\
-      --num-requests 500 --warmup 20 --requests-per-conn 50 \\
+    --label vanilla \
+    --requests-per-conn 50 \
       --out results/combined_vanilla.csv
 
   # Prototype evaluation (identical parameters, only port and label change)
   python3 run_combined_sweep.py \\
       --host 192.168.2.2 --port 9444 \\
-      --label proto \\
-      --num-requests 500 --warmup 20 --requests-per-conn 50 \\
+      --label proto \
+      --requests-per-conn 50 \
       --out results/combined_proto.csv
+
+  # Prototype single-alpha evaluation with 100 requests for each payload size
+  python3 run_combined_sweep.py \
+      --host 192.168.2.2 --port 9444 \
+      --label proto \
+      --alpha-list 0 \
+      --num-requests-per-payload 100 --warmup-per-payload 20 \
+      --requests-per-conn 50 \
+      --out results/proto_alpha0_uniform1000.csv
 """
 
 import argparse
@@ -53,7 +66,7 @@ DEFAULT_ALPHA_VALUES = [0, 25, 50]
 
 # (payload_size_bytes, num_requests, warmup)
 # More requests for small payloads (fast), fewer for large (slow).
-PAYLOAD_SCHEDULE = [
+DEFAULT_PAYLOAD_SCHEDULE = [
     (64,          20,  5),   #  64 B   — very fast, many samples
     (256,         20,  5),   # 256 B
     (1_024,        8,  3),   #   1 KB
@@ -65,6 +78,21 @@ PAYLOAD_SCHEDULE = [
     (524_288,      2,  1),   # 512 KB
     (1_048_576,    2,  1),   #   1 MB
 ]
+
+
+def build_payload_schedule(num_requests_per_payload: int | None,
+                           warmup_per_payload: int | None) -> list[tuple[int, int, int]]:
+    if num_requests_per_payload is None and warmup_per_payload is None:
+        return list(DEFAULT_PAYLOAD_SCHEDULE)
+
+    if num_requests_per_payload is None:
+        return [(size, reqs, warmup_per_payload) for size, reqs, _ in DEFAULT_PAYLOAD_SCHEDULE]
+
+    if warmup_per_payload is None:
+        warmup_per_payload = min(20, max(1, num_requests_per_payload // 10))
+
+    payload_sizes = [size for size, _, _ in DEFAULT_PAYLOAD_SCHEDULE]
+    return [(size, num_requests_per_payload, warmup_per_payload) for size in payload_sizes]
 
 
 # ─── SSL / connection helpers ──────────────────────────────────────────────
@@ -182,6 +210,7 @@ def build_schedule(fn_a: str, fn_b: str,
 def run_sweep(host: str, port: int,
               fn_a: str, fn_b: str,
               alpha_values: list[int],
+              payload_schedule: list[tuple[int, int, int]],
               requests_per_conn: int,
               timeout: float,
               label: str,
@@ -191,11 +220,11 @@ def run_sweep(host: str, port: int,
     rng      = random.Random(seed)
     all_rows: list[dict] = []
 
-    total_runs = len(alpha_values) * len(PAYLOAD_SCHEDULE)
+    total_runs = len(alpha_values) * len(payload_schedule)
     run_no     = 0
 
     for alpha in alpha_values:
-        for payload_size, num_requests, warmup in PAYLOAD_SCHEDULE:
+        for payload_size, num_requests, warmup in payload_schedule:
             run_no += 1
             print(f"\n[{run_no:2d}/{total_runs}]  alpha={alpha:2d}  "
                   f"payload={payload_size:>10,} B  ({num_requests} req + {warmup} warmup)")
@@ -268,7 +297,7 @@ def run_sweep(host: str, port: int,
         w.writeheader()
         w.writerows(all_rows)
 
-    expected = sum(n for _, n, _ in PAYLOAD_SCHEDULE) * len(alpha_values)
+    expected = sum(n for _, n, _ in payload_schedule) * len(alpha_values)
     print(f"\nWrote {len(all_rows)}/{expected} rows → {out_path}")
 
 
@@ -314,6 +343,10 @@ def main() -> int:
                     help="random seed (same seed → reproducible schedule)")
     ap.add_argument("--alpha-list",        default=None,
                     help="comma-separated alpha values, default 0,25,50; supports special value 100")
+    ap.add_argument("--num-requests-per-payload", type=int, default=None,
+                    help="override the mixed schedule and use the same request count for every payload size")
+    ap.add_argument("--warmup-per-payload", type=int, default=None,
+                    help="override the warmup count for every payload size")
     ap.add_argument("--out",               required=True,
                     help="output CSV path, e.g. results/combined_vanilla.csv")
     args = ap.parse_args()
@@ -324,13 +357,25 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    total_rows = sum(n for _, n, _ in PAYLOAD_SCHEDULE) * len(alpha_values)
+    if args.num_requests_per_payload is not None and args.num_requests_per_payload <= 0:
+        print("error: --num-requests-per-payload must be > 0", file=sys.stderr)
+        return 2
+    if args.warmup_per_payload is not None and args.warmup_per_payload < 0:
+        print("error: --warmup-per-payload must be >= 0", file=sys.stderr)
+        return 2
+
+    payload_schedule = build_payload_schedule(
+        num_requests_per_payload=args.num_requests_per_payload,
+        warmup_per_payload=args.warmup_per_payload,
+    )
+
+    total_rows = sum(n for _, n, _ in payload_schedule) * len(alpha_values)
     print(f"Payload schedule (size, requests, warmup):")
-    for size, nreq, nwarm in PAYLOAD_SCHEDULE:
+    for size, nreq, nwarm in payload_schedule:
         print(f"  {size:>10,} B  →  {nreq:4d} req  + {nwarm} warmup")
     print(f"\nAlpha values: {alpha_values}")
-    print(f"Total runs: {len(alpha_values) * len(PAYLOAD_SCHEDULE)}  "
-          f"({len(alpha_values)} alpha × {len(PAYLOAD_SCHEDULE)} sizes)")
+    print(f"Total runs: {len(alpha_values) * len(payload_schedule)}  "
+          f"({len(alpha_values)} alpha × {len(payload_schedule)} sizes)")
     print(f"Total rows expected: {total_rows:,}")
     print(f"Requests per TLS conn: {args.requests_per_conn or 'unlimited'}")
     print(f"Label: {args.label}")
@@ -342,6 +387,7 @@ def main() -> int:
         fn_a=args.function_a,
         fn_b=args.function_b,
         alpha_values=alpha_values,
+        payload_schedule=payload_schedule,
         requests_per_conn=args.requests_per_conn,
         timeout=args.timeout,
         label=args.label,

@@ -11,6 +11,7 @@ This directory contains the repeatable workflow for the benchmark-2 keepalive co
 - `client/run_combined_sweep.py`: combined payload sweep writer for one or more alpha values.
 - `client/plot_bench2_results.py`: fairness-oriented comparison plots.
 - `scripts/prepare_proto_stack.sh`: rebuild, redeploy, enable, and smoke-test the prototype stack.
+- `scripts/prepare_vanilla_stack.sh`: restore, redeploy, start, and smoke-test the vanilla stack.
 - `scripts/run_single_alpha_combined.sh`: run one combined sweep for a single alpha and save it to one CSV.
 
 ## Important fairness rule
@@ -53,20 +54,58 @@ Note: OpenFaaS function deploys always pull from a registry, so the prototype wo
 
 ## Prototype alpha=0 and alpha=100 captures
 
-After the prototype stack is ready, run the two single-alpha files you asked for:
+For the dedicated prototype runs you asked for, use a uniform payload schedule:
+10 payload sizes with 100 measured requests each, for 1000 measured rows per file.
 
 ```bash
+NUM_REQUESTS_PER_PAYLOAD=100 WARMUP_PER_PAYLOAD=20 \
+PYTHON_BIN=/home/tchiaze/CIAC_Triance/api-ml/venv/bin/python \
 bash benchmarks/micro/micro-bench2-keepalive/scripts/run_single_alpha_combined.sh proto 0
+
+NUM_REQUESTS_PER_PAYLOAD=100 WARMUP_PER_PAYLOAD=20 \
+PYTHON_BIN=/home/tchiaze/CIAC_Triance/api-ml/venv/bin/python \
 bash benchmarks/micro/micro-bench2-keepalive/scripts/run_single_alpha_combined.sh proto 100
 ```
 
-These commands save one CSV per alpha under `benchmarks/micro/micro-bench2-keepalive/results/` with a timestamp in the file name.
+The helper passes `--num-requests-per-payload` and `--warmup-per-payload` through to `client/run_combined_sweep.py`, so every payload size gets the same measurement weight.
+
+Files captured on 2026-04-17:
+
+- `results/proto_alpha0_uniform1000_rpc50_20260417_145546.csv`
+- `results/proto_alpha100_uniform1000_rpc50_20260417_145656.csv`
 
 If you want to pin `alpha=100` to `bench2-fn-b` instead of `bench2-fn-a`:
 
 ```bash
+NUM_REQUESTS_PER_PAYLOAD=100 WARMUP_PER_PAYLOAD=20 \
 FUNCTION_A=bench2-fn-b FUNCTION_B=bench2-fn-a \
+PYTHON_BIN=/home/tchiaze/CIAC_Triance/api-ml/venv/bin/python \
 bash benchmarks/micro/micro-bench2-keepalive/scripts/run_single_alpha_combined.sh proto 100
+```
+
+## One-command vanilla preparation
+
+Before any vanilla benchmark run, bring the vanilla path back up explicitly:
+
+```bash
+PYTHON_BIN=/home/tchiaze/CIAC_Triance/api-ml/venv/bin/python \
+bash benchmarks/micro/micro-bench2-keepalive/scripts/prepare_vanilla_stack.sh
+```
+
+What it does:
+
+1. Restores the faasd vanilla gateway on the Pi if the prototype gateway is currently enabled.
+2. Builds and pushes the current vanilla function image from source and redeploys `bench2-fn-a` and `bench2-fn-b`.
+3. Syncs the vanilla proxy source to the Pi, rebuilds it there, starts it on port `8444`, and retries the smoke test until the proxy is ready.
+
+Useful environment overrides:
+
+```bash
+PI_SSH=romero@192.168.2.2
+PI_HOST=192.168.2.2
+PI_REPO_ROOT=~/Prototype_sendfd
+PI_SUDO_PASSWORD='...'
+PYTHON_BIN=/home/tchiaze/CIAC_Triance/api-ml/venv/bin/python
 ```
 
 ## Fair vanilla rerun with the same RPC value
@@ -86,9 +125,19 @@ For the full fair combined sweep with `requests_per_conn=50`:
 For matched one-alpha vanilla files later:
 
 ```bash
+PYTHON_BIN=/home/tchiaze/CIAC_Triance/api-ml/venv/bin/python \
+bash benchmarks/micro/micro-bench2-keepalive/scripts/prepare_vanilla_stack.sh
+
+NUM_REQUESTS_PER_PAYLOAD=100 WARMUP_PER_PAYLOAD=20 \
+PYTHON_BIN=/home/tchiaze/CIAC_Triance/api-ml/venv/bin/python \
 bash benchmarks/micro/micro-bench2-keepalive/scripts/run_single_alpha_combined.sh vanilla 0
+
+NUM_REQUESTS_PER_PAYLOAD=100 WARMUP_PER_PAYLOAD=20 \
+PYTHON_BIN=/home/tchiaze/CIAC_Triance/api-ml/venv/bin/python \
 bash benchmarks/micro/micro-bench2-keepalive/scripts/run_single_alpha_combined.sh vanilla 100
 ```
+
+Use the same `NUM_REQUESTS_PER_PAYLOAD`, `WARMUP_PER_PAYLOAD`, and `REQUESTS_PER_CONN` values as the prototype files when you generate the matching vanilla files.
 
 ## Regenerating the plots
 
