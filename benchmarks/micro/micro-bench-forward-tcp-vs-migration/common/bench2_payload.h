@@ -1,0 +1,63 @@
+/*
+ * bench2_payload.h — Wire payload sent alongside a raw TCP fd when the fd
+ * is transferred between processes in the benchmark-2 (keepalive) prototype.
+ *
+ * Requires wolfSSL + libtlspeek headers (for tlspeek_serial_t).
+ * Include AFTER wolfssl/options.h or after defining HAVE_SECRET_CALLBACK.
+ *
+ * Both the proto gateway C shim (bench2gw.c) and the proto worker
+ * (bench2_proto_worker.c) include this header so the struct layout is
+ * guaranteed to match across the sendfd_with_state() boundary.
+ */
+#ifndef BENCH2_PAYLOAD_H
+#define BENCH2_PAYLOAD_H
+
+#ifndef HAVE_SECRET_CALLBACK
+#  define HAVE_SECRET_CALLBACK
+#endif
+#ifndef WOLFSSL_KEYLOG_EXPORT
+#  define WOLFSSL_KEYLOG_EXPORT
+#endif
+
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+#include <tlspeek/tlspeek.h>
+#include <stdint.h>
+
+#define BENCH2_KA_MAGIC      0x42324B41U   /* 'B2KA' */
+#define BENCH2_KA_VERSION    1U
+#define BENCH2_KA_TARGET_LEN 128
+
+/*
+ * bench2_keepalive_payload_t
+ *
+ * Carried alongside the raw TCP fd when transferred via sendfd_with_state().
+ *
+ * Fields:
+ *   magic          — BENCH2_KA_MAGIC, sanity check on reception.
+ *   version        — BENCH2_KA_VERSION.
+ *   serial         — TLS session state (keys, IV, seq-num, wolfSSL export blob).
+ *   target_function— null-terminated name of the function that should handle
+ *                    the next request on this connection.
+ *   top1_rdtsc     — bench2_rdtsc() value stamped at top1:
+ *                      · For the first request: stamped by the gateway C shim
+ *                        just before tls_read_peek().
+ *                      · For a relayed request: stamped by the wrong-owner
+ *                        container just before its tls_read_peek().
+ *   cntfrq         — CNTFRQ_EL0 / bench2_cntfrq() at the time top1 was stamped,
+ *                    so the receiver can convert cycles to nanoseconds.
+ *   top1_set       — 1 when top1_rdtsc / cntfrq are valid.
+ *   _pad           — reserved, zero.
+ */
+typedef struct {
+    uint32_t         magic;
+    uint32_t         version;
+    tlspeek_serial_t serial;
+    char             target_function[BENCH2_KA_TARGET_LEN];
+    uint64_t         top1_rdtsc;
+    uint64_t         cntfrq;
+    uint8_t          top1_set;
+    uint8_t          _pad[7];
+} bench2_keepalive_payload_t;
+
+#endif /* BENCH2_PAYLOAD_H */

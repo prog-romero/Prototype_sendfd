@@ -1,0 +1,27 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  bench2-fn-a:
+    image: docker.io/local/bench2-proto-worker:arm64
+    environment:
+      BENCH2_FUNCTION_NAME: bench2-fn-a
+      BENCH2_SOCKET_DIR: /run/bench2
+      BENCH2_RELAY_SOCKET: /run/bench2/relay.sock
+      BENCH2_CERT: /certs/server.crt
+      BENCH2_KEY: /certs/server.key
+    labels:
+      com.openfaas.scale.zero: "false"
+
+  bench2-fn-b:
+    image: docker.io/local/bench2-proto-worker:arm64
+    environment:
+      BENCH2_FUNCTION_NAME: bench2-fn-b
+      BENCH2_SOCKET_DIR: /run/bench2
+      BENCH2_RELAY_SOCKET: /run/bench2/relay.sock
+      BENCH2_CERT: /certs/server.crt
+      BENCH2_KEY: /certs/server.key
+    labels:
+      com.openfaas.scale.zero: "false"
