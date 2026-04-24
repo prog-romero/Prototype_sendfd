@@ -1,0 +1,6 @@
+[alpha0-step32] mode=vanilla topology=one_container fn_a=bench2-fn-a fn_b=bench2-fn-a
+[alpha0-step32] requests_per_payload=100 warmup=20 payload_sizes=32768,65536,98304,131072,163840,196608,229376,262144,294912,327680,360448,393216,425984,458752,491520,524288,557056,589824,622592,655360,688128,720896,753664,786432,819200,851968,884736,917504,950272,983040,1015808,1048576
+[alpha0-step32] output=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/results/combined_vanilla_one_container_step32kb_32_to_1024_alpha0_rpc50_20260424_103931.csv
+[single-alpha] mode=vanilla alpha=0 port=8444 rpc=50
+[single-alpha] uniform_requests_per_payload=100 warmup_per_payload=20
+[single-alpha] output=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/results/combined_vanilla_one_container_step32kb_32_to_1024_alpha0_rpc50_20260424_103931.csv

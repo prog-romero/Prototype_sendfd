@@ -1,0 +1,11 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  timing-fn:
+    # Build from benchmarks/micro/micro-bench2-initale-time/proto_function/timing-fn/
+    image: ttl.sh/timing-fn-tlsmigrate-bench2:24h
+    labels:
+      com.openfaas.scale.zero: "false"

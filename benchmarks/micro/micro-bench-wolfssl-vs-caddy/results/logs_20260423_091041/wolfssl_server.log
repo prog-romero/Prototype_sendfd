@@ -1,0 +1,4 @@
+make : on entre dans le répertoire « /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/wolfssl_server »
+rm -f wolfssl_bench_server
+gcc -O2 -Wall -Wextra -I/usr/local/include -o wolfssl_bench_server wolfssl_bench_server.c -L/usr/local/lib -lwolfssl -lpthread
+make : on quitte le répertoire « /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/wolfssl_server »

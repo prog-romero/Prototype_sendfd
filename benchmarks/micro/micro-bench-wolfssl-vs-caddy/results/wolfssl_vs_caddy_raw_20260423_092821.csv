@@ -1,0 +1,3 @@
+implementation,payload_size,sample_index,server_request_no,top1_rdtsc,top2_rdtsc,delta_cycles,cntfrq,delta_ns,bytes_expected,bytes_consumed,tls_version,cipher_suite,host,port,path,post_handshake_delay_ms,requested_tls_version
+wolfssl,64,1,1,1078335001851069,1078335001891088,40019,1000000000,40019,64,64,TLSv1.2,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,127.0.0.1,9455,/bench,5.0,1.2
+wolfssl,64,2,2,1078335052920199,1078335052943666,23467,1000000000,23467,64,64,TLSv1.2,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,127.0.0.1,9455,/bench,5.0,1.2

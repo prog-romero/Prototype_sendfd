@@ -1,0 +1,24 @@
+Built /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/caddy_bench/bin/benchcaddy
+Wrote /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/caddy_bench/generated/bench_caddy.json
+{"level":"info","ts":1776930067.8517044,"msg":"using config from file","file":"/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/caddy_bench/generated/bench_caddy.json"}
+{"level":"info","ts":1776930067.853844,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc000672300"}
+{"level":"info","ts":1776930067.8539357,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"bench"}
+{"level":"info","ts":1776930067.8540134,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc000672300"}
+{"level":"info","ts":1776930067.8540332,"logger":"http","msg":"servers shutting down with eternal grace period"}
+Valid configuration
+{"level":"info","ts":1776930067.902347,"msg":"maxprocs: Leaving GOMAXPROCS=8: CPU quota undefined"}
+{"level":"info","ts":1776930067.9023798,"msg":"GOMEMLIMIT is updated","GOMEMLIMIT":13020836659,"previous":9223372036854775807}
+{"level":"info","ts":1776930067.902387,"msg":"using config from file","file":"/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/caddy_bench/generated/bench_caddy.json"}
+{"level":"warn","ts":1776930067.902394,"logger":"admin","msg":"admin endpoint disabled"}
+{"level":"info","ts":1776930067.902845,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc000208900"}
+{"level":"info","ts":1776930067.9030137,"logger":"http.auto_https","msg":"automatic HTTPS is completely disabled for server","server_name":"bench"}
+{"level":"info","ts":1776930067.9043343,"logger":"http.log","msg":"server running","name":"bench","protocols":["h1"]}
+{"level":"info","ts":1776930067.9050689,"msg":"autosaved config (load with --resume flag)","file":"/home/tchiaze/.config/caddy/autosave.json"}
+{"level":"info","ts":1776930067.9050822,"msg":"serving initial configuration"}
+{"level":"info","ts":1776930067.9056616,"logger":"tls","msg":"cleaning storage unit","storage":"FileStorage:/home/tchiaze/.local/share/caddy"}
+{"level":"info","ts":1776930067.9064538,"logger":"tls","msg":"finished cleaning storage units"}
+{"level":"error","ts":1776930068.056291,"logger":"http.log.error","msg":"missing benchmark connection state","request":{"remote_ip":"127.0.0.1","remote_port":"45976","client_ip":"127.0.0.1","proto":"HTTP/1.1","method":"POST","host":"127.0.0.1","uri":"/bench","headers":{"Content-Type":["application/octet-stream"],"Content-Length":["64"],"Connection":["close"]},"tls":{"resumed":false,"version":771,"cipher_suite":49199,"proto":"http/1.1","server_name":"","ech":false}},"duration":0.000065999,"status":500,"err_id":"qja4at5r1","err_trace":"benchmodule.(*DrainHandler).ServeHTTP (benchmodule.go:164)"}
+{"level":"info","ts":1776930068.0697436,"msg":"shutting down apps, then terminating","signal":"SIGTERM"}
+{"level":"warn","ts":1776930068.0698109,"msg":"exiting; byeee!! 👋","signal":"SIGTERM"}
+{"level":"info","ts":1776930068.0698633,"logger":"http","msg":"servers shutting down with eternal grace period"}
+{"level":"info","ts":1776930068.0701592,"msg":"shutdown complete","signal":"SIGTERM","exit_code":0}

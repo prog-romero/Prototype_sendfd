@@ -1,0 +1,9 @@
+make : on entre dans le répertoire « /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/wolfssl_server »
+rm -f wolfssl_bench_server
+gcc -O2 -Wall -Wextra -I/usr/local/include -o wolfssl_bench_server wolfssl_bench_server.c -L/usr/local/lib -lwolfssl -lpthread
+make : on quitte le répertoire « /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/wolfssl_server »
+[wolfssl-bench] listening on 127.0.0.1:9448 using cert=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/../../../libtlspeek/certs/server.crt key=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench-wolfssl-vs-caddy/../../../libtlspeek/certs/server.key
+client random: 6ef8e4bac21cd3e07e42468bc315938c54ca5fcd3161b25714a3c53d959076bc
+server random: 2cdafbe59e402dc467402bcfdd5bdbf91f5e5f243b047e43444f574e47524401
+CLIENT_RANDOM 6ef8e4bac21cd3e07e42468bc315938c54ca5fcd3161b25714a3c53d959076bc 24470ae51e680bc6e970a1f3708447e71859a11de00236f73a012d29016c592ef11338dc476204929fbd27348b488bcb
+
