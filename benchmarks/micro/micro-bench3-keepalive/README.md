@@ -9,7 +9,8 @@ The prototype path is intentionally the same as bench2 keepalive, including the 
 - `proto_worker/`: prototype OpenFaaS worker image source.
 - `proto_gateway/`: shared gateway image source for both modes.
 - `vanilla_function/`: plain function used behind the embedded vanilla TLS listener.
-- `vanilla_proxy/`: source for the embedded vanilla listener binary, compiled into the gateway image.
+- `proto_gateway/benchhttps/`: wolfSSL-backed HTTPS listener that is patched into the faasd gateway for vanilla mode.
+- `vanilla_proxy/`: older standalone proxy implementation kept as reference only.
 - `client/run_combined_sweep.py`: combined payload sweep client, now with `--payload-sizes` support.
 - `scripts/prepare_proto_stack.sh`: rebuild, redeploy, enable, and smoke-test the prototype stack.
 - `scripts/prepare_vanilla_stack.sh`: rebuild, redeploy, enable, and smoke-test the vanilla stack.
@@ -77,7 +78,7 @@ What it does:
 3. Builds the same shared bench3 gateway image, imports it on the Pi, and enables vanilla mode on port `8444`.
 4. Runs a smoke test against `https://192.168.2.2:8444/function/bench2-fn-a`.
 
-The `vanilla_proxy/` directory is still present, but it is now build input for the gateway image. It is no longer copied to the Pi or launched as a standalone daemon.
+The `vanilla_proxy/` directory is still present as an older reference implementation, but the active vanilla path now lives in `proto_gateway/benchhttps/`. Vanilla mode is served directly by the patched faasd gateway process on port `8444`; no standalone proxy daemon is launched on the Pi.
 
 ## Requested evaluation commands
 

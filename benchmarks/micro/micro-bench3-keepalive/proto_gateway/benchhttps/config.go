@@ -12,6 +12,7 @@ type Config struct {
 	ListenAddr string
 	CertFile   string
 	KeyFile    string
+	Upstream   string
 }
 
 func MaybeStartFromEnv(handler http.Handler) {
@@ -37,18 +38,20 @@ func configFromEnv() (Config, error) {
 	listen := getenv("BENCH2_TLS_LISTEN", ":8444")
 	cert := getenv("BENCH2_TLS_CERT", "/certs/server.crt")
 	key := getenv("BENCH2_TLS_KEY", "/certs/server.key")
+	upstream := getenv("BENCH2_TLS_UPSTREAM", "127.0.0.1:8080")
 
 	if listen == "" {
 		return Config{}, errors.New("BENCH2_TLS_LISTEN empty")
 	}
-	if cert == "" || key == "" {
-		return Config{}, errors.New("BENCH2_TLS_CERT/BENCH2_TLS_KEY empty")
+	if cert == "" || key == "" || upstream == "" {
+		return Config{}, errors.New("BENCH2_TLS_CERT/BENCH2_TLS_KEY/BENCH2_TLS_UPSTREAM empty")
 	}
 
 	return Config{
 		ListenAddr: listen,
 		CertFile:   cert,
 		KeyFile:    key,
+		Upstream:   upstream,
 	}, nil
 }
 

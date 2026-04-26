@@ -154,6 +154,11 @@ static int has_connection_close(const char *hdr, size_t hlen)
     return 0;
 }
 
+static int has_single_owner_hint(const char *hdr, size_t hlen)
+{
+    return parse_header_int64(hdr, hlen, "x-bench2-single-owner:") > 0;
+}
+
 /* Parse function name from HTTP request line "METHOD /function/<name> HTTP..." */
 static bool parse_request_owner(const unsigned char *buf, size_t len,
                                 char *out, size_t outsz)
@@ -386,6 +391,63 @@ static int send_response(WOLFSSL *ssl,
     return wolfssl_write_all(ssl, resp, (size_t)rlen);
 }
 
+static int read_full_request(WOLFSSL *ssl,
+                             uint64_t *top2_out,
+                             int *req_close_out,
+                             int *single_owner_hint_out,
+                             char *owner_out,
+                             size_t owner_out_sz)
+{
+    unsigned char rbuf[65536 + 1];
+    size_t rlen = 0;
+    ssize_t hdr_end = -1;
+
+    while (hdr_end < 0) {
+        int n = wolfSSL_read(ssl, rbuf + rlen, (int)(sizeof(rbuf) - 1 - rlen));
+        if (n <= 0) {
+            int e = wolfSSL_get_error(ssl, n);
+            if (e == WOLFSSL_ERROR_WANT_READ || e == WOLFSSL_ERROR_WANT_WRITE)
+                continue;
+            return -1;
+        }
+        rlen += (size_t)n;
+        hdr_end = find_subseq(rbuf, rlen, "\r\n\r\n");
+    }
+
+    size_t hdr_sz = (size_t)hdr_end + 4;
+    long long cl = parse_content_length((const char *)rbuf, hdr_sz);
+    if (cl < 0) cl = 0;
+
+    if (req_close_out)
+        *req_close_out = has_connection_close((const char *)rbuf, hdr_sz);
+    if (single_owner_hint_out)
+        *single_owner_hint_out = has_single_owner_hint((const char *)rbuf, hdr_sz);
+
+    if (owner_out && owner_out_sz > 0) {
+        if (!parse_request_owner(rbuf, hdr_sz, owner_out, owner_out_sz))
+            owner_out[0] = '\0';
+    }
+
+    size_t body_in = (rlen > hdr_sz) ? rlen - hdr_sz : 0;
+    while (body_in < (size_t)cl) {
+        unsigned char scratch[8192];
+        size_t want = (size_t)cl - body_in;
+        if (want > sizeof(scratch)) want = sizeof(scratch);
+        int n = wolfSSL_read(ssl, scratch, (int)want);
+        if (n <= 0) {
+            int e = wolfSSL_get_error(ssl, n);
+            if (e == WOLFSSL_ERROR_WANT_READ || e == WOLFSSL_ERROR_WANT_WRITE)
+                continue;
+            return -1;
+        }
+        body_in += (size_t)n;
+    }
+
+    if (top2_out)
+        *top2_out = bench2_rdtsc();
+    return 0;
+}
+
 /* ─── process_session: main per-connection loop ─────────────────────────── */
 
 static void process_session(WOLFSSL_CTX *wctx,
@@ -414,6 +476,7 @@ static void process_session(WOLFSSL_CTX *wctx,
 
     uint64_t req_no     = 0;
     bool     first_recv = true;   /* true when we receive fd from gateway */
+    bool     single_owner_direct_read = false;
 
     for (;;) {
         req_no++;
@@ -432,46 +495,14 @@ static void process_session(WOLFSSL_CTX *wctx,
             cntfrq_stamp = payload->cntfrq;
             first_recv   = false;
 
-            /* Read headers */
-            unsigned char rbuf[65536 + 1];
-            size_t rlen = 0, cap = sizeof(rbuf) - 1;
-            ssize_t hdr_end = -1;
-
-            while (hdr_end < 0) {
-                int n = wolfSSL_read(ssl, rbuf + rlen, (int)(cap - rlen));
-                if (n <= 0) {
-                    int e = wolfSSL_get_error(ssl, n);
-                    if (e == WOLFSSL_ERROR_WANT_READ || e == WOLFSSL_ERROR_WANT_WRITE)
-                        continue;
-                    fail_stage = "first_read_headers";
-                    goto done;
-                }
-                rlen   += (size_t)n;
-                hdr_end = find_subseq(rbuf, rlen, "\r\n\r\n");
+            int req_close = 0;
+            int single_owner_hint = 0;
+            if (read_full_request(ssl, &top2, &req_close, &single_owner_hint,
+                                  NULL, 0) != 0) {
+                fail_stage = "first_read_full_request";
+                goto done;
             }
-
-            size_t hdr_sz = (size_t)hdr_end + 4;
-            long long cl  = parse_content_length((const char *)rbuf, hdr_sz);
-            if (cl < 0) cl = 0;
-            int req_close = has_connection_close((const char *)rbuf, hdr_sz);
-
-            size_t body_in = (rlen > hdr_sz) ? rlen - hdr_sz : 0;
-            while (body_in < (size_t)cl) {
-                unsigned char scratch[8192];
-                size_t want = (size_t)cl - body_in;
-                if (want > sizeof(scratch)) want = sizeof(scratch);
-                int n = wolfSSL_read(ssl, scratch, (int)want);
-                if (n <= 0) {
-                    int e = wolfSSL_get_error(ssl, n);
-                    if (e == WOLFSSL_ERROR_WANT_READ || e == WOLFSSL_ERROR_WANT_WRITE)
-                        continue;
-                    fail_stage = "first_read_body";
-                    goto done;
-                }
-                body_in += (size_t)n;
-            }
-
-            top2 = bench2_rdtsc();
+            single_owner_direct_read = single_owner_hint != 0;
 
             if (send_response(ssl, function_name, req_no,
                               top1, top2, cntfrq_stamp, req_close) != 0) {
@@ -499,6 +530,33 @@ static void process_session(WOLFSSL_CTX *wctx,
 
             top1         = bench2_rdtsc();
             cntfrq_stamp = bench2_cntfrq();
+
+            if (single_owner_direct_read) {
+                int req_close = 0;
+                char owner[BENCH2_KA_TARGET_LEN];
+
+                if (read_full_request(ssl, &top2, &req_close, NULL,
+                                      owner, sizeof(owner)) != 0) {
+                    fail_stage = "next_read_direct_full_request";
+                    goto done;
+                }
+                if (owner[0] == '\0' || strcmp(owner, function_name) != 0) {
+                    fail_stage = "next_read_direct_owner_mismatch";
+                    goto done;
+                }
+
+                if (send_response(ssl, function_name, req_no,
+                                  top1, top2, cntfrq_stamp, req_close) != 0) {
+                    fail_stage = "next_send_direct_response";
+                    goto done;
+                }
+                if (req_close) break;
+                if (export_live_serial(ssl, &payload->serial) != 0) {
+                    fail_stage = "export_live_serial";
+                    goto done;
+                }
+                continue;
+            }
 
             char owner[BENCH2_KA_TARGET_LEN];
                 BENCH2_WORKER_TRACE("[bench2-worker] before peek req=%" PRIu64 " cipher=0x%04x seq=%" PRIu64 "\n",
@@ -554,46 +612,12 @@ static void process_session(WOLFSSL_CTX *wctx,
              * Sub-case A: we ARE the owner.
              * Read the full request (buffer already peeked without consuming).
              */
-            unsigned char rbuf[65536 + 1];
-            size_t rlen = 0;
-            ssize_t hdr_end = -1;
-
-            while (hdr_end < 0) {
-                int n = wolfSSL_read(ssl, rbuf + rlen,
-                                     (int)(sizeof(rbuf) - 1 - rlen));
-                if (n <= 0) {
-                    int e = wolfSSL_get_error(ssl, n);
-                    if (e == WOLFSSL_ERROR_WANT_READ || e == WOLFSSL_ERROR_WANT_WRITE)
-                        continue;
-                    fail_stage = "next_read_headers";
-                    goto done;
-                }
-                rlen   += (size_t)n;
-                hdr_end = find_subseq(rbuf, rlen, "\r\n\r\n");
+            int req_close = 0;
+            if (read_full_request(ssl, &top2, &req_close, NULL,
+                                  NULL, 0) != 0) {
+                fail_stage = "next_read_full_request";
+                goto done;
             }
-
-            size_t hdr_sz = (size_t)hdr_end + 4;
-            long long cl  = parse_content_length((const char *)rbuf, hdr_sz);
-            if (cl < 0) cl = 0;
-            int req_close = has_connection_close((const char *)rbuf, hdr_sz);
-
-            size_t body_in = (rlen > hdr_sz) ? rlen - hdr_sz : 0;
-            while (body_in < (size_t)cl) {
-                unsigned char scratch[8192];
-                size_t want = (size_t)cl - body_in;
-                if (want > sizeof(scratch)) want = sizeof(scratch);
-                int n = wolfSSL_read(ssl, scratch, (int)want);
-                if (n <= 0) {
-                    int e = wolfSSL_get_error(ssl, n);
-                    if (e == WOLFSSL_ERROR_WANT_READ || e == WOLFSSL_ERROR_WANT_WRITE)
-                        continue;
-                    fail_stage = "next_read_body";
-                    goto done;
-                }
-                body_in += (size_t)n;
-            }
-
-            top2 = bench2_rdtsc();
 
             if (send_response(ssl, function_name, req_no,
                               top1, top2, cntfrq_stamp, req_close) != 0) {

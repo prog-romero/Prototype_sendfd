@@ -2,6 +2,8 @@ package benchhttps
 
 /*
 #include <stdint.h>
+#include <errno.h>
+#include <poll.h>
 #include <sched.h>
 #include <sys/ioctl.h>
 #include <time.h>
@@ -30,6 +32,23 @@ static inline void bench2_go_wait_readable(int fd) {
         sched_yield();
     } while (1);
 }
+
+static inline int bench2_go_wait_readable_timeout(int fd, int timeout_ms) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+
+    for (;;) {
+        int rc = poll(&pfd, 1, timeout_ms);
+        if (rc >= 0) {
+            return rc > 0;
+        }
+        if (errno != EINTR) {
+            return 0;
+        }
+    }
+}
 */
 import "C"
 
@@ -43,4 +62,8 @@ func benchCounterFreq() uint64 {
 
 func benchWaitReadable(fd int) {
 	C.bench2_go_wait_readable(C.int(fd))
+}
+
+func benchWaitReadableTimeout(fd int, timeoutMs int) bool {
+	return C.bench2_go_wait_readable_timeout(C.int(fd), C.int(timeoutMs)) != 0
 }

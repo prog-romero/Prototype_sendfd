@@ -96,12 +96,15 @@ def _make_conn(host: str, port: int, timeout: float) -> http.client.HTTPSConnect
 def do_request(conn: http.client.HTTPSConnection,
                fn_name: str,
                payload_bytes: bytes,
-               keep_alive: bool = True) -> dict:
+               keep_alive: bool = True,
+               single_owner_hint: bool = False) -> dict:
     headers = {
         "Content-Type":   "application/octet-stream",
         "Content-Length": str(len(payload_bytes)),
         "Connection":     "keep-alive" if keep_alive else "close",
     }
+    if single_owner_hint:
+        headers["X-Bench2-Single-Owner"] = "1"
     conn.request("POST", f"/function/{fn_name}", body=payload_bytes, headers=headers)
     resp = conn.getresponse()
     raw  = resp.read()
@@ -114,11 +117,13 @@ class ConnPool:
     """Opens a new TLS connection every `requests_per_conn` requests."""
 
     def __init__(self, host: str, port: int, timeout: float,
-                 requests_per_conn: int):
+                 requests_per_conn: int,
+                 single_owner_hint: bool = False):
         self.host = host
         self.port = port
         self.timeout = timeout
         self.rpc  = requests_per_conn   # 0 = unlimited
+        self.single_owner_hint = single_owner_hint
         self._conn: http.client.HTTPSConnection | None = None
         self._count = 0
 
@@ -137,13 +142,15 @@ class ConnPool:
         if self.rpc > 0 and self._count >= self.rpc:
             self._open()
         try:
-            data = do_request(self._conn, fn_name, payload)
+            data = do_request(self._conn, fn_name, payload,
+                              single_owner_hint=self.single_owner_hint)
             self._count += 1
             return data
         except Exception:
             # reconnect once on error
             self._open()
-            data = do_request(self._conn, fn_name, payload)
+            data = do_request(self._conn, fn_name, payload,
+                              single_owner_hint=self.single_owner_hint)
             self._count += 1
             return data
 
@@ -206,7 +213,8 @@ def run_case1(host: str, port: int,
               out_path: str) -> None:
     """All requests go to the same function. Controls requests-per-connection."""
     payload = os.urandom(payload_size)
-    pool    = ConnPool(host, port, timeout, requests_per_conn)
+    pool    = ConnPool(host, port, timeout, requests_per_conn,
+                       single_owner_hint=True)
 
     print(f"[case1] warmup {warmup} requests …")
     for _ in range(warmup):
@@ -272,7 +280,9 @@ def run_case2_alpha(host: str, port: int,
     warmup_sched  = build_schedule(fn_a, fn_b, warmup,       alpha, rng)
     measure_sched = build_schedule(fn_a, fn_b, num_requests, alpha, rng)
 
-    pool = ConnPool(host, port, timeout, requests_per_conn)
+    single_owner_hint = len(set(warmup_sched + measure_sched)) == 1
+    pool = ConnPool(host, port, timeout, requests_per_conn,
+                    single_owner_hint=single_owner_hint)
 
     print(f"[case2] alpha={alpha:3d} — warmup {warmup} requests …")
     for fn in warmup_sched:
