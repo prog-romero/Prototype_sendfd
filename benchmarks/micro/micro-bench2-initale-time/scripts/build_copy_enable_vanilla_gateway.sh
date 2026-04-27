@@ -12,7 +12,7 @@ REMOTE_ARCHIVE="${REMOTE_ARCHIVE:-/tmp/faasd-gateway-bench2-initale-arm64.tar}"
 CACHE_DIR="${CACHE_DIR:-$ROOT_DIR/.buildx-cache/faasd-gateway}"
 ENABLE_ON_PI="${ENABLE_ON_PI:-1}"
 KEEP_REMOTE_ARCHIVE="${KEEP_REMOTE_ARCHIVE:-0}"
-BUILDER_NAME="${BUILDER_NAME:-default}"
+BUILDER_NAME="${BUILDER_NAME:-bench2-arm64-builder}"
 USE_LOCAL_CACHE="${USE_LOCAL_CACHE:-auto}"
 BUILD_PROGRESS="${BUILD_PROGRESS:-plain}"
 
@@ -23,7 +23,14 @@ mkdir -p "$(dirname "$LOCAL_ARCHIVE")" "$CACHE_DIR"
 
 echo "[init] root=$ROOT_DIR builder=$BUILDER_NAME pi=$PI_SSH"
 
-sed '1{/^# syntax=/d;}' "$DOCKERFILE_SRC" > "$DOCKERFILE_TMP"
+# Do NOT strip the # syntax= line — it is required by docker buildx
+cp "$DOCKERFILE_SRC" "$DOCKERFILE_TMP"
+
+# Ensure the builder exists with the docker-container driver (supports ARM64 emulation)
+if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+  echo "[init] creating buildx builder: $BUILDER_NAME"
+  docker buildx create --name "$BUILDER_NAME" --driver docker-container --bootstrap
+fi
 
 if ! BUILDER_INSPECT="$(docker buildx inspect "$BUILDER_NAME" 2>&1)"; then
   echo "ERROR: failed to inspect buildx builder: $BUILDER_NAME" >&2

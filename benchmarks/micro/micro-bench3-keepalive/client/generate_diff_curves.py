@@ -5,10 +5,10 @@ import os
 
 # --- Configuration ---
 RESULTS_DIR = '/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/results'
-OUTPUT_DIR = os.path.join(RESULTS_DIR, 'final_plots_v2')
+OUTPUT_DIR = os.path.join(RESULTS_DIR, 'final_plots_diff')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Data files
+# Latest identified Data files
 FILES = {
     'one_container': {
         'vanilla': 'combined_vanilla_one_container_alpha0_32kb_to_1024kb_rpc50_20260426_114211.csv',
@@ -20,11 +20,7 @@ FILES = {
     }
 }
 
-# Updated Colors for better aesthetics
-COLORS = {
-    'proto':   '#E67E22',  # Vibrant Orange
-    'vanilla': '#27AE60'   # Elegant Green
-}
+COLOR_DIFF = '#9B59B6'  # Elegant Amethyst Purple for the difference curve
 
 # --- Style Configuration ---
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -33,9 +29,6 @@ plt.rcParams.update({
     'font.size': 11,
     'axes.labelsize': 12,
     'axes.titlesize': 15,
-    'legend.fontsize': 11,
-    'xtick.labelsize': 10,
-    'ytick.labelsize': 10,
     'axes.grid': True,
     'grid.alpha': 0.3,
     'axes.spines.top': False,
@@ -47,66 +40,57 @@ def get_stats(df):
     grouped = df.groupby('payload_size')['delta_ns']
     mean = grouped.mean() / 1e6
     median = grouped.median() / 1e6
-    p95 = grouped.quantile(0.95) / 1e6
     return {
         'mean': mean,
         'median': median,
-        'p95': p95,
         'payloads_kb': mean.index / 1024
     }
 
-def plot_metric(case_name, metric_name, vanilla_stats, proto_stats):
-    """Generates a highly aesthetic figure with spaced bars and inclined labels."""
+def plot_difference(case_name, metric_name, vanilla_stats, proto_stats):
+    """Generates a curve showing the latency difference (Prototype - Vanilla)."""
     v_data = vanilla_stats[metric_name]
     p_data = proto_stats[metric_name]
+    diff = p_data - v_data
     payloads_kb = vanilla_stats['payloads_kb']
     
     x = np.arange(len(payloads_kb))
-    width = 0.30       # Reduced width for better spacing
-    spacing = 0.05     # Gap between bars in a group
     
     fig, ax = plt.subplots(figsize=(11, 7))
     
-    # Histogram (Bars) - Spaced out manually
-    # Note: subtracted spacing/2 and added spacing/2 to separate them
-    bar1 = ax.bar(x - (width/2 + spacing/2), p_data.values, width, 
-                  label='Prototype (libtlspeek)', color=COLORS['proto'], 
-                  alpha=0.85, edgecolor='none', zorder=2)
+    # Plot the difference curve
+    ax.plot(x, diff.values, color=COLOR_DIFF, marker='D', markersize=8, 
+            linewidth=3, linestyle='-', markerfacecolor='white', markeredgewidth=2,
+            label=f'Difference ({metric_name.capitalize()})')
     
-    bar2 = ax.bar(x + (width/2 + spacing/2), v_data.values, width, 
-                  label='Vanilla (Standard Proxy)', color=COLORS['vanilla'], 
-                  alpha=0.85, edgecolor='none', zorder=2)
+    # Zero line for reference
+    ax.axhline(0, color='#34495E', linestyle='--', linewidth=1.5, alpha=0.7, label='Reference (Zero)')
     
-    # Curves (Lines) - Slightly offset markers to match bar centers
-    ax.plot(x - (width/2 + spacing/2), p_data.values, color=COLORS['proto'], 
-            marker='o', markersize=7, linewidth=2.5, linestyle='-', 
-            markerfacecolor='white', markeredgewidth=2, zorder=3)
-    
-    ax.plot(x + (width/2 + spacing/2), v_data.values, color=COLORS['vanilla'], 
-            marker='s', markersize=7, linewidth=2.5, linestyle='-', 
-            markerfacecolor='white', markeredgewidth=2, zorder=3)
+    # Shade the area (Red if Proto > Vanilla, Green if Proto < Vanilla)
+    ax.fill_between(x, diff.values, 0, where=(diff.values > 0), color='#E74C3C', alpha=0.1, interpolate=True)
+    ax.fill_between(x, diff.values, 0, where=(diff.values < 0), color='#2ECC71', alpha=0.1, interpolate=True)
     
     # Set labels and title
     title_suffix = " (One Container)" if case_name == "one_container" else " (Two Containers)"
-    ax.set_title(f'Performance Comparison: {metric_name.capitalize()} Time{title_suffix}', 
-                 fontsize=18, pad=25, fontweight='bold', color='#2C3E50')
+    ax.set_title(f'Time Difference: Prototype - Vanilla [{metric_name.upper()}]{title_suffix}', 
+                 fontsize=16, pad=25, fontweight='bold', color='#2C3E50')
     ax.set_xlabel('Payload Size (KiB)', fontsize=13, labelpad=15)
-    ax.set_ylabel('Time (ms)', fontsize=13, labelpad=15)
+    ax.set_ylabel('Time Delta (ms)', fontsize=13, labelpad=15)
     
-    # X-axis ticks and inclined labels (Inclined for readability)
+    # X-axis ticks
     ax.set_xticks(x)
     ax.set_xticklabels([f'{int(val)} KiB' for val in payloads_kb], rotation=45, ha='right')
     
-    # Legend
-    ax.legend(frameon=True, facecolor='white', framealpha=0.9, loc='upper left', 
-              fontsize=12, borderpad=1)
+    # Annotation note
+    text = "Negative value = Prototype is FASTER"
+    ax.text(0.5, -0.15, text, transform=ax.transAxes, ha='center', fontsize=11, 
+            fontweight='bold', color='#27AE60', bbox=dict(facecolor='white', alpha=0.8, edgecolor='#27AE60'))
+
+    ax.legend(frameon=True, facecolor='white', framealpha=0.9, loc='upper left')
     
-    # Aesthetic adjustments
-    plt.grid(True, linestyle='--', alpha=0.5, zorder=1)
     plt.tight_layout()
     
     # Save file
-    filename = f"{case_name}_{metric_name}_v2.png"
+    filename = f"diff_{case_name}_{metric_name}.png"
     filepath = os.path.join(OUTPUT_DIR, filename)
     plt.savefig(filepath, dpi=300)
     plt.close()
@@ -126,10 +110,10 @@ def main():
         v_stats = get_stats(v_df)
         p_stats = get_stats(p_df)
         
-        # Plotting Mean and Median as requested
+        # Plotting Difference for Mean and Median as requested
         for metric in ['mean', 'median']:
-            path = plot_metric(case, metric, v_stats, p_stats)
-            print(f"  Generated {metric} plot: {path}")
+            path = plot_difference(case, metric, v_stats, p_stats)
+            print(f"  Generated difference curve: {path}")
 
 if __name__ == "__main__":
     main()
