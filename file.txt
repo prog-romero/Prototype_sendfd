@@ -1,0 +1,3833 @@
+===== FILE: benchmarks/micro/micro-bench2-initial-http/pi_install_faasd.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Installs faasd + dependencies (containerd, CNI plugins, faas-cli)
+# using the official upstream install script.
+#
+# Run on the Raspberry Pi:
+#   bash pi_install_faasd.sh
+
+curl -fsSL https://raw.githubusercontent.com/openfaas/faasd/master/hack/install.sh | bash
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/build_copy_enable_vanilla_gateway.sh =====
+#!/usr/bin/env bash
+# Build the bench2 HTTP gateway image for ARM64, export it as a Docker archive,
+# copy it to the Pi, import it into containerd, and optionally enable the
+# vanilla HTTP benchmark mode.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+PI_SSH="${PI_SSH:-romero@192.168.2.2}"
+PI_SUDO_PASSWORD="${PI_SUDO_PASSWORD:-}"
+IMAGE_REF="${IMAGE_REF:-docker.io/local/faasd-gateway-bench2-initial-http:arm64}"
+LOCAL_ARCHIVE="${LOCAL_ARCHIVE:-$ROOT_DIR/dist/faasd-gateway-bench2-initial-http-arm64.tar}"
+REMOTE_ARCHIVE="${REMOTE_ARCHIVE:-/tmp/faasd-gateway-bench2-initial-http-arm64.tar}"
+CACHE_DIR="${CACHE_DIR:-$ROOT_DIR/.buildx-cache/faasd-gateway}"
+ENABLE_ON_PI="${ENABLE_ON_PI:-1}"
+KEEP_REMOTE_ARCHIVE="${KEEP_REMOTE_ARCHIVE:-0}"
+BUILDER_NAME="${BUILDER_NAME:-bench2-arm64-builder}"
+USE_LOCAL_CACHE="${USE_LOCAL_CACHE:-auto}"
+BUILD_PROGRESS="${BUILD_PROGRESS:-plain}"
+
+DOCKERFILE_SRC="$ROOT_DIR/benchmarks/micro/micro-bench2-initial-http/proto_gateway/Dockerfile"
+DOCKERFILE_TMP="$(mktemp /tmp/faasd-gateway-dockerfile.XXXXXX)"
+
+mkdir -p "$(dirname "$LOCAL_ARCHIVE")" "$CACHE_DIR"
+
+echo "[init] root=$ROOT_DIR builder=$BUILDER_NAME pi=$PI_SSH"
+
+# Do NOT strip the # syntax= line — it is required by docker buildx
+cp "$DOCKERFILE_SRC" "$DOCKERFILE_TMP"
+
+# Ensure the builder exists with the docker-container driver (supports ARM64 emulation)
+if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+  echo "[init] creating buildx builder: $BUILDER_NAME"
+  docker buildx create --name "$BUILDER_NAME" --driver docker-container --bootstrap
+fi
+
+if ! BUILDER_INSPECT="$(docker buildx inspect "$BUILDER_NAME" 2>&1)"; then
+  echo "ERROR: failed to inspect buildx builder: $BUILDER_NAME" >&2
+  printf '%s\n' "$BUILDER_INSPECT" >&2
+  docker buildx ls >&2 || true
+  exit 1
+fi
+
+BUILDER_DRIVER="$(printf '%s\n' "$BUILDER_INSPECT" | sed -n 's/^Driver:[[:space:]]*//p' | head -n 1 | tr -d '[:space:]')"
+if [ -z "$BUILDER_DRIVER" ]; then
+  echo "ERROR: could not inspect buildx builder: $BUILDER_NAME" >&2
+  printf '%s\n' "$BUILDER_INSPECT" >&2
+  exit 1
+fi
+
+case "$USE_LOCAL_CACHE" in
+  auto)
+    if [ "$BUILDER_DRIVER" = "docker" ]; then
+      USE_LOCAL_CACHE=0
+    else
+      USE_LOCAL_CACHE=1
+    fi
+    ;;
+  0|1)
+    ;;
+  *)
+    echo "ERROR: USE_LOCAL_CACHE must be auto, 0, or 1" >&2
+    exit 1
+    ;;
+esac
+
+cleanup_cache() {
+  local tmp_cache
+  tmp_cache="${CACHE_DIR}.tmp"
+  if [ -d "$tmp_cache" ]; then
+    rm -rf "$CACHE_DIR"
+    mv "$tmp_cache" "$CACHE_DIR"
+  fi
+  rm -f "$DOCKERFILE_TMP"
+}
+
+trap cleanup_cache EXIT
+
+build_cmd=(docker buildx build)
+if [ -n "$BUILDER_NAME" ]; then
+  build_cmd+=(--builder "$BUILDER_NAME")
+fi
+if [ -n "$BUILD_PROGRESS" ]; then
+  build_cmd+=(--progress "$BUILD_PROGRESS")
+fi
+if [ "$USE_LOCAL_CACHE" = "1" ]; then
+  if [ -f "$CACHE_DIR/index.json" ]; then
+    build_cmd+=(--cache-from "type=local,src=$CACHE_DIR")
+  fi
+  build_cmd+=(--cache-to "type=local,dest=${CACHE_DIR}.tmp,mode=max")
+fi
+
+build_cmd+=(
+  --platform linux/arm64
+  -f "$DOCKERFILE_TMP"
+  -t "$IMAGE_REF"
+  "$ROOT_DIR"
+)
+
+rm -f "$LOCAL_ARCHIVE"
+
+if [ "$BUILDER_DRIVER" = "docker" ]; then
+  "${build_cmd[@]}"
+  docker image save -o "$LOCAL_ARCHIVE" "$IMAGE_REF"
+else
+  build_cmd+=(--output "type=docker,dest=$LOCAL_ARCHIVE")
+  "${build_cmd[@]}"
+fi
+
+scp "$LOCAL_ARCHIVE" "$PI_SSH:$REMOTE_ARCHIVE"
+ssh "$PI_SSH" "set -e; printf '%s\n' '$PI_SUDO_PASSWORD' | sudo -S -p '' ctr -n openfaas images import '$REMOTE_ARCHIVE'; printf '%s\n' '$PI_SUDO_PASSWORD' | sudo -S -p '' ctr -n openfaas images ls | grep -F '$IMAGE_REF'"
+
+if [ "$KEEP_REMOTE_ARCHIVE" != "1" ]; then
+  ssh "$PI_SSH" "rm -f '$REMOTE_ARCHIVE'"
+fi
+
+if [ "$ENABLE_ON_PI" = "1" ]; then
+  ssh "$PI_SSH" "cd ~/Prototype_sendfd && PI_SUDO_PASSWORD='$PI_SUDO_PASSWORD' BENCH_GATEWAY_IMAGE='$IMAGE_REF' bash benchmarks/micro/micro-bench2-initial-http/scripts/pi_enable_vanilla_gateway.sh"
+else
+  echo "[info] image imported. To enable it later on the Pi:"
+  echo "  cd ~/Prototype_sendfd && BENCH_GATEWAY_IMAGE=$IMAGE_REF bash benchmarks/micro/micro-bench2-initial-http/scripts/pi_enable_vanilla_gateway.sh"
+fi
+
+echo "[ok] gateway image built, copied, and imported"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/prepare_proto_stack.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+PI_SSH="${PI_SSH:-romero@192.168.2.2}"
+IMAGE_REF="${IMAGE_REF:-ttl.sh/timing-fn-httpmigrate-bench2:24h}"
+OPENFAAS_URL="${OPENFAAS_URL:-http://127.0.0.1:8080}"
+BUILDER_NAME="${BUILDER_NAME:-bench2-arm64-builder}"
+
+echo "[proto-http] 1. Enabling benchmark gateway listener on the Pi"
+bash "${ROOT_DIR}/benchmarks/micro/micro-bench2-initial-http/scripts/build_copy_enable_proto_gateway.sh"
+
+echo "[proto-http] 2. Waiting for gateway to be ready..."
+ssh "${PI_SSH}" '
+for i in $(seq 1 30); do
+  if curl -sf http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+    echo "[ok] Gateway is healthy"
+    exit 0
+  fi
+  echo "Waiting for gateway... ($i/30)"
+  sleep 2
+done
+echo "ERROR: Gateway not ready after 60s"
+exit 1
+'
+
+echo "[proto-http] 3. Building prototype worker image ${IMAGE_REF}"
+docker buildx build \
+  --builder "${BUILDER_NAME}" \
+  --platform linux/arm64 \
+  -f "${ROOT_DIR}/benchmarks/micro/micro-bench2-initial-http/proto_function/timing-fn/Dockerfile" \
+  -t "${IMAGE_REF}" \
+  --push \
+  "${ROOT_DIR}"
+
+echo "[proto-http] 4. Deploying timing-fn prototype worker"
+# AFTER (correct — faasd mounts /var/lib/faasd/secrets/httpmigrate
+#         into the function container at /run/secrets/httpmigrate)
+ssh "${PI_SSH}" \
+  "export OPENFAAS_URL='${OPENFAAS_URL}' && faas-cli deploy \
+   --image '${IMAGE_REF}' \
+   --name timing-fn \
+   --gateway '${OPENFAAS_URL}' \
+   --env HTTPMIGRATE_FUNCTION_NAME=timing-fn \
+   --env HTTPMIGRATE_SOCKET_DIR=/run/secrets/httpmigrate \
+   --secret httpmigrate"
+echo "[ok] Prototype HTTP stack ready at http://${PI_HOST:-192.168.2.2}:8083/function/timing-fn"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/sync_code_to_pi.sh =====
+#!/usr/bin/env bash
+# Sync the bench2 benchmark and provider support tree to the Pi and verify
+# that both sides have identical file contents for the synced paths.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+PI_SSH="${PI_SSH:-romero@192.168.2.2}"
+PI_USER="${PI_SSH%@*}"
+REMOTE_ROOT="${REMOTE_ROOT:-/home/${PI_USER}/Prototype_sendfd}"
+
+SYNC_PATHS=(
+  "benchmarks/micro/micro-bench2-initial-http"
+)
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "ERROR: required command not found: $1" >&2
+    exit 1
+  fi
+}
+
+verify_tree() {
+  local rel_path="$1"
+  local local_manifest remote_manifest
+
+  local_manifest="$(mktemp)"
+  remote_manifest="$(mktemp)"
+
+  (
+    cd "$ROOT_DIR/$rel_path"
+    find . -type f -exec sha256sum {} + | sort
+  ) > "$local_manifest"
+
+  ssh "$PI_SSH" "cd '$REMOTE_ROOT/$rel_path' && find . -type f -exec sha256sum {} + | sort" > "$remote_manifest"
+
+  if ! diff -u "$local_manifest" "$remote_manifest" >/dev/null; then
+    echo "ERROR: content mismatch after sync for $rel_path" >&2
+    diff -u "$local_manifest" "$remote_manifest" || true
+    rm -f "$local_manifest" "$remote_manifest"
+    exit 1
+  fi
+
+  rm -f "$local_manifest" "$remote_manifest"
+  echo "[ok] verified $rel_path"
+}
+
+require_cmd ssh
+require_cmd rsync
+require_cmd sha256sum
+require_cmd find
+require_cmd sort
+require_cmd diff
+
+echo "[init] root=$ROOT_DIR pi=$PI_SSH remote_root=$REMOTE_ROOT"
+ssh "$PI_SSH" "mkdir -p '$REMOTE_ROOT/benchmarks/micro'"
+
+for rel_path in "${SYNC_PATHS[@]}"; do
+  echo "[sync] $rel_path"
+  rsync -az --delete "$ROOT_DIR/$rel_path/" "$PI_SSH:$REMOTE_ROOT/$rel_path/"
+  verify_tree "$rel_path"
+done
+
+echo "[ok] Pi source tree is aligned for the bench2 HTTP benchmark"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/prepare_vanilla_stack.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+PI_SSH="${PI_SSH:-romero@192.168.2.2}"
+IMAGE_REF="${IMAGE_REF:-ttl.sh/timing-fn-bench2-initial-http:24h}"
+OPENFAAS_URL="${OPENFAAS_URL:-http://127.0.0.1:8080}"
+BUILDER_NAME="${BUILDER_NAME:-bench2-arm64-builder}"
+
+echo "[vanilla-http] building timing function image ${IMAGE_REF}"
+docker buildx build \
+  --builder "${BUILDER_NAME}" \
+  --platform linux/arm64 \
+  -f "${ROOT_DIR}/benchmarks/micro/micro-bench2-initial-http/function/timing_fn/Dockerfile" \
+  -t "${IMAGE_REF}" \
+  --push \
+  "${ROOT_DIR}"
+
+echo "[vanilla-http] deploying timing-fn"
+ssh "${PI_SSH}" \
+  "export OPENFAAS_URL='${OPENFAAS_URL}' && faas-cli deploy --image '${IMAGE_REF}' --name timing-fn --gateway '${OPENFAAS_URL}'"
+
+echo "[vanilla-http] enabling benchmark gateway listener on the Pi"
+bash "${ROOT_DIR}/benchmarks/micro/micro-bench2-initial-http/scripts/build_copy_enable_vanilla_gateway.sh"
+
+echo "[ok] Vanilla HTTP stack ready at http://${PI_HOST:-192.168.2.2}:8082/function/timing-fn"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/pi_enable_vanilla_gateway.sh =====
+#!/usr/bin/env bash
+# Enable the bench2 gateway image in vanilla HTTP benchmark mode.
+# Run this ON THE PI.
+set -euo pipefail
+
+COMPOSE_FILE="${COMPOSE_FILE:-/var/lib/faasd/docker-compose.yaml}"
+BACKUP_FILE="${BACKUP_FILE:-/var/lib/faasd/docker-compose.vanilla.yaml}"
+PI_SUDO_PASSWORD="${PI_SUDO_PASSWORD:-}"
+
+SUDO=(sudo)
+if [ -n "$PI_SUDO_PASSWORD" ]; then
+  SUDO=(sudo -S -p "")
+fi
+
+run_sudo() {
+  if [ -n "$PI_SUDO_PASSWORD" ]; then
+    printf '%s\n' "$PI_SUDO_PASSWORD" | "${SUDO[@]}" "$@"
+  else
+    "${SUDO[@]}" "$@"
+  fi
+}
+
+BENCH_GATEWAY_IMAGE="${BENCH_GATEWAY_IMAGE:-}"
+if [ -z "$BENCH_GATEWAY_IMAGE" ]; then
+  echo "ERROR: set BENCH_GATEWAY_IMAGE to your custom gateway image tag" >&2
+  echo "Example: export BENCH_GATEWAY_IMAGE=docker.io/local/faasd-gateway-bench2-initial-http:arm64" >&2
+  exit 1
+fi
+
+if ! run_sudo test -f "$BACKUP_FILE"; then
+  echo "[pi] backing up $COMPOSE_FILE -> $BACKUP_FILE"
+  run_sudo cp "$COMPOSE_FILE" "$BACKUP_FILE"
+fi
+
+echo "[pi] patching gateway service in $COMPOSE_FILE for vanilla HTTP benchmark mode"
+TMP_COMPOSE_IN="$(mktemp)"
+TMP_COMPOSE_OUT="$(mktemp)"
+run_sudo cat "$COMPOSE_FILE" > "$TMP_COMPOSE_IN"
+python3 - "$TMP_COMPOSE_IN" "$BENCH_GATEWAY_IMAGE" "$TMP_COMPOSE_OUT" <<'PY'
+import sys
+import yaml
+
+compose_file = sys.argv[1]
+bench_image = sys.argv[2]
+tmp_compose = sys.argv[3]
+
+with open(compose_file, 'r', encoding='utf-8') as f:
+    doc = yaml.safe_load(f)
+
+services = doc.setdefault('services', {})
+gw = services.get('gateway')
+if not isinstance(gw, dict):
+    raise SystemExit('ERROR: services.gateway not found or invalid')
+
+gw['image'] = bench_image
+
+env = gw.get('environment')
+if env is None:
+    env = []
+    gw['environment'] = env
+
+if isinstance(env, dict):
+    for key in list(env.keys()):
+        if str(key).startswith('HTTPMIGRATE_'):
+            env.pop(key, None)
+    env['BENCH2_HTTP_ENABLE'] = '1'
+    env['BENCH2_HTTP_LISTEN'] = ':8082'
+    env['BENCH2_HTTP_UPSTREAM'] = '127.0.0.1:8080'
+else:
+    if not isinstance(env, list):
+        raise SystemExit('ERROR: gateway.environment must be list or dict')
+    env[:] = [item for item in env if not (isinstance(item, str) and item.startswith('HTTPMIGRATE_'))]
+
+    def ensure(kv: str):
+        key = kv.split('=', 1)[0]
+        if not any(isinstance(x, str) and x.split('=', 1)[0] == key for x in env):
+            env.append(kv)
+
+    ensure('BENCH2_HTTP_ENABLE=1')
+    ensure('BENCH2_HTTP_LISTEN=:8082')
+    ensure('BENCH2_HTTP_UPSTREAM=127.0.0.1:8080')
+
+ports = gw.get('ports')
+if ports is None:
+    ports = []
+    gw['ports'] = ports
+if not isinstance(ports, list):
+    raise SystemExit('ERROR: gateway.ports must be a list')
+
+ports[:] = [p for p in ports if not (isinstance(p, str) and p.split(':', 1)[0] == '8083')]
+if not any(isinstance(p, str) and p.split(':', 1)[0] == '8082' for p in ports):
+    ports.append('8082:8082')
+
+vols = gw.get('volumes')
+if vols is None:
+    vols = []
+    gw['volumes'] = vols
+if not isinstance(vols, list):
+    raise SystemExit('ERROR: gateway.volumes must be a list')
+
+def keep_mount(item):
+    if isinstance(item, dict):
+        return item.get('source') != './httpmigrate' and item.get('target') != '/run/httpmigrate'
+    if isinstance(item, str):
+        parts = item.split(':', 1)
+        if len(parts) == 2:
+            return parts[0] != './httpmigrate' and parts[1] != '/run/httpmigrate'
+    return True
+
+gw['volumes'] = [item for item in vols if keep_mount(item)]
+
+with open(tmp_compose, 'w', encoding='utf-8') as f:
+    yaml.safe_dump(doc, f, sort_keys=False)
+
+print('[OK] wrote', tmp_compose)
+PY
+run_sudo cp "$TMP_COMPOSE_OUT" "$COMPOSE_FILE"
+rm -f "$TMP_COMPOSE_IN" "$TMP_COMPOSE_OUT"
+
+echo "[pi] restarting faasd"
+run_sudo systemctl restart faasd
+run_sudo systemctl status faasd --no-pager --full | head -60
+
+echo "[OK] vanilla HTTP benchmark gateway enabled"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/build_deploy_http_gw.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "${SCRIPT_DIR}/build_copy_enable_proto_gateway.sh"
+
+    environment:
+      basic_auth: "true"
+      functions_provider_url: "http://10.62.0.1:8081/"
+      direct_functions: "false"
+      read_timeout: "60s"
+      write_timeout: "60s"
+      upstream_timeout: "65s"
+      faas_nats_address: "nats"
+      faas_nats_port: "4222"
+      function_namespace: "openfaas-fn"
+      HTTPMIGRATE_ENABLE: "1"
+      HTTPMIGRATE_LISTEN: ":8083"
+      HTTPMIGRATE_SOCKET_DIR: "/run/secrets/httpmigrate"
+    volumes:
+      - source: ./secrets/basic-auth-password
+        target: /run/secrets/basic-auth-password
+        type: bind
+      - source: ./secrets/basic-auth-user
+        target: /run/secrets/basic-auth-user
+        type: bind
+      - source: /var/lib/faasd/secrets/httpmigrate
+        target: /run/secrets/httpmigrate
+        type: bind
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/pi_enable_proto_gateway.sh =====
+#!/usr/bin/env bash
+# Enable the prototype HTTP benchmark gateway on the Pi.
+# FIXED: single restart, no extra_hosts, no NATS IP detection.
+set -euo pipefail
+
+COMPOSE_FILE="${COMPOSE_FILE:-/var/lib/faasd/docker-compose.yaml}"
+BACKUP_FILE="${BACKUP_FILE:-/var/lib/faasd/docker-compose.vanilla.yaml}"
+PI_SUDO_PASSWORD="${PI_SUDO_PASSWORD:-}"
+
+run_sudo() {
+  if [ -n "$PI_SUDO_PASSWORD" ]; then
+    printf '%s\n' "$PI_SUDO_PASSWORD" | sudo -S -p "" "$@"
+  else
+    sudo "$@"
+  fi
+}
+
+PROTO_GATEWAY_IMAGE="${PROTO_GATEWAY_IMAGE:-}"
+if [ -z "$PROTO_GATEWAY_IMAGE" ]; then
+  echo "ERROR: set PROTO_GATEWAY_IMAGE" >&2
+  exit 1
+fi
+
+# Ensure shared socket directory exists on the host and is accessible
+run_sudo mkdir -p /var/lib/faasd/secrets/httpmigrate
+run_sudo chmod 755 /var/lib/faasd/secrets
+run_sudo chmod 777 /var/lib/faasd/secrets/httpmigrate
+
+# Back up the original compose file (only once, on the very first run)
+if ! run_sudo test -f "$BACKUP_FILE"; then
+  echo "[pi] backing up $COMPOSE_FILE -> $BACKUP_FILE"
+  run_sudo cp "$COMPOSE_FILE" "$BACKUP_FILE"
+fi
+
+# Always patch from the BACKUP (pristine vanilla) to avoid layered corruption
+echo "[pi] patching gateway in $COMPOSE_FILE from backup"
+TMP_IN="$(mktemp)"
+TMP_OUT="$(mktemp)"
+run_sudo cat "$BACKUP_FILE" > "$TMP_IN"
+
+python3 - "$TMP_IN" "$PROTO_GATEWAY_IMAGE" "$TMP_OUT" <<'PY'
+import sys, yaml
+
+compose_file, proto_image, tmp_out = sys.argv[1:4]
+with open(compose_file, 'r') as f:
+    doc = yaml.safe_load(f)
+
+gw = doc['services']['gateway']
+gw['image'] = proto_image
+
+# Environment — keep all originals, add our three env vars
+env = gw.get('environment', {})
+if isinstance(env, dict):
+    env['HTTPMIGRATE_ENABLE'] = '1'
+    env['HTTPMIGRATE_LISTEN'] = ':8083'
+    env['HTTPMIGRATE_SOCKET_DIR'] = '/run/secrets/httpmigrate'
+elif isinstance(env, list):
+    env = [e for e in env if not e.startswith('HTTPMIGRATE_')]
+    env.extend([
+        'HTTPMIGRATE_ENABLE=1',
+        'HTTPMIGRATE_LISTEN=:8083',
+        'HTTPMIGRATE_SOCKET_DIR=/run/secrets/httpmigrate',
+    ])
+    gw['environment'] = env
+
+# Ports — add 8083 if missing
+ports = gw.get('ports', [])
+if '8083:8083' not in ports:
+    ports.append('8083:8083')
+gw['ports'] = ports
+
+# Volumes — add the shared socket mount (through secrets dir)
+vols = gw.get('volumes', [])
+vols = [v for v in vols if 'httpmigrate' not in str(v)]
+vols.append('./secrets/httpmigrate:/run/secrets/httpmigrate')
+gw['volumes'] = vols
+
+with open(tmp_out, 'w') as f:
+    yaml.safe_dump(doc, f, sort_keys=False)
+
+print('[OK] wrote', tmp_out)
+PY
+
+run_sudo cp "$TMP_OUT" "$COMPOSE_FILE"
+rm -f "$TMP_IN" "$TMP_OUT"
+
+# Single clean restart
+echo "[pi] restarting faasd"
+run_sudo systemctl restart faasd
+sleep 5
+
+# Verify
+run_sudo systemctl is-active faasd && echo "[OK] faasd is active" || echo "[FAIL] faasd not active"
+
+echo "[OK] prototype HTTP benchmark gateway enabled"
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/build_copy_enable_proto_gateway.sh =====
+#!/usr/bin/env bash
+# Build the prototype HTTP gateway image for ARM64, export it as a Docker
+# archive, copy it to the Pi, import it into containerd, and optionally enable it.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+PI_SSH="${PI_SSH:-romero@192.168.2.2}"
+PI_SUDO_PASSWORD="${PI_SUDO_PASSWORD:-}"
+IMAGE_REF="${IMAGE_REF:-docker.io/local/faasd-gateway-bench2-initial-http:arm64}"
+LOCAL_ARCHIVE="${LOCAL_ARCHIVE:-$ROOT_DIR/dist/faasd-gateway-bench2-initial-http-arm64.tar}"
+REMOTE_ARCHIVE="${REMOTE_ARCHIVE:-/tmp/faasd-gateway-bench2-initial-http-arm64.tar}"
+CACHE_DIR="${CACHE_DIR:-$ROOT_DIR/.buildx-cache/faasd-gateway}"
+ENABLE_ON_PI="${ENABLE_ON_PI:-1}"
+KEEP_REMOTE_ARCHIVE="${KEEP_REMOTE_ARCHIVE:-0}"
+BUILDER_NAME="${BUILDER_NAME:-bench2-arm64-builder}"
+USE_LOCAL_CACHE="${USE_LOCAL_CACHE:-auto}"
+BUILD_PROGRESS="${BUILD_PROGRESS:-plain}"
+
+DOCKERFILE_SRC="$ROOT_DIR/benchmarks/micro/micro-bench2-initial-http/proto_gateway/Dockerfile"
+DOCKERFILE_TMP="$(mktemp /tmp/faasd-gateway-dockerfile.XXXXXX)"
+
+mkdir -p "$(dirname "$LOCAL_ARCHIVE")" "$CACHE_DIR"
+
+echo "[init] root=$ROOT_DIR builder=$BUILDER_NAME pi=$PI_SSH"
+
+# Do NOT strip the # syntax= line — it is required by docker buildx
+cp "$DOCKERFILE_SRC" "$DOCKERFILE_TMP"
+
+# Ensure the builder exists with the docker-container driver (supports ARM64 emulation)
+if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+  echo "[init] creating buildx builder: $BUILDER_NAME"
+  docker buildx create --name "$BUILDER_NAME" --driver docker-container --bootstrap
+fi
+
+if ! BUILDER_INSPECT="$(docker buildx inspect "$BUILDER_NAME" 2>&1)"; then
+  echo "ERROR: failed to inspect buildx builder: $BUILDER_NAME" >&2
+  printf '%s\n' "$BUILDER_INSPECT" >&2
+  echo "[hint] available builders:" >&2
+  docker buildx ls >&2 || true
+  exit 1
+fi
+
+BUILDER_DRIVER="$(printf '%s\n' "$BUILDER_INSPECT" | sed -n 's/^Driver:[[:space:]]*//p' | head -n 1 | tr -d '[:space:]')"
+if [ -z "$BUILDER_DRIVER" ]; then
+  echo "ERROR: could not inspect buildx builder: $BUILDER_NAME" >&2
+  printf '%s\n' "$BUILDER_INSPECT" >&2
+  exit 1
+fi
+
+case "$USE_LOCAL_CACHE" in
+  auto)
+    if [ "$BUILDER_DRIVER" = "docker" ]; then
+      USE_LOCAL_CACHE=0
+    else
+      USE_LOCAL_CACHE=1
+    fi
+    ;;
+  0|1)
+    ;;
+  *)
+    echo "ERROR: USE_LOCAL_CACHE must be auto, 0, or 1" >&2
+    exit 1
+    ;;
+esac
+
+cleanup_cache() {
+  local tmp_cache
+  tmp_cache="${CACHE_DIR}.tmp"
+  if [ -d "$tmp_cache" ]; then
+    rm -rf "$CACHE_DIR"
+    mv "$tmp_cache" "$CACHE_DIR"
+  fi
+  rm -f "$DOCKERFILE_TMP"
+}
+
+trap cleanup_cache EXIT
+
+echo "[build] exporting $IMAGE_REF to $LOCAL_ARCHIVE"
+echo "[build] builder=$BUILDER_NAME driver=$BUILDER_DRIVER local_cache=$USE_LOCAL_CACHE progress=$BUILD_PROGRESS"
+build_cmd=(docker buildx build)
+if [ -n "$BUILDER_NAME" ]; then
+  build_cmd+=(--builder "$BUILDER_NAME")
+fi
+
+if [ -n "$BUILD_PROGRESS" ]; then
+  build_cmd+=(--progress "$BUILD_PROGRESS")
+fi
+
+if [ "$USE_LOCAL_CACHE" = "1" ]; then
+  if [ -f "$CACHE_DIR/index.json" ]; then
+    build_cmd+=(--cache-from "type=local,src=$CACHE_DIR")
+  fi
+  build_cmd+=(--cache-to "type=local,dest=${CACHE_DIR}.tmp,mode=max")
+fi
+
+build_cmd+=(
+  --platform linux/arm64
+  -f "$DOCKERFILE_TMP"
+  -t "$IMAGE_REF"
+  "$ROOT_DIR"
+)
+
+rm -f "$LOCAL_ARCHIVE"
+
+if [ "$BUILDER_DRIVER" = "docker" ]; then
+  echo "[build] docker driver detected; building into local image store first"
+  "${build_cmd[@]}"
+  echo "[save] writing Docker image archive to $LOCAL_ARCHIVE"
+  docker image save -o "$LOCAL_ARCHIVE" "$IMAGE_REF"
+else
+  build_cmd+=(--output "type=docker,dest=$LOCAL_ARCHIVE")
+  "${build_cmd[@]}"
+fi
+
+echo "[scp] $LOCAL_ARCHIVE -> $PI_SSH:$REMOTE_ARCHIVE"
+scp "$LOCAL_ARCHIVE" "$PI_SSH:$REMOTE_ARCHIVE"
+
+echo "[ssh] importing $IMAGE_REF into containerd namespace openfaas"
+ssh "$PI_SSH" "set -e; printf '%s\n' '$PI_SUDO_PASSWORD' | sudo -S -p '' ctr -n openfaas images import '$REMOTE_ARCHIVE'; printf '%s\n' '$PI_SUDO_PASSWORD' | sudo -S -p '' ctr -n openfaas images ls | grep -F '$IMAGE_REF'"
+
+if [ "$KEEP_REMOTE_ARCHIVE" != "1" ]; then
+  echo "[ssh] removing $REMOTE_ARCHIVE from the Pi"
+  ssh "$PI_SSH" "rm -f '$REMOTE_ARCHIVE'"
+fi
+
+if [ "$ENABLE_ON_PI" = "1" ]; then
+  # ✅ CRITICAL: sync scripts to Pi so it runs the LATEST version
+  SCRIPT_DIR="$ROOT_DIR/benchmarks/micro/micro-bench2-initial-http/scripts"
+  echo "[sync] syncing scripts to Pi"
+  rsync -az "$SCRIPT_DIR/" "$PI_SSH:~/Prototype_sendfd/benchmarks/micro/micro-bench2-initial-http/scripts/"
+
+  echo "[ssh] enabling prototype gateway with image $IMAGE_REF"
+  ssh "$PI_SSH" "cd ~/Prototype_sendfd && PI_SUDO_PASSWORD='$PI_SUDO_PASSWORD' PROTO_GATEWAY_IMAGE='$IMAGE_REF' bash benchmarks/micro/micro-bench2-initial-http/scripts/pi_enable_proto_gateway.sh"
+else
+  echo "[info] image imported. To enable it later on the Pi:"
+  echo "  cd ~/Prototype_sendfd && PROTO_GATEWAY_IMAGE=$IMAGE_REF bash benchmarks/micro/micro-bench2-initial-http/scripts/pi_enable_proto_gateway.sh"
+fi
+
+echo "[ok] gateway image built, copied, and imported"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/build_push_proto_function_image.sh =====
+#!/usr/bin/env bash
+# Build and push the prototype timing-fn worker image using the same buildx
+# builder as the gateway.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+BUILDER_NAME="${BUILDER_NAME:-default}"
+BUILD_PROGRESS="${BUILD_PROGRESS:-plain}"
+IMAGE_REF="${IMAGE_REF:-ttl.sh/timing-fn-httpmigrate-bench2:24h}"
+CACHE_DIR="${CACHE_DIR:-$ROOT_DIR/.buildx-cache/faasd-gateway}"
+USE_LOCAL_CACHE="${USE_LOCAL_CACHE:-auto}"
+DOCKERFILE_SRC="$ROOT_DIR/benchmarks/micro/micro-bench2-initial-http/proto_function/timing-fn/Dockerfile"
+DOCKERFILE_TMP="$(mktemp /tmp/timing-fn-proto-dockerfile.XXXXXX)"
+
+cleanup() {
+  local tmp_cache
+  tmp_cache="${CACHE_DIR}.tmp"
+  if [ -d "$tmp_cache" ]; then
+    rm -rf "$CACHE_DIR"
+    mv "$tmp_cache" "$CACHE_DIR"
+  fi
+  rm -f "$DOCKERFILE_TMP"
+}
+
+trap cleanup EXIT
+
+mkdir -p "$CACHE_DIR"
+
+sed '1{/^# syntax=/d;}' "$DOCKERFILE_SRC" > "$DOCKERFILE_TMP"
+
+if ! BUILDER_INSPECT="$(docker buildx inspect "$BUILDER_NAME" 2>&1)"; then
+  echo "ERROR: failed to inspect buildx builder: $BUILDER_NAME" >&2
+  printf '%s\n' "$BUILDER_INSPECT" >&2
+  docker buildx ls >&2 || true
+  exit 1
+fi
+
+BUILDER_DRIVER="$(printf '%s\n' "$BUILDER_INSPECT" | sed -n 's/^Driver:[[:space:]]*//p' | head -n 1 | tr -d '[:space:]')"
+if [ -z "$BUILDER_DRIVER" ]; then
+  echo "ERROR: could not inspect buildx builder: $BUILDER_NAME" >&2
+  printf '%s\n' "$BUILDER_INSPECT" >&2
+  exit 1
+fi
+
+case "$USE_LOCAL_CACHE" in
+  auto)
+    if [ "$BUILDER_DRIVER" = "docker" ]; then
+      USE_LOCAL_CACHE=0
+    else
+      USE_LOCAL_CACHE=1
+    fi
+    ;;
+  0|1)
+    ;;
+  *)
+    echo "ERROR: USE_LOCAL_CACHE must be auto, 0, or 1" >&2
+    exit 1
+    ;;
+esac
+
+echo "[build] builder=$BUILDER_NAME driver=$BUILDER_DRIVER local_cache=$USE_LOCAL_CACHE image=$IMAGE_REF"
+
+build_cmd=(docker buildx build)
+build_cmd+=(--builder "$BUILDER_NAME")
+build_cmd+=(--progress "$BUILD_PROGRESS")
+if [ "$USE_LOCAL_CACHE" = "1" ]; then
+  if [ -f "$CACHE_DIR/index.json" ]; then
+    build_cmd+=(--cache-from "type=local,src=$CACHE_DIR")
+  fi
+  build_cmd+=(--cache-to "type=local,dest=${CACHE_DIR}.tmp,mode=max")
+fi
+
+build_cmd+=(
+  --platform linux/arm64
+  -f "$DOCKERFILE_TMP"
+  -t "$IMAGE_REF"
+  --push
+  "$ROOT_DIR"
+)
+
+"${build_cmd[@]}"
+
+echo "[ok] pushed $IMAGE_REF"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/scripts/pi_restore_vanilla_gateway.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+COMPOSE_FILE="${COMPOSE_FILE:-/var/lib/faasd/docker-compose.yaml}"
+BACKUP_FILE="${BACKUP_FILE:-/var/lib/faasd/docker-compose.vanilla.yaml}"
+
+if ! sudo test -f "$BACKUP_FILE"; then
+  echo "ERROR: backup compose not found at $BACKUP_FILE" >&2
+  exit 1
+fi
+
+echo "[pi] restoring $COMPOSE_FILE from $BACKUP_FILE"
+sudo cp "$BACKUP_FILE" "$COMPOSE_FILE"
+sudo systemctl restart faasd
+sudo systemctl status faasd --no-pager --full | head -60
+
+echo "[OK] restored vanilla faasd gateway compose"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/proto_gateway/benchhttp/config.go =====
+package benchhttp
+
+import (
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+
+	"runtime"
+	"golang.org/x/sys/unix"
+)
+
+type VanillaConfig struct {
+	ListenAddr string
+	Upstream   string
+}
+
+type ProtoConfig struct {
+	ListenAddr   string
+	SocketDir    string
+	MaxPeekBytes int
+}
+
+func MaybeStartVanillaFromEnv() {
+	cfg, err := vanillaConfigFromEnv()
+	if err != nil {
+		log.Printf("[benchhttp-vanilla] disabled: %v", err)
+		return
+	}
+
+	go func() {
+		log.Printf("[benchhttp-vanilla] enabled listen=%s upstream=%s", cfg.ListenAddr, cfg.Upstream)
+		if err := RunVanilla(cfg); err != nil {
+			log.Printf("[benchhttp-vanilla] stopped: %v", err)
+		}
+	}()
+}
+
+func MaybeStartProtoFromEnv() {
+	cfg, err := protoConfigFromEnv()
+	if err != nil {
+		log.Printf("[benchhttp-proto] disabled: %v", err)
+		return
+	}
+
+	go func() {
+		log.Printf("[benchhttp-proto] enabled listen=%s socket_dir=%s", cfg.ListenAddr, cfg.SocketDir)
+
+		// 🔥 Pin this goroutine to a single OS thread and CPU core
+		runtime.LockOSThread()
+
+		var cpuSet unix.CPUSet
+		cpuSet.Set(0) // bind to CPU core 0
+
+		if err := unix.SchedSetaffinity(0, &cpuSet); err != nil {
+			log.Printf("[benchhttp-proto] WARNING: failed to pin CPU: %v", err)
+		} else {
+			log.Printf("[benchhttp-proto] pinned to CPU 0")
+		}
+
+		if err := RunProto(cfg); err != nil {
+			log.Printf("[benchhttp-proto] stopped: %v", err)
+		}
+	}()
+}
+
+func vanillaConfigFromEnv() (VanillaConfig, error) {
+	if strings.TrimSpace(os.Getenv("BENCH2_HTTP_ENABLE")) != "1" {
+		return VanillaConfig{}, errors.New("BENCH2_HTTP_ENABLE not set")
+	}
+
+	listen := getenv("BENCH2_HTTP_LISTEN", ":8082")
+	upstream := getenv("BENCH2_HTTP_UPSTREAM", "127.0.0.1:8080")
+
+	if listen == "" {
+		return VanillaConfig{}, errors.New("BENCH2_HTTP_LISTEN empty")
+	}
+	if upstream == "" {
+		return VanillaConfig{}, errors.New("BENCH2_HTTP_UPSTREAM empty")
+	}
+
+	return VanillaConfig{
+		ListenAddr: listen,
+		Upstream:   upstream,
+	}, nil
+}
+
+func protoConfigFromEnv() (ProtoConfig, error) {
+	if strings.TrimSpace(os.Getenv("HTTPMIGRATE_ENABLE")) != "1" {
+		return ProtoConfig{}, errors.New("HTTPMIGRATE_ENABLE not set")
+	}
+
+	listen := getenv("HTTPMIGRATE_LISTEN", ":8083")
+	socketDir := getenv("HTTPMIGRATE_SOCKET_DIR", "/run/httpmigrate")
+
+	maxPeek := 8192
+	if v := strings.TrimSpace(os.Getenv("HTTPMIGRATE_PEEK_BYTES")); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed <= 0 {
+			return ProtoConfig{}, fmt.Errorf("invalid HTTPMIGRATE_PEEK_BYTES=%q", v)
+		}
+		maxPeek = parsed
+	}
+
+	if listen == "" {
+		return ProtoConfig{}, errors.New("HTTPMIGRATE_LISTEN empty")
+	}
+	if socketDir == "" {
+		return ProtoConfig{}, errors.New("HTTPMIGRATE_SOCKET_DIR empty")
+	}
+
+	return ProtoConfig{
+		ListenAddr:   listen,
+		SocketDir:    socketDir,
+		MaxPeekBytes: maxPeek,
+	}, nil
+}
+
+func getenv(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/proto_gateway/benchhttp/server.go =====
+package benchhttp
+
+/*
+#cgo CFLAGS: -I${SRCDIR}
+#cgo LDFLAGS: -lpthread
+
+#include "httpmigrate.h"
+#include <stdlib.h>
+*/
+import "C"
+import (
+	"bytes"
+	"log"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"unsafe"
+)
+
+func RunProto(cfg ProtoConfig) error {
+	os.MkdirAll(cfg.SocketDir, 0777)
+
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+
+	file, err := ln.(*net.TCPListener).File()
+	if err != nil {
+		return err
+	}
+	listenFD := int(file.Fd())
+
+	headerBuf := make([]byte, 8192)
+	payload := (*C.httpmigrate_payload_t)(C.malloc(C.size_t(C.sizeof_httpmigrate_payload_t)))
+	defer C.free(unsafe.Pointer(payload))
+
+	log.Printf("[benchhttp-proto] started zero-copy HTTP gateway on %s", cfg.ListenAddr)
+
+	for {
+		var hdrLen C.int
+		clientFD := C.httpmigrate_accept_peek(
+			C.int(listenFD),
+			(*C.uchar)(unsafe.Pointer(&headerBuf[0])),
+			C.size_t(len(headerBuf)),
+			&hdrLen,
+			payload,
+		)
+
+		if clientFD < 0 {
+			continue
+		}
+
+		fnName, ok := parseFunctionName(headerBuf[:int(hdrLen)])
+		if !ok {
+			log.Printf("[benchhttp-proto] failed to parse function name from peeked headers")
+			syscall.Close(int(clientFD))
+			continue
+		}
+
+		sockPath := filepath.Join(cfg.SocketDir, fnName+".sock")
+		cSock := C.CString(sockPath)
+		rc := C.httpmigrate_send_fd(cSock, clientFD, payload, C.size_t(C.sizeof_httpmigrate_payload_t))
+		C.free(unsafe.Pointer(cSock))
+
+		if rc != 0 {
+			log.Printf("[benchhttp-proto] failed to send FD to worker at %s", sockPath)
+		}
+	}
+}
+
+func parseFunctionName(peeked []byte) (string, bool) {
+	lineEnd := bytes.Index(peeked, []byte("\r\n"))
+	if lineEnd < 0 {
+		lineEnd = bytes.IndexByte(peeked, '\n')
+	}
+	if lineEnd < 0 {
+		lineEnd = len(peeked)
+	}
+	line := bytes.TrimSpace(peeked[:lineEnd])
+	parts := bytes.SplitN(line, []byte(" "), 3)
+	if len(parts) < 2 {
+		return "", false
+	}
+	path := string(parts[1])
+	if !strings.HasPrefix(path, "/function/") {
+		return "", false
+	}
+	name := strings.TrimPrefix(path, "/function/")
+	// Strip trailing slashes or query params
+	if idx := strings.IndexAny(name, "/? "); idx != -1 {
+		name = name[:idx]
+	}
+	return name, name != ""
+}
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/proto_gateway/benchhttp/httpmigrate.c =====
+#include "httpmigrate.h"
+
+#include "sendfd.h"
+#include "unix_socket.h"
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sched.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+
+static uint64_t bench_rdtsc(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+#elif defined(__aarch64__)
+    uint64_t val;
+    __asm__ volatile ("isb; mrs %0, cntvct_el0" : "=r"(val));
+    return val;
+#else
+    return 0;
+#endif
+}
+
+static uint64_t bench_cntfrq(void) {
+#if defined(__aarch64__)
+    uint64_t val;
+    __asm__ volatile ("mrs %0, cntfrq_el0" : "=r"(val));
+    return val;
+#else
+    return 1000000000ULL;
+#endif
+}
+
+static void wait_readable(int fd) {
+    int avail = 0;
+    while (1) {
+        if (ioctl(fd, FIONREAD, &avail) == 0 && avail > 0) return;
+        sched_yield();
+    }
+}
+
+/* 
+ * Returns the end position of the /function/<name> part in headers_buf 
+ * using MSG_PEEK to avoid consuming data.
+ */
+int httpmigrate_accept_peek(
+    int listen_fd,
+    unsigned char* headers_buf,
+    size_t headers_buf_sz,
+    int* headers_len_out,
+    httpmigrate_payload_t* payload_out) {
+
+    int client_fd = accept(listen_fd, NULL, NULL);
+    if (client_fd < 0) return -1;
+
+    wait_readable(client_fd);
+
+    /* Stamp Top1 only once request bytes are already available, immediately
+     * before the non-consuming peek that routes the request. */
+    uint64_t t1 = bench_rdtsc();
+    uint64_t freq = bench_cntfrq();
+
+    /* Use MSG_PEEK to see the headers WITHOUT removing them from kernel buffer */
+    ssize_t n = recv(client_fd, headers_buf, headers_buf_sz - 1, MSG_PEEK);
+    if (n <= 0) {
+        close(client_fd);
+        return -1;
+    }
+    headers_buf[n] = '\0';
+
+    if (headers_len_out) *headers_len_out = (int)n;
+
+    /* Prepare payload for worker */
+    memset(payload_out, 0, sizeof(*payload_out));
+    payload_out->magic = HTTPMIGRATE_MAGIC;
+    payload_out->version = HTTPMIGRATE_VERSION;
+    payload_out->top1_rdtsc = t1;
+    payload_out->cntfrq = freq;
+    payload_out->top1_set = 1;
+
+    return client_fd;
+}
+
+int httpmigrate_send_fd(
+    const char* unix_sock_path,
+    int client_fd,
+    const httpmigrate_payload_t* payload,
+    size_t payload_len) {
+
+    int uds_fd = unix_client_connect(unix_sock_path);
+    if (uds_fd < 0) {
+        close(client_fd);
+        return -1;
+    }
+
+    int rc = sendfd_with_state(uds_fd, client_fd, payload, payload_len);
+    close(uds_fd);
+    /* Note: sendfd_with_state closes client_fd on success. 
+       If it fails, we still close it to avoid leaks. */
+    if (rc != 0) close(client_fd);
+
+    return rc;
+}
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/proto_gateway/benchhttp/vanilla.go =====
+package benchhttp
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"strconv"
+	"syscall"
+)
+
+func RunVanilla(cfg VanillaConfig) error {
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+
+	transport := &http.Transport{
+		DisableCompression: true,
+		DisableKeepAlives:  false,
+	}
+	defer transport.CloseIdleConnections()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return err
+		}
+
+		go func(conn net.Conn) {
+			if err := serveVanillaConn(conn, cfg.Upstream, transport); err != nil && err != io.EOF {
+				log.Printf("[benchhttp-vanilla] serve conn remote=%s: %v", conn.RemoteAddr(), err)
+			}
+		}(conn)
+	}
+}
+
+func serveVanillaConn(conn net.Conn, upstream string, transport *http.Transport) error {
+	defer conn.Close()
+
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+
+	for {
+		top1, cntfrq := stampTop1(conn)
+
+		req, err := http.ReadRequest(reader)
+		if err != nil {
+			return err
+		}
+
+		req.URL.Scheme = "http"
+		req.URL.Host = upstream
+		req.RequestURI = ""
+		req.Host = ""
+
+		if top1 > 0 {
+			req.Header.Set("X-Bench2-Top1-Rdtsc", strconv.FormatUint(top1, 10))
+		}
+		if cntfrq > 0 {
+			req.Header.Set("X-Bench2-Cntfrq", strconv.FormatUint(cntfrq, 10))
+		}
+
+		resp, err := transport.RoundTrip(req)
+		if err != nil {
+			_ = req.Body.Close()
+			return err
+		}
+
+		if err := resp.Write(writer); err != nil {
+			_ = resp.Body.Close()
+			_ = req.Body.Close()
+			return err
+		}
+		if err := writer.Flush(); err != nil {
+			_ = resp.Body.Close()
+			_ = req.Body.Close()
+			return err
+		}
+		if err := resp.Body.Close(); err != nil {
+			_ = req.Body.Close()
+			return err
+		}
+		if err := req.Body.Close(); err != nil {
+			return err
+		}
+		if req.Close || resp.Close {
+			return nil
+		}
+	}
+}
+
+func stampTop1(conn net.Conn) (uint64, uint64) {
+	fd, err := rawSocketFD(conn)
+	if err == nil {
+		if benchPendingBytes(fd) == 0 {
+			benchWaitReadable(fd)
+		}
+	}
+	return benchReadCounter(), benchCounterFreq()
+}
+
+func rawSocketFD(conn net.Conn) (int, error) {
+	sysConn, ok := conn.(syscall.Conn)
+	if !ok {
+		return -1, fmt.Errorf("connection does not expose syscall.Conn")
+	}
+
+	rawConn, err := sysConn.SyscallConn()
+	if err != nil {
+		return -1, err
+	}
+
+	fd := -1
+	if err := rawConn.Control(func(v uintptr) {
+		fd = int(v)
+	}); err != nil {
+		return -1, err
+	}
+	if fd < 0 {
+		return -1, fmt.Errorf("invalid socket fd")
+	}
+	return fd, nil
+}
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/proto_gateway/benchhttp/cgo.go =====
+package benchhttp
+
+/*
+#include <stdint.h>
+#include <errno.h>
+#include <poll.h>
+#include <sched.h>
+#include <sys/ioctl.h>
+#include <time.h>
+
+static inline uint64_t bench2_go_rdtsc(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+#elif defined(__aarch64__)
+    uint64_t val;
+    __asm__ volatile ("isb; mrs %0, cntvct_el0" : "=r"(val));
+    return val;
+#else
+# error "bench2_go_rdtsc: unsupported architecture"
+#endif
+}
+
+static inline uint64_t bench2_go_cntfrq(void) {
+#if defined(__aarch64__)
+    uint64_t val;
+    __asm__ volatile ("mrs %0, cntfrq_el0" : "=r"(val));
+    return val;
+#else
+    return 1000000000ULL;
+#endif
+}
+
+static inline int bench2_go_pending_bytes(int fd) {
+    int avail = 0;
+    if (ioctl(fd, FIONREAD, &avail) != 0) {
+        return 0;
+    }
+    return avail;
+}
+
+static inline void bench2_go_wait_readable(int fd) {
+    int avail = 0;
+    do {
+        ioctl(fd, FIONREAD, &avail);
+        if (avail > 0) {
+            return;
+        }
+        sched_yield();
+    } while (1);
+}
+
+static inline int bench2_go_wait_readable_timeout(int fd, int timeout_ms) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+
+    for (;;) {
+        int rc = poll(&pfd, 1, timeout_ms);
+        if (rc >= 0) {
+            return rc > 0;
+        }
+        if (errno != EINTR) {
+            return 0;
+        }
+    }
+}
+*/
+import "C"
+
+func benchReadCounter() uint64 {
+	return uint64(C.bench2_go_rdtsc())
+}
+
+func benchCounterFreq() uint64 {
+	return uint64(C.bench2_go_cntfrq())
+}
+
+func benchPendingBytes(fd int) int {
+	return int(C.bench2_go_pending_bytes(C.int(fd)))
+}
+
+func benchWaitReadable(fd int) {
+	C.bench2_go_wait_readable(C.int(fd))
+}
+
+func benchWaitReadableTimeout(fd int, timeoutMs int) bool {
+	return C.bench2_go_wait_readable_timeout(C.int(fd), C.int(timeoutMs)) != 0
+}
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/pi_verify_faasd.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[Pi] faasd: $(command -v faasd || true)"
+faasd version || true
+
+echo "[Pi] systemd units:"
+sudo systemctl status containerd --no-pager --full 2>/dev/null | head -40 || true
+echo "---"
+sudo systemctl status faasd-provider --no-pager --full 2>/dev/null | head -60 || true
+echo "---"
+sudo systemctl status faasd --no-pager --full 2>/dev/null | head -60 || true
+
+echo "[Pi] listening ports (8080):"
+ss -tlnp 2>/dev/null | grep -E ":8080\b" || true
+
+echo "[Pi] HTTP probe (expect 301/302/401 depending on gateway build):"
+if command -v curl >/dev/null 2>&1; then
+  curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/ || true
+else
+  echo "curl missing"
+fi
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/plot_bar_curve.py =====
+#!/usr/bin/env python3
+"""
+plot_bar_curve.py
+=================
+Generates 4 figures (2 metrics × 2 payload windows):
+
+  - metric: mean time   → figures for 32-512 KiB and 512-1024 KiB
+  - metric: P75 time    → figures for 32-512 KiB and 512-1024 KiB
+
+Each figure contains:
+  - Grouped bar chart  (Vanilla vs Prototype)
+  - Curve overlay on   (Vanilla vs Prototype lines connecting bar tops)
+  - Percentage gap annotation above every bar pair   (+ = proto faster)
+
+Usage (from the repo root):
+  python3 benchmarks/micro/micro-bench2-initial-http/client/plot_bar_curve.py
+"""
+
+import csv
+import math
+import os
+from collections import defaultdict
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import numpy as np
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+BASE = Path(__file__).resolve().parent
+
+VANILLA_CSV = BASE / "vanilla_results.csv"
+PROTO_CSV   = BASE / "proto_results.csv"
+OUT_DIR     = BASE
+
+# ─── Colours ──────────────────────────────────────────────────────────────────
+VANILLA_COLOR = "#1769aa"
+PROTO_COLOR   = "#d9480f"
+VANILLA_LIGHT = "#6aaed6"
+PROTO_LIGHT   = "#f4956a"
+GAP_COLOR     = "#2d6a2d"
+ANN_COLOR     = "#333333"
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def ns_to_ms(v: float) -> float:
+    return v / 1_000_000.0
+
+
+def percentile(values, pct: float) -> float:
+    if not values:
+        return math.nan
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * pct / 100.0
+    lo, hi = int(math.floor(rank)), int(math.ceil(rank))
+    if lo == hi:
+        return ordered[lo]
+    return ordered[lo] * (1.0 - (rank - lo)) + ordered[hi] * (rank - lo)
+
+
+def load_csv(path: Path) -> dict:
+    """Returns {payload_bytes: [delta_ns, ...]}"""
+    grouped = defaultdict(list)
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("http_status", "").strip() not in ("200",):
+                continue
+            try:
+                payload = int(row["payload_bytes"])
+                delta   = float(row["delta_ns"])
+                if delta > 0:
+                    grouped[payload].append(delta)
+            except (KeyError, ValueError):
+                continue
+    return dict(grouped)
+
+
+def summarize(grouped: dict, metric: str) -> dict:
+    """Returns {payload_bytes: float_ms}"""
+    out = {}
+    for payload, vals in grouped.items():
+        if not vals:
+            continue
+        if metric == "mean":
+            out[payload] = ns_to_ms(float(np.mean(vals)))
+        elif metric == "p75":
+            out[payload] = ns_to_ms(percentile(vals, 75))
+    return out
+
+
+def filter_window(summary_v, summary_p, lo_kb: int, hi_kb: int):
+    """Keep only payload sizes in [lo_kb, hi_kb] KiB, return aligned sorted arrays."""
+    common = sorted(
+        k for k in set(summary_v) & set(summary_p)
+        if lo_kb * 1024 <= k <= hi_kb * 1024
+    )
+    return common, [summary_v[k] for k in common], [summary_p[k] for k in common]
+
+
+def style_ax(ax):
+    ax.grid(axis="y", linestyle="--", alpha=0.25, zorder=0)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+# ─── Core plot ────────────────────────────────────────────────────────────────
+
+def make_figure(
+    summary_v: dict,
+    summary_p: dict,
+    metric_label: str,
+    lo_kb: int,
+    hi_kb: int,
+    out_path: Path,
+):
+    payloads, vals_v, vals_p = filter_window(summary_v, summary_p, lo_kb, hi_kb)
+    if not payloads:
+        print(f"  [skip] no data for {lo_kb}-{hi_kb} KiB")
+        return
+
+    n          = len(payloads)
+    x          = np.arange(n)
+    bar_width  = 0.36
+    half       = bar_width / 2.0
+
+    x_v_bars   = x - half
+    x_p_bars   = x + half
+
+    vals_v_arr = np.array(vals_v, dtype=float)
+    vals_p_arr = np.array(vals_p, dtype=float)
+
+    # x-tick labels: KiB
+    labels = [str(p // 1024) for p in payloads]
+
+    fig, ax = plt.subplots(figsize=(max(12, n * 0.6), 7))
+
+    # ── Bars
+    ax.bar(x_v_bars, vals_v_arr, width=bar_width, color=VANILLA_COLOR, alpha=0.82,
+           label="Vanilla", zorder=3, edgecolor="white", linewidth=0.6)
+    ax.bar(x_p_bars, vals_p_arr, width=bar_width, color=PROTO_COLOR, alpha=0.82,
+           label="Prototype", zorder=3, edgecolor="white", linewidth=0.6)
+
+    # ── Curves connecting bar tops (centre of each bar)
+    ax.plot(x_v_bars, vals_v_arr, marker="o", markersize=5.5, linewidth=2.2,
+            color=VANILLA_COLOR, zorder=4, label="_nolegend_")
+    ax.plot(x_p_bars, vals_p_arr, marker="s", markersize=5.5, linewidth=2.2,
+            color=PROTO_COLOR,  zorder=4, label="_nolegend_")
+
+    # ── Percentage gap annotations above each pair
+    for i, (vv, vp) in enumerate(zip(vals_v_arr, vals_p_arr)):
+        if vv > 0:
+            pct = (vv - vp) / vv * 100.0  # positive → proto is faster
+        else:
+            pct = 0.0
+
+        top = max(vv, vp) * 1.04
+        color = GAP_COLOR if pct > 0 else "#a00000"
+        ax.text(
+            x[i], top,
+            f"{pct:+.0f}%",
+            ha="center", va="bottom",
+            fontsize=8.5, fontweight="bold",
+            color=color, zorder=5,
+        )
+
+    # ── Axis decoration
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45 if n > 12 else 0, ha="right" if n > 12 else "center")
+    ax.set_xlabel("Payload size (KiB)", fontsize=12)
+    ax.set_ylabel("Time (ms)", fontsize=12)
+    ax.set_title(
+        f"{metric_label}  ·  Top1→Top2 time  ({lo_kb}–{hi_kb} KiB)\n"
+        f"Green % = prototype faster   |   Red % = vanilla faster",
+        fontsize=13, fontweight="bold",
+    )
+
+    style_ax(ax)
+
+    # ── Legend: combine bars + curves into a clean legend
+    van_bar  = mpatches.Patch(color=VANILLA_COLOR, alpha=0.82, label="Vanilla")
+    pro_bar  = mpatches.Patch(color=PROTO_COLOR,   alpha=0.82, label="Prototype")
+    van_line = plt.Line2D([], [], color=VANILLA_COLOR, marker="o", markersize=5, linewidth=2, label="Vanilla (curve)")
+    pro_line = plt.Line2D([], [], color=PROTO_COLOR,   marker="s", markersize=5, linewidth=2, label="Prototype (curve)")
+    ax.legend(handles=[van_bar, pro_bar, van_line, pro_line],
+              frameon=False, loc="upper left", fontsize=10)
+
+    fig.tight_layout()
+    plt.savefig(str(out_path), dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  [✓] saved → {out_path.name}")
+
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    print(f"Loading  {VANILLA_CSV.name} …")
+    grouped_v = load_csv(VANILLA_CSV)
+    print(f"Loading  {PROTO_CSV.name} …")
+    grouped_p = load_csv(PROTO_CSV)
+
+    for metric_key, metric_label in [("mean", "Mean time"), ("p75", "P75 time")]:
+        print(f"\n── {metric_label} ──")
+        summary_v = summarize(grouped_v, metric_key)
+        summary_p = summarize(grouped_p, metric_key)
+
+        for lo_kb, hi_kb in [(32, 512), (512, 1024)]:
+            fname = f"bar_curve_{metric_key}_{lo_kb}to{hi_kb}KiB.png"
+            make_figure(
+                summary_v, summary_p,
+                metric_label,
+                lo_kb, hi_kb,
+                OUT_DIR / fname,
+            )
+
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/plot_step32_mean_only.py =====
+#!/usr/bin/env python3
+
+import argparse
+import csv
+import statistics
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+try:
+    import matplotlib.pyplot as plt
+    import numpy as np
+except ImportError:
+    print("ERROR: matplotlib and numpy are required.", file=sys.stderr)
+    sys.exit(1)
+
+
+def ns_to_ms(value: float) -> float:
+    return value / 1_000_000.0
+
+
+def load_delta_by_payload(csv_path: Path) -> dict[int, list[float]]:
+    grouped: dict[int, list[float]] = defaultdict(list)
+    with csv_path.open("r", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            if row.get("http_status") != "200":
+                continue
+            try:
+                payload = int(row["payload_bytes"])
+                delta_ns = float(row["delta_ns"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            grouped[payload].append(delta_ns)
+
+    if not grouped:
+        raise ValueError(f"no valid HTTP 200 rows found in {csv_path}")
+
+    return dict(grouped)
+
+
+def value_by_payload(grouped: dict[int, list[float]], stat: str) -> dict[int, float]:
+    summary: dict[int, float] = {}
+    for payload, values in grouped.items():
+        if not values:
+            continue
+
+        if stat == "mean":
+            value_ns = float(np.mean(values))
+        elif stat == "median":
+            value_ns = float(statistics.median(values))
+        else:
+            raise ValueError(f"unsupported stat: {stat}")
+
+        summary[payload] = ns_to_ms(value_ns)
+
+    return summary
+
+
+def annotate_bars(ax, bars) -> None:
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            height,
+            f"{height:.1f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            rotation=90,
+        )
+
+
+def main() -> int:
+    base_dir = Path(__file__).resolve().parent
+
+    parser = argparse.ArgumentParser(
+        description="Simple step32 comparison plot: mean bars only for vanilla vs prototype"
+    )
+    parser.add_argument(
+        "--vanilla",
+        default=str(base_dir / "vanilla_results_step32kb_32_to_1024.csv"),
+        help="Vanilla step32 CSV path",
+    )
+    parser.add_argument(
+        "--proto",
+        default=str(base_dir / "proto_results_step32kb_32_to_1024.csv"),
+        help="Prototype step32 CSV path",
+    )
+    parser.add_argument(
+        "--out",
+        default=str(base_dir / "vanilla_vs_proto_step32_mean_only.png"),
+        help="Output figure path",
+    )
+    parser.add_argument(
+        "--stat",
+        choices=["mean", "median"],
+        default="mean",
+        help="Statistic to plot for each payload size",
+    )
+    parser.add_argument(
+        "--title",
+        default="",
+        help="Figure title",
+    )
+    args = parser.parse_args()
+
+    vanilla = value_by_payload(load_delta_by_payload(Path(args.vanilla)), args.stat)
+    proto = value_by_payload(load_delta_by_payload(Path(args.proto)), args.stat)
+
+    payloads = sorted(set(vanilla.keys()) & set(proto.keys()))
+    if not payloads:
+        print("ERROR: no common payload sizes between vanilla and prototype", file=sys.stderr)
+        return 1
+
+    labels = [str(payload // 1024) for payload in payloads]
+    x = np.arange(len(payloads), dtype=float)
+    width = 0.38
+
+    vanilla_mean = np.array([vanilla[payload] for payload in payloads], dtype=float)
+    proto_mean = np.array([proto[payload] for payload in payloads], dtype=float)
+    stat_label = args.stat.capitalize()
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    vanilla_bars = ax.bar(
+        x - width / 2,
+        vanilla_mean,
+        width=width,
+        color="#1f77b4",
+        alpha=0.82,
+        label=f"Vanilla {args.stat}",
+    )
+    proto_bars = ax.bar(
+        x + width / 2,
+        proto_mean,
+        width=width,
+        color="#d95f02",
+        alpha=0.82,
+        label=f"Prototype {args.stat}",
+    )
+
+    annotate_bars(ax, vanilla_bars)
+    annotate_bars(ax, proto_bars)
+
+    title = args.title or f"Step 32 KiB: {args.stat} Top1 to Top2 time"
+    ylabel = f"{args.stat.capitalize()} Top1 to Top2 time (ms)"
+
+    ax.set_title(title, fontsize=15, fontweight="bold")
+    ax.set_xlabel("Payload size (KiB)")
+    ax.set_ylabel(ylabel)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.grid(True, axis="y", linestyle="--", alpha=0.25)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(frameon=False)
+
+    fig.tight_layout()
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[ok] figure saved: {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/run_payload_sweep.py =====
+#!/usr/bin/env python3
+
+import argparse
+import csv
+import http.client
+import json
+import os
+import sys
+import time
+
+
+DEFAULT_PI_HOST = "192.168.2.2"
+
+
+def resolve_host(host: str) -> str:
+    host = host.strip()
+    if host:
+        return host
+
+    env_host = os.environ.get("PI_IP", "").strip()
+    if env_host:
+        return env_host
+
+    return DEFAULT_PI_HOST
+
+
+def parse_sizes(s: str) -> list[int]:
+    s = s.strip()
+    if not s:
+        return []
+    out: list[int] = []
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(int(part))
+    return out
+
+
+def build_sizes(args: argparse.Namespace) -> list[int]:
+    if args.sizes:
+        return parse_sizes(args.sizes)
+
+    start = args.start_kb * 1024
+    end = args.end_kb * 1024
+    step = args.step_kb * 1024
+
+    if start <= 0 or end < start or step <= 0:
+        raise ValueError("invalid linear payload range")
+
+    return list(range(start, end + 1, step))
+
+
+def http_request_json(host: str, port: int, path: str, body: bytes, timeout_s: float) -> tuple[int, bytes]:
+    conn = http.client.HTTPConnection(host, port=port, timeout=timeout_s)
+    headers = {
+        "Content-Type": "application/octet-stream",
+        "Connection": "close",
+    }
+
+    conn.request("POST", path, body=body, headers=headers)
+    resp = conn.getresponse()
+    payload = resp.read()
+    status = resp.status
+
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+    return status, payload
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Scenario A (Initial) HTTP payload sweep client")
+    ap.add_argument(
+        "--host",
+        required=True,
+        help="Gateway host (Raspberry Pi IP/hostname); blank falls back to $PI_IP or 192.168.2.2",
+    )
+    ap.add_argument("--port", type=int, default=8082, help="Gateway HTTP port (default: 8082)")
+    ap.add_argument(
+        "--path",
+        default="/function/timing-fn",
+        help="Gateway path to call (default: /function/timing-fn)",
+    )
+    ap.add_argument(
+        "--sizes",
+        default="",
+        help="Comma-separated payload sizes in bytes; when omitted, a linear KB range is generated",
+    )
+    ap.add_argument("--start-kb", type=int, default=32, help="First payload size in KiB when --sizes is omitted")
+    ap.add_argument("--end-kb", type=int, default=1024, help="Last payload size in KiB when --sizes is omitted")
+    ap.add_argument("--step-kb", type=int, default=32, help="Fixed payload step in KiB when --sizes is omitted")
+    ap.add_argument("--requests", type=int, default=50, help="Requests per payload size")
+    ap.add_argument("--timeout", type=float, default=10.0, help="Per-request timeout (s)")
+    ap.add_argument("--out", required=True, help="Output CSV path")
+    args = ap.parse_args()
+    args.host = resolve_host(args.host)
+
+    try:
+        sizes = build_sizes(args)
+    except ValueError as exc:
+        print(f"Invalid payload configuration: {exc}", file=sys.stderr)
+        return 2
+
+    if not sizes:
+        print("No sizes specified", file=sys.stderr)
+        return 2
+
+    with open(args.out, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(
+            [
+                "payload_bytes",
+                "iter",
+                "http_status",
+                "top1_rdtsc",
+                "top2_rdtsc",
+                "delta_cycles",
+                "cntfrq",
+                "delta_ns",
+                "body_bytes_read",
+                "content_length",
+                "client_rtt_ns",
+            ]
+        )
+
+        for size in sizes:
+            body = b"a" * size
+            for i in range(args.requests):
+                t_start = time.time_ns()
+                try:
+                    status, raw = http_request_json(
+                        args.host, args.port, args.path, body, timeout_s=args.timeout
+                    )
+                    t_end = time.time_ns()
+
+                    top1_rdtsc = ""
+                    top2_rdtsc = ""
+                    delta_cycles = ""
+                    cntfrq = ""
+                    delta_ns = ""
+                    body_bytes_read = ""
+                    content_length = ""
+
+                    if raw:
+                        try:
+                            data = json.loads(raw.decode("utf-8", errors="replace"))
+                            top1_rdtsc = data.get("top1_rdtsc", "")
+                            top2_rdtsc = data.get("top2_rdtsc", "")
+                            delta_cycles = data.get("delta_cycles", "")
+                            cntfrq = data.get("cntfrq", "")
+                            delta_ns = data.get("delta_ns", "")
+                            body_bytes_read = data.get("body_bytes_read", "")
+                            content_length = data.get("content_length", "")
+                        except json.JSONDecodeError:
+                            pass
+
+                    w.writerow(
+                        [
+                            size,
+                            i,
+                            status,
+                            top1_rdtsc,
+                            top2_rdtsc,
+                            delta_cycles,
+                            cntfrq,
+                            delta_ns,
+                            body_bytes_read,
+                            content_length,
+                            t_end - t_start,
+                        ]
+                    )
+                except Exception as e:
+                    t_end = time.time_ns()
+                    print(f"error payload={size}B iter={i}: {e}", file=sys.stderr)
+                    w.writerow([size, i, "ERR", "", "", "", "", "", "", "", t_end - t_start])
+
+            print(f"done payload={size}B", file=sys.stderr)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/run_vanilla_sweep_sets.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+CLIENT_DIR="$ROOT_DIR/benchmarks/micro/micro-bench2-initial-http/client"
+RUNNER="$CLIENT_DIR/run_payload_sweep.py"
+
+HOST="${1:-${HOST:-}}"
+PORT="${PORT:-8082}"
+REQUESTS="${REQUESTS:-50}"
+TIMEOUT="${TIMEOUT:-120}"
+
+if [[ -z "$HOST" ]]; then
+  echo "Usage: $0 <host>" >&2
+  echo "Example: $0 192.168.2.2" >&2
+  exit 2
+fi
+
+run_sweep() {
+  local label="$1"
+  local start_kb="$2"
+  local end_kb="$3"
+  local step_kb="$4"
+  local out_csv="$5"
+
+  echo "[run] $label"
+  echo "[run] host=$HOST port=$PORT start_kb=$start_kb end_kb=$end_kb step_kb=$step_kb requests=$REQUESTS timeout=$TIMEOUT"
+
+  python3 "$RUNNER" \
+    --host "$HOST" \
+    --port "$PORT" \
+    --start-kb "$start_kb" \
+    --end-kb "$end_kb" \
+    --step-kb "$step_kb" \
+    --requests "$REQUESTS" \
+    --timeout "$TIMEOUT" \
+    --out "$out_csv"
+
+  echo "[ok] wrote $out_csv"
+}
+
+run_sweep \
+  "step 32 KiB, 32 KiB -> 1024 KiB" \
+  32 \
+  1024 \
+  32 \
+  "$CLIENT_DIR/vanilla_results_step32kb_32_to_1024.csv"
+
+run_sweep \
+  "step 100 KiB, 1000 KiB -> 1500 KiB" \
+  1000 \
+  1500 \
+  100 \
+  "$CLIENT_DIR/vanilla_results_step100kb_1000_to_1500.csv"
+
+run_sweep \
+  "step 1000 KiB, 1500 KiB -> 60500 KiB" \
+  1500 \
+  60500 \
+  1000 \
+  "$CLIENT_DIR/vanilla_results_step1000kb_1500_to_60500.csv"
+
+echo "[ok] all vanilla sweep sets completed"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/plot_step32_mean_p99.py =====
+#!/usr/bin/env python3
+
+import argparse
+import csv
+import math
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+try:
+    import matplotlib.pyplot as plt
+    import numpy as np
+except ImportError:
+    print("ERROR: matplotlib and numpy are required.", file=sys.stderr)
+    sys.exit(1)
+
+
+def percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return math.nan
+    if len(values) == 1:
+        return values[0]
+
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * pct / 100.0
+    low = int(math.floor(rank))
+    high = int(math.ceil(rank))
+    if low == high:
+        return ordered[low]
+
+    weight = rank - low
+    return ordered[low] * (1.0 - weight) + ordered[high] * weight
+
+
+def ns_to_ms(value: float) -> float:
+    return value / 1_000_000.0
+
+
+def load_delta_by_payload(csv_path: Path) -> dict[int, list[float]]:
+    grouped: dict[int, list[float]] = defaultdict(list)
+    with csv_path.open("r", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            if row.get("http_status") != "200":
+                continue
+            try:
+                payload = int(row["payload_bytes"])
+                delta_ns = float(row["delta_ns"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            grouped[payload].append(delta_ns)
+
+    if not grouped:
+        raise ValueError(f"no valid HTTP 200 rows found in {csv_path}")
+
+    return dict(grouped)
+
+
+def summarize(grouped: dict[int, list[float]]) -> dict[int, tuple[float, float]]:
+    summary: dict[int, tuple[float, float]] = {}
+    for payload, values in grouped.items():
+        summary[payload] = (
+            ns_to_ms(float(np.mean(values))),
+            ns_to_ms(percentile(values, 99)),
+        )
+    return summary
+
+
+def main() -> int:
+    base_dir = Path(__file__).resolve().parent
+
+    parser = argparse.ArgumentParser(
+        description="Simple step32 comparison plot: mean bars and p99 curves for vanilla vs prototype"
+    )
+    parser.add_argument(
+        "--vanilla",
+        default=str(base_dir / "vanilla_results_step32kb_32_to_1024.csv"),
+        help="Vanilla step32 CSV path",
+    )
+    parser.add_argument(
+        "--proto",
+        default=str(base_dir / "proto_results_step32kb_32_to_1024.csv"),
+        help="Prototype step32 CSV path",
+    )
+    parser.add_argument(
+        "--out",
+        default=str(base_dir / "vanilla_vs_proto_step32_mean_p99.png"),
+        help="Output figure path",
+    )
+    parser.add_argument(
+        "--title",
+        default="Step 32 KiB: mean bars and p99 curves",
+        help="Figure title",
+    )
+    args = parser.parse_args()
+
+    vanilla = summarize(load_delta_by_payload(Path(args.vanilla)))
+    proto = summarize(load_delta_by_payload(Path(args.proto)))
+
+    payloads = sorted(set(vanilla.keys()) & set(proto.keys()))
+    if not payloads:
+        print("ERROR: no common payload sizes between vanilla and prototype", file=sys.stderr)
+        return 1
+
+    labels = [str(payload // 1024) for payload in payloads]
+    x = np.arange(len(payloads), dtype=float)
+    width = 0.36
+
+    vanilla_mean = np.array([vanilla[payload][0] for payload in payloads], dtype=float)
+    proto_mean = np.array([proto[payload][0] for payload in payloads], dtype=float)
+    vanilla_p99 = np.array([vanilla[payload][1] for payload in payloads], dtype=float)
+    proto_p99 = np.array([proto[payload][1] for payload in payloads], dtype=float)
+
+    vanilla_color = "#1f77b4"
+    proto_color = "#d95f02"
+
+    fig, ax = plt.subplots(figsize=(14, 7))
+    ax.bar(x - width / 2, vanilla_mean, width=width, color=vanilla_color, alpha=0.78, label="Vanilla mean")
+    ax.bar(x + width / 2, proto_mean, width=width, color=proto_color, alpha=0.78, label="Prototype mean")
+
+    ax.plot(x, vanilla_p99, color=vanilla_color, marker="o", linewidth=2.1, label="Vanilla p99")
+    ax.plot(x, proto_p99, color=proto_color, marker="s", linewidth=2.1, label="Prototype p99")
+
+    ax.set_title(args.title, fontsize=15, fontweight="bold")
+    ax.set_xlabel("Payload size (KiB)")
+    ax.set_ylabel("Top1 to Top2 time (ms)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.grid(True, axis="y", linestyle="--", alpha=0.25)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(frameon=False, ncol=2)
+
+    fig.tight_layout()
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[ok] figure saved: {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/run_proto_evaluation.py =====
+#!/usr/bin/env python3
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+DEFAULT_PI_HOST = "192.168.2.2"
+
+
+def resolve_host(host: str) -> str:
+    host = host.strip()
+    if host:
+        return host
+
+    env_host = os.environ.get("PI_IP", "").strip()
+    if env_host:
+        return env_host
+
+    return DEFAULT_PI_HOST
+
+
+def run_sweep(
+    runner: Path,
+    host: str,
+    port: int,
+    requests: int,
+    timeout: float,
+    start_kb: int,
+    end_kb: int,
+    step_kb: int,
+    out_csv: Path,
+    label: str,
+) -> None:
+    host = resolve_host(host)
+
+    print(f"[run] {label}")
+    print(
+        "[run] "
+        f"host={host} port={port} start_kb={start_kb} end_kb={end_kb} "
+        f"step_kb={step_kb} requests={requests} timeout={timeout}"
+    )
+
+    cmd = [
+        sys.executable,
+        str(runner),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--start-kb",
+        str(start_kb),
+        "--end-kb",
+        str(end_kb),
+        "--step-kb",
+        str(step_kb),
+        "--requests",
+        str(requests),
+        "--timeout",
+        str(timeout),
+        "--out",
+        str(out_csv),
+    ]
+    subprocess.run(cmd, check=True)
+    print(f"[ok] wrote {out_csv}")
+
+
+def main() -> int:
+    base_dir = Path(__file__).resolve().parent
+    runner = base_dir / "run_payload_sweep.py"
+
+    parser = argparse.ArgumentParser(
+        description="Run the three prototype evaluation payload ranges for micro-bench2-initial-http"
+    )
+    parser.add_argument(
+        "--host",
+        required=True,
+        help="Raspberry Pi IP/hostname; blank falls back to $PI_IP or 192.168.2.2",
+    )
+    parser.add_argument("--port", type=int, default=8083, help="Prototype gateway HTTP port")
+    parser.add_argument("--requests", type=int, default=50, help="Requests per payload size")
+    parser.add_argument("--timeout", type=float, default=120.0, help="Per-request timeout in seconds")
+    parser.add_argument(
+        "--output-dir",
+        default=str(base_dir),
+        help="Directory where the CSV files will be written",
+    )
+    parser.add_argument(
+        "--only",
+        choices=["step32", "step100", "step1000", "all"],
+        default="all",
+        help="Run only one sweep set or all of them",
+    )
+    parser.add_argument("--start-kb", type=int, help="Custom first payload size in KiB")
+    parser.add_argument("--end-kb", type=int, help="Custom last payload size in KiB")
+    parser.add_argument("--step-kb", type=int, help="Custom payload step in KiB")
+    parser.add_argument("--out", help="Custom output CSV path")
+    args = parser.parse_args()
+
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    custom_range_requested = any(
+        value is not None for value in (args.start_kb, args.end_kb, args.step_kb, args.out)
+    )
+    if custom_range_requested:
+        if None in (args.start_kb, args.end_kb, args.step_kb) or not args.out:
+            parser.error("custom mode requires --start-kb, --end-kb, --step-kb, and --out")
+        run_sweep(
+            runner=runner,
+            host=args.host,
+            port=args.port,
+            requests=args.requests,
+            timeout=args.timeout,
+            start_kb=args.start_kb,
+            end_kb=args.end_kb,
+            step_kb=args.step_kb,
+            out_csv=Path(args.out).resolve(),
+            label="custom prototype sweep",
+        )
+        print("[ok] prototype evaluation completed")
+        return 0
+
+    sweeps = [
+        (
+            "step32",
+            "step 32 KiB, 32 KiB -> 1024 KiB",
+            32,
+            1024,
+            32,
+            output_dir / "proto_results_step32kb_32_to_1024.csv",
+        ),
+        (
+            "step100",
+            "step 100 KiB, 1000 KiB -> 1500 KiB",
+            1000,
+            1500,
+            100,
+            output_dir / "proto_results_step100kb_1000_to_1500.csv",
+        ),
+        (
+            "step1000",
+            "step 1000 KiB, 1500 KiB -> 60500 KiB",
+            1500,
+            60500,
+            1000,
+            output_dir / "proto_results_step1000kb_1500_to_60500.csv",
+        ),
+    ]
+
+    for key, label, start_kb, end_kb, step_kb, out_csv in sweeps:
+        if args.only != "all" and args.only != key:
+            continue
+        run_sweep(
+            runner=runner,
+            host=args.host,
+            port=args.port,
+            requests=args.requests,
+            timeout=args.timeout,
+            start_kb=start_kb,
+            end_kb=end_kb,
+            step_kb=step_kb,
+            out_csv=out_csv,
+            label=label,
+        )
+
+    print("[ok] prototype evaluation completed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/plot_vanilla_vs_proto.py =====
+#!/usr/bin/env python3
+
+import argparse
+import csv
+import math
+import os
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+try:
+    import matplotlib.pyplot as plt
+    import numpy as np
+except ImportError:
+    print("ERROR: matplotlib and numpy are required.")
+    print("Install them with: pip3 install matplotlib numpy")
+    sys.exit(1)
+
+
+METRICS = {
+    "delta": {"column": "delta_ns", "title": "Top1 to Top2 time"},
+    "rtt": {"column": "client_rtt_ns", "title": "End-to-end client time"},
+}
+
+
+def percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return math.nan
+    if len(values) == 1:
+        return values[0]
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * pct / 100.0
+    low = int(math.floor(rank))
+    high = int(math.ceil(rank))
+    if low == high:
+        return ordered[low]
+    weight = rank - low
+    return ordered[low] * (1.0 - weight) + ordered[high] * weight
+
+
+def ns_to_ms(value: float) -> float:
+    return value / 1_000_000.0
+
+
+def size_label(payload: int) -> str:
+    if payload >= 1024 * 1024 and payload % (1024 * 1024) == 0:
+        return f"{payload // (1024 * 1024)} MiB"
+    if payload >= 1024:
+        return f"{payload // 1024} KiB"
+    return f"{payload} B"
+
+
+def size_kib(payload: int) -> float:
+    return payload / 1024.0
+
+
+def load_results(csv_path: str) -> dict[int, dict[str, list[float]]]:
+    if not os.path.exists(csv_path):
+        print(f"ERROR: CSV not found: {csv_path}")
+        sys.exit(1)
+
+    grouped: dict[int, dict[str, list[float]]] = defaultdict(
+        lambda: {
+            "delta_ns": [],
+            "client_rtt_ns": [],
+        }
+    )
+
+    with open(csv_path, "r", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            if row.get("http_status") != "200":
+                continue
+            try:
+                payload = int(row["payload_bytes"])
+                grouped[payload]["delta_ns"].append(float(row["delta_ns"]))
+                grouped[payload]["client_rtt_ns"].append(float(row["client_rtt_ns"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+
+    if not grouped:
+        print(f"ERROR: no valid HTTP 200 rows found in {csv_path}")
+        sys.exit(1)
+
+    return dict(grouped)
+
+
+def summarize_metric(grouped: dict[int, dict[str, list[float]]], metric_column: str) -> dict[int, dict[str, float]]:
+    summary: dict[int, dict[str, float]] = {}
+    for payload in sorted(grouped.keys()):
+        values = grouped[payload][metric_column]
+        if not values:
+            continue
+        summary[payload] = {
+            "mean_ms": ns_to_ms(float(np.mean(values))),
+            "std_ms": ns_to_ms(float(np.std(values))),
+            "p95_ms": ns_to_ms(percentile(values, 95)),
+        }
+    return summary
+
+
+def style_axes(ax):
+    ax.grid(True, axis="both", linestyle="--", alpha=0.22)
+    ax.set_axisbelow(True)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def split_windows(payloads: list[int], start_kb: int, step_kb: int, window_points: int) -> list[tuple[int, int, list[int]]]:
+    if not payloads:
+        return []
+
+    windows: list[tuple[int, int, list[int]]] = []
+    window_start_kb = start_kb
+    payloads_kb = {payload: int(round(size_kib(payload))) for payload in payloads}
+    max_payload_kb = max(payloads_kb.values())
+
+    while window_start_kb <= max_payload_kb:
+        window_end_kb = window_start_kb + step_kb * (window_points - 1)
+        window_payloads = [
+            payload
+            for payload in payloads
+            if window_start_kb <= payloads_kb[payload] <= window_end_kb
+        ]
+        if window_payloads:
+            windows.append((window_start_kb, window_end_kb, window_payloads))
+        window_start_kb += step_kb * window_points
+
+    return windows
+
+
+def output_with_suffix(output_file: str, index: int, total: int, start_kb: int, end_kb: int) -> str:
+    path = Path(output_file)
+    if total == 1:
+        return str(path)
+    return str(path.with_name(f"{path.stem}_part{index:02d}_{start_kb}KiB_{end_kb}KiB{path.suffix}"))
+
+
+def plot_mean_time(
+    vanilla_summary: dict[int, dict[str, float]],
+    proto_summary: dict[int, dict[str, float]],
+    metric_name: str,
+    output_file: str,
+    start_kb: int,
+    step_kb: int,
+    window_points: int,
+):
+    payloads = sorted(set(vanilla_summary.keys()) & set(proto_summary.keys()))
+    if not payloads:
+        print("ERROR: no common payload sizes between vanilla and prototype results")
+        sys.exit(1)
+
+    windows = split_windows(payloads, start_kb, step_kb, window_points)
+    if not windows:
+        print("ERROR: no payloads fall inside the requested linear windows")
+        sys.exit(1)
+
+    vanilla_color = "#1769aa"
+    proto_color = "#d9480f"
+
+    for index, (window_start_kb, window_end_kb, window_payloads) in enumerate(windows, start=1):
+        x = np.array([size_kib(payload) for payload in window_payloads], dtype=float)
+        vanilla_mean = np.array([vanilla_summary[payload]["mean_ms"] for payload in window_payloads])
+        vanilla_std = np.array([vanilla_summary[payload]["std_ms"] for payload in window_payloads])
+        proto_mean = np.array([proto_summary[payload]["mean_ms"] for payload in window_payloads])
+        proto_std = np.array([proto_summary[payload]["std_ms"] for payload in window_payloads])
+
+        fig, ax = plt.subplots(figsize=(12.5, 6.8))
+        ax.plot(x, vanilla_mean, marker="o", markersize=7, linewidth=2.8, color=vanilla_color, label="Vanilla")
+        ax.fill_between(x, vanilla_mean - vanilla_std, vanilla_mean + vanilla_std, color=vanilla_color, alpha=0.14)
+        ax.plot(x, proto_mean, marker="s", markersize=7, linewidth=2.8, color=proto_color, label="Prototype")
+        ax.fill_between(x, proto_mean - proto_std, proto_mean + proto_std, color=proto_color, alpha=0.14)
+
+        for point_idx in range(len(window_payloads)):
+            gain_pct = 0.0
+            if vanilla_mean[point_idx] > 0:
+                gain_pct = (vanilla_mean[point_idx] - proto_mean[point_idx]) / vanilla_mean[point_idx] * 100.0
+            ax.text(
+                x[point_idx],
+                max(vanilla_mean[point_idx] + vanilla_std[point_idx], proto_mean[point_idx] + proto_std[point_idx]) * 1.03,
+                f"{gain_pct:+.0f}%",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="#333333",
+            )
+
+        xticks = np.arange(window_start_kb, window_end_kb + 1, step_kb)
+        ax.set_title(
+            f"{METRICS[metric_name]['title']} vs payload size ({window_start_kb}-{window_end_kb} KiB)",
+            fontsize=16,
+            fontweight="bold",
+        )
+        ax.set_xlabel("Payload size (KiB)", fontsize=12)
+        ax.set_ylabel("Time (ms)", fontsize=12)
+        ax.set_xlim(window_start_kb - step_kb * 0.15, window_end_kb + step_kb * 0.15)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels([str(int(value)) for value in xticks], rotation=0, ha="center")
+        style_axes(ax)
+        ax.legend(frameon=False, loc="upper left")
+
+        fig.tight_layout()
+        target = output_with_suffix(output_file, index, len(windows), window_start_kb, window_end_kb)
+        plt.savefig(target, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[✓] Figure saved: {target}")
+
+
+def plot_histogram(vanilla_grouped: dict[int, dict[str, list[float]]], proto_grouped: dict[int, dict[str, list[float]]], metric_name: str, payload: int, output_file: str):
+    metric_column = METRICS[metric_name]["column"]
+    if payload not in vanilla_grouped or payload not in proto_grouped:
+        print(f"ERROR: payload {payload} not found in both datasets")
+        sys.exit(1)
+
+    vanilla_values = np.array([ns_to_ms(v) for v in vanilla_grouped[payload][metric_column]], dtype=float)
+    proto_values = np.array([ns_to_ms(v) for v in proto_grouped[payload][metric_column]], dtype=float)
+
+    lo = min(vanilla_values.min(), proto_values.min())
+    hi = max(vanilla_values.max(), proto_values.max())
+    bins = np.linspace(lo, hi, 16)
+
+    fig, ax = plt.subplots(figsize=(10.5, 6.2))
+    vanilla_color = "#1769aa"
+    proto_color = "#d9480f"
+
+    ax.hist(vanilla_values, bins=bins, color=vanilla_color, alpha=0.55, edgecolor="white", linewidth=0.8, label="Vanilla")
+    ax.hist(proto_values, bins=bins, color=proto_color, alpha=0.55, edgecolor="white", linewidth=0.8, label="Prototype")
+    ax.axvline(np.mean(vanilla_values), color=vanilla_color, linestyle="--", linewidth=2.0)
+    ax.axvline(np.mean(proto_values), color=proto_color, linestyle="--", linewidth=2.0)
+
+    ax.set_title(f"{METRICS[metric_name]['title']} distribution at {size_label(payload)}", fontsize=15, fontweight="bold")
+    ax.set_xlabel("Time (ms)", fontsize=12)
+    ax.set_ylabel("Requests", fontsize=12)
+    style_axes(ax)
+    ax.legend(frameon=False, loc="upper right")
+
+    note = f"mean vanilla = {np.mean(vanilla_values):.3f} ms\nmean prototype = {np.mean(proto_values):.3f} ms"
+    ax.text(
+        0.98,
+        0.95,
+        note,
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=10,
+        bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "alpha": 0.88, "edgecolor": "#cccccc"},
+    )
+
+    fig.tight_layout()
+    plt.savefig(output_file, dpi=300, bbox_inches="tight")
+    print(f"[✓] Figure saved: {output_file}")
+
+
+def print_summary(vanilla_summary: dict[int, dict[str, float]], proto_summary: dict[int, dict[str, float]], metric_name: str):
+    payloads = sorted(set(vanilla_summary.keys()) & set(proto_summary.keys()))
+    print(f"\nAggregated summary for {METRICS[metric_name]['title'].lower()}\n")
+    print(
+        "payload".ljust(10)
+        + "vanilla_mean".rjust(16)
+        + "proto_mean".rjust(16)
+        + "gain".rjust(12)
+        + "vanilla_p95".rjust(16)
+        + "proto_p95".rjust(16)
+    )
+    print("-" * 86)
+    for payload in payloads:
+        vanilla_mean = vanilla_summary[payload]["mean_ms"]
+        proto_mean = proto_summary[payload]["mean_ms"]
+        vanilla_p95 = vanilla_summary[payload]["p95_ms"]
+        proto_p95 = proto_summary[payload]["p95_ms"]
+        gain = ((vanilla_mean - proto_mean) / vanilla_mean * 100.0) if vanilla_mean > 0 else 0.0
+        print(
+            size_label(payload).ljust(10)
+            + f"{vanilla_mean:16.3f}"
+            + f"{proto_mean:16.3f}"
+            + f"{gain:11.1f}%"
+            + f"{vanilla_p95:16.3f}"
+            + f"{proto_p95:16.3f}"
+        )
+
+
+def main() -> int:
+    base_dir = Path(__file__).resolve().parent
+    parser = argparse.ArgumentParser(description="Generate two comparison figures for vanilla and prototype benchmark results")
+    parser.add_argument("--vanilla", default=str(base_dir / "vanilla_results.csv"), help="Path to vanilla CSV file")
+    parser.add_argument("--proto", default=str(base_dir / "proto_results.csv"), help="Path to prototype CSV file")
+    parser.add_argument("--metric", choices=sorted(METRICS.keys()), default="delta", help="Metric to visualize")
+    parser.add_argument("--hist-payload", type=int, default=1048576, help="Payload size in bytes for the histogram figure")
+    parser.add_argument("--curve-output", default=str(base_dir / "time_mean_vs_size.png"), help="Output path for the mean-time figure")
+    parser.add_argument("--hist-output", default=str(base_dir / "time_histogram.png"), help="Output path for the histogram figure")
+    parser.add_argument("--window-start-kb", type=int, default=32, help="First x-axis value in KiB for the linear curve windows")
+    parser.add_argument("--x-step-kb", type=int, default=32, help="Fixed x-axis step in KiB")
+    parser.add_argument("--window-points", type=int, default=16, help="Number of x-axis points per generated curve window")
+    parser.add_argument("--no-display", action="store_true", help="Do not open the figures interactively")
+    args = parser.parse_args()
+
+    vanilla_grouped = load_results(args.vanilla)
+    proto_grouped = load_results(args.proto)
+    metric_column = METRICS[args.metric]["column"]
+    vanilla_summary = summarize_metric(vanilla_grouped, metric_column)
+    proto_summary = summarize_metric(proto_grouped, metric_column)
+
+    print_summary(vanilla_summary, proto_summary, args.metric)
+    plot_mean_time(
+        vanilla_summary,
+        proto_summary,
+        args.metric,
+        args.curve_output,
+        args.window_start_kb,
+        args.x_step_kb,
+        args.window_points,
+    )
+    plot_histogram(vanilla_grouped, proto_grouped, args.metric, args.hist_payload, args.hist_output)
+
+    if not args.no_display:
+        plt.show()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/run_vanilla_evaluation.py =====
+#!/usr/bin/env python3
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+DEFAULT_PI_HOST = "192.168.2.2"
+
+
+def resolve_host(host: str) -> str:
+    host = host.strip()
+    if host:
+        return host
+
+    env_host = os.environ.get("PI_IP", "").strip()
+    if env_host:
+        return env_host
+
+    return DEFAULT_PI_HOST
+
+
+def run_sweep(
+    runner: Path,
+    host: str,
+    port: int,
+    requests: int,
+    timeout: float,
+    start_kb: int,
+    end_kb: int,
+    step_kb: int,
+    out_csv: Path,
+    label: str,
+) -> None:
+    host = resolve_host(host)
+
+    print(f"[run] {label}")
+    print(
+        "[run] "
+        f"host={host} port={port} start_kb={start_kb} end_kb={end_kb} "
+        f"step_kb={step_kb} requests={requests} timeout={timeout}"
+    )
+
+    cmd = [
+        sys.executable,
+        str(runner),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--start-kb",
+        str(start_kb),
+        "--end-kb",
+        str(end_kb),
+        "--step-kb",
+        str(step_kb),
+        "--requests",
+        str(requests),
+        "--timeout",
+        str(timeout),
+        "--out",
+        str(out_csv),
+    ]
+    subprocess.run(cmd, check=True)
+    print(f"[ok] wrote {out_csv}")
+
+
+def main() -> int:
+    base_dir = Path(__file__).resolve().parent
+    runner = base_dir / "run_payload_sweep.py"
+
+    parser = argparse.ArgumentParser(
+        description="Run the vanilla evaluation payload ranges for micro-bench2-initial-http"
+    )
+    parser.add_argument(
+        "--host",
+        required=True,
+        help="Raspberry Pi IP/hostname; blank falls back to $PI_IP or 192.168.2.2",
+    )
+    parser.add_argument("--port", type=int, default=8082, help="Vanilla gateway HTTP port")
+    parser.add_argument("--requests", type=int, default=50, help="Requests per payload size")
+    parser.add_argument("--timeout", type=float, default=120.0, help="Per-request timeout in seconds")
+    parser.add_argument(
+        "--output-dir",
+        default=str(base_dir),
+        help="Directory where the CSV files will be written",
+    )
+    parser.add_argument(
+        "--only",
+        choices=["step32", "step100", "step1000", "all"],
+        default="all",
+        help="Run only one sweep set or all of them",
+    )
+    parser.add_argument("--start-kb", type=int, help="Custom first payload size in KiB")
+    parser.add_argument("--end-kb", type=int, help="Custom last payload size in KiB")
+    parser.add_argument("--step-kb", type=int, help="Custom payload step in KiB")
+    parser.add_argument("--out", help="Custom output CSV path")
+    args = parser.parse_args()
+
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    custom_range_requested = any(
+        value is not None for value in (args.start_kb, args.end_kb, args.step_kb, args.out)
+    )
+    if custom_range_requested:
+        if None in (args.start_kb, args.end_kb, args.step_kb) or not args.out:
+            parser.error("custom mode requires --start-kb, --end-kb, --step-kb, and --out")
+        run_sweep(
+            runner=runner,
+            host=args.host,
+            port=args.port,
+            requests=args.requests,
+            timeout=args.timeout,
+            start_kb=args.start_kb,
+            end_kb=args.end_kb,
+            step_kb=args.step_kb,
+            out_csv=Path(args.out).resolve(),
+            label="custom vanilla sweep",
+        )
+        print("[ok] vanilla evaluation completed")
+        return 0
+
+    sweeps = [
+        (
+            "step32",
+            "step 32 KiB, 32 KiB -> 1024 KiB",
+            32,
+            1024,
+            32,
+            output_dir / "vanilla_results_step32kb_32_to_1024.csv",
+        ),
+        (
+            "step100",
+            "step 100 KiB, 1000 KiB -> 1500 KiB",
+            1000,
+            1500,
+            100,
+            output_dir / "vanilla_results_step100kb_1000_to_1500.csv",
+        ),
+        (
+            "step1000",
+            "step 1000 KiB, 1500 KiB -> 60500 KiB",
+            1500,
+            60500,
+            1000,
+            output_dir / "vanilla_results_step1000kb_1500_to_60500.csv",
+        ),
+    ]
+
+    for key, label, start_kb, end_kb, step_kb, out_csv in sweeps:
+        if args.only != "all" and args.only != key:
+            continue
+        run_sweep(
+            runner=runner,
+            host=args.host,
+            port=args.port,
+            requests=args.requests,
+            timeout=args.timeout,
+            start_kb=start_kb,
+            end_kb=end_kb,
+            step_kb=step_kb,
+            out_csv=out_csv,
+            label=label,
+        )
+
+    print("[ok] vanilla evaluation completed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/client/run_proto_sweep_sets.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
+CLIENT_DIR="$ROOT_DIR/benchmarks/micro/micro-bench2-initial-http/client"
+RUNNER="$CLIENT_DIR/run_payload_sweep.py"
+
+HOST="${1:-${HOST:-}}"
+PORT="${PORT:-8083}"
+REQUESTS="${REQUESTS:-50}"
+TIMEOUT="${TIMEOUT:-120}"
+
+if [[ -z "$HOST" ]]; then
+  echo "Usage: $0 <host>" >&2
+  echo "Example: $0 192.168.2.2" >&2
+  exit 2
+fi
+
+run_sweep() {
+  local label="$1"
+  local start_kb="$2"
+  local end_kb="$3"
+  local step_kb="$4"
+  local out_csv="$5"
+
+  echo "[run] $label"
+  echo "[run] host=$HOST port=$PORT start_kb=$start_kb end_kb=$end_kb step_kb=$step_kb requests=$REQUESTS timeout=$TIMEOUT"
+
+  python3 "$RUNNER" \
+    --host "$HOST" \
+    --port "$PORT" \
+    --start-kb "$start_kb" \
+    --end-kb "$end_kb" \
+    --step-kb "$step_kb" \
+    --requests "$REQUESTS" \
+    --timeout "$TIMEOUT" \
+    --out "$out_csv"
+
+  echo "[ok] wrote $out_csv"
+}
+
+run_sweep \
+  "step 32 KiB, 32 KiB -> 1024 KiB" \
+  32 \
+  1024 \
+  32 \
+  "$CLIENT_DIR/proto_results_step32kb_32_to_1024.csv"
+
+run_sweep \
+  "step 100 KiB, 1000 KiB -> 1500 KiB" \
+  1000 \
+  1500 \
+  100 \
+  "$CLIENT_DIR/proto_results_step100kb_1000_to_1500.csv"
+
+run_sweep \
+  "step 1000 KiB, 1500 KiB -> 60500 KiB" \
+  1500 \
+  60500 \
+  1000 \
+  "$CLIENT_DIR/proto_results_step1000kb_1500_to_60500.csv"
+
+echo "[ok] all prototype sweep sets completed"
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/proto_function/timing-fn/timing_fn_worker.c =====
+#define _GNU_SOURCE
+
+#include <errno.h>
+#include <inttypes.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <time.h>
+#include <unistd.h>
+
+#include "sendfd.h"
+#include "unix_socket.h"
+
+#include "bench2_rdtsc.h"
+
+#define HTTPMIGRATE_MAGIC 0x484D4754U /* 'HMGT' */
+#define HTTPMIGRATE_VERSION 1U
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t top1_rdtsc;
+    uint64_t cntfrq;
+    uint8_t top1_set;
+    uint8_t _pad[7];
+} httpmigrate_payload_t;
+
+static ssize_t find_subseq(const unsigned char *buf, size_t len, const char *needle) {
+    const size_t nlen = strlen(needle);
+    if (nlen == 0 || len < nlen) return -1;
+    for (size_t i = 0; i + nlen <= len; i++) {
+        if (memcmp(buf + i, needle, nlen) == 0) return (ssize_t)i;
+    }
+    return -1;
+}
+
+static long long parse_content_length(const char *headers, size_t headers_len) {
+    const char *p = headers;
+    const char *end = headers + headers_len;
+    const char *needle = "content-length:";
+
+    while (p < end) {
+        const char *line_end = memchr(p, '\n', (size_t)(end - p));
+        if (!line_end) line_end = end;
+        else line_end++;
+
+        const char *line = p;
+        while (line < line_end && (*line == '\r' || *line == '\n')) line++;
+
+        if (line < line_end) {
+            const char *found = strcasestr(line, needle);
+            if (found == line) {
+                const char *v = line + strlen(needle);
+                while (v < line_end && (*v == ' ' || *v == '\t')) v++;
+                char *num_end = NULL;
+                errno = 0;
+                long long cl = strtoll(v, &num_end, 10);
+                if (errno == 0 && num_end && num_end > v && cl >= 0) return cl;
+            }
+        }
+        p = line_end;
+    }
+    return -1;
+}
+
+static int ensure_capacity(unsigned char **buf, size_t *cap, size_t needed) {
+    if (needed <= *cap) return 0;
+    size_t new_cap = *cap ? *cap : 8192;
+    while (new_cap < needed) new_cap *= 2;
+    unsigned char *new_buf = realloc(*buf, new_cap);
+    if (!new_buf) return -1;
+    *buf = new_buf;
+    *cap = new_cap;
+    return 0;
+}
+
+static int handle_one_request(int client_fd, const httpmigrate_payload_t *payload) {
+    unsigned char *buf = NULL;
+    size_t cap = 0;
+    size_t total = 0;
+    size_t body_bytes_read = 0;
+    long long content_length = 0;
+
+    ssize_t header_end = -1;
+    size_t header_sep_len = 0;
+
+    while (header_end < 0) {
+        if (ensure_capacity(&buf, &cap, total + 4096 + 1) != 0) goto out;
+        ssize_t n = read(client_fd, buf + total, cap - total - 1);
+        if (n <= 0) goto out;
+        total += (size_t)n;
+        buf[total] = '\0';
+
+        header_end = find_subseq(buf, total, "\r\n\r\n");
+        if (header_end >= 0) { header_sep_len = 4; break; }
+        header_end = find_subseq(buf, total, "\n\n");
+        if (header_end >= 0) { header_sep_len = 2; break; }
+    }
+
+    const size_t headers_len = (size_t)header_end + header_sep_len;
+    content_length = parse_content_length((const char *)buf, headers_len);
+    if (content_length < 0) content_length = 0;
+
+    size_t body_start = headers_len;
+    if (total > body_start) {
+        size_t already = total - body_start;
+        if (already > (size_t)content_length) already = (size_t)content_length;
+        body_bytes_read += already;
+    }
+
+    while (body_bytes_read < (size_t)content_length) {
+        unsigned char scratch[16384];
+        size_t want = (size_t)content_length - body_bytes_read;
+        if (want > sizeof(scratch)) want = sizeof(scratch);
+        ssize_t n = read(client_fd, scratch, want);
+        if (n <= 0) goto out;
+        body_bytes_read += (size_t)n;
+    }
+
+    const uint64_t top2 = bench2_rdtsc();
+    const uint64_t freq = bench2_cntfrq();
+    const uint64_t top1 = payload->top1_set ? payload->top1_rdtsc : 0;
+    const uint64_t cntfrq = payload->cntfrq ? payload->cntfrq : freq;
+    const uint64_t delta = (top2 > top1) ? (top2 - top1) : 0;
+    const uint64_t delta_ns = (cntfrq > 0) ? (uint64_t)(((long double)delta * 1000000000.0L) / (long double)cntfrq) : 0;
+
+    char json[512];
+    int json_len = snprintf(json, sizeof(json),
+        "{\"path\":\"prototype-http\",\"top1_rdtsc\":%" PRIu64 ",\"top2_rdtsc\":%" PRIu64
+        ",\"delta_cycles\":%" PRIu64 ",\"cntfrq\":%" PRIu64 ",\"delta_ns\":%" PRIu64
+        ",\"body_bytes_read\":%zu,\"content_length\":%lld}",
+        top1, top2, delta, cntfrq, delta_ns, body_bytes_read, content_length);
+
+    char resp[1024];
+    int resp_len = snprintf(resp, sizeof(resp),
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+        json_len, json);
+
+    write(client_fd, resp, (size_t)resp_len);
+    free(buf);
+    return 0;
+
+out:
+    if (buf) free(buf);
+    return -1;
+}
+
+int main(int argc, char **argv) {
+    (void)argc; (void)argv;
+    signal(SIGPIPE, SIG_IGN);
+
+    const char *socket_dir = getenv("HTTPMIGRATE_SOCKET_DIR");
+    if (!socket_dir || socket_dir[0] == '\0') socket_dir = "/run/httpmigrate";
+
+    const char *function_name = getenv("HTTPMIGRATE_FUNCTION_NAME");
+    if (!function_name || function_name[0] == '\0') function_name = "timing-fn";
+
+    char sock_path[256];
+    snprintf(sock_path, sizeof(sock_path), "%s/%s.sock", socket_dir, function_name);
+
+    umask(0);
+    if (mkdir(socket_dir, 0777) != 0 && errno != EEXIST) {
+        fprintf(stderr, "[http-worker] error: mkdir(%s) failed: %s\n", socket_dir, strerror(errno));
+    } else {
+        (void)chmod(socket_dir, 0777);
+    }
+
+    int listen_fd = unix_server_socket(sock_path, 4096);
+    if (listen_fd < 0) return 1;
+    (void)chmod(sock_path, 0777);
+
+    fprintf(stderr, "[http-worker] listening on %s (Zero-Copy HTTP mode)\n", sock_path);
+
+    for (;;) {
+        int conn_fd = unix_accept(listen_fd);
+        if (conn_fd < 0) continue;
+
+        httpmigrate_payload_t payload;
+        memset(&payload, 0, sizeof(payload));
+        int client_fd = -1;
+
+        if (recvfd_with_state(conn_fd, &client_fd, &payload, sizeof(payload)) != 0) {
+            close(conn_fd);
+            continue;
+        }
+        close(conn_fd);
+
+        if (client_fd >= 0) {
+            if (payload.magic == HTTPMIGRATE_MAGIC && payload.version == HTTPMIGRATE_VERSION) {
+                (void)handle_one_request(client_fd, &payload);
+            } else {
+                fprintf(stderr, "[http-worker] bad payload magic: 0x%08x\n", payload.magic);
+            }
+            close(client_fd);
+        }
+    }
+    return 0;
+}
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/README.md =====
+# micro-bench2-initial-http — Scenario A with HTTP top1/top2
+
+This benchmark is the plain-HTTP version of `micro-bench2-initale-time`.
+
+It keeps the same benchmark contract:
+
+- one new connection per request
+- `Connection: close`
+- `top1_rdtsc`, `top2_rdtsc`, `delta_cycles`, `cntfrq`, `delta_ns`
+- `top2` stamped only after the target function or worker has fully consumed the request body
+
+The difference is the transport:
+
+- vanilla uses a patched faasd gateway that accepts plain HTTP directly on `:8082`
+- prototype uses a patched faasd gateway that accepts plain HTTP on `:8083`, does `MSG_PEEK`, then migrates the accepted socket to the function container with `sendfd`
+- no wolfSSL and no `libtlspeek` are used in this benchmark
+
+Vanilla and prototype are still meant to be run one after the other, not at the same time.
+
+## 1. What is measured
+
+Condition:
+
+- one new HTTP connection per request
+- `Connection: close`
+- same Raspberry Pi machine for gateway/provider/function, so the architectural counter is shared
+
+Measured fields:
+
+- `top1_rdtsc`: benchmark start stamp
+- `top2_rdtsc`: benchmark stop stamp
+- `delta_cycles`: `top2_rdtsc - top1_rdtsc`
+- `cntfrq`: architectural counter frequency used to convert cycles to time
+- `delta_ns`: nanosecond conversion of `delta_cycles`
+- `client_rtt_ns`: end-to-end client-side request time
+
+Start and stop points:
+
+- vanilla:
+  - `top1`: request bytes are already in the gateway kernel receive buffer and the benchmark HTTP listener is just about to do the first real consuming read before forwarding into the normal faasd HTTP path
+  - `top2`: the vanilla function container has fully consumed the forwarded HTTP request body
+- prototype:
+  - `top1`: request bytes are already in the gateway kernel receive buffer and the patched gateway is just about to do `MSG_PEEK`
+  - the gateway peeks only enough request data to identify `/function/<name>` without consuming the socket
+  - `top2`: the prototype worker has fully consumed the HTTP request body directly from the migrated client socket
+
+## 2. Pipelines under test
+
+### Vanilla
+
+Path:
+
+`client (HTTP)` -> `patched faasd gateway :8082` -> `normal faasd HTTP forwarding on :8080` -> `timing-fn (HTTP, C container)`
+
+Key points:
+
+- faasd still handles normal HTTP forwarding
+- the benchmark listener stamps `top1` before the first consuming read
+- the benchmark listener injects `X-Bench2-Top1-Rdtsc` and `X-Bench2-Cntfrq`
+- the function container stamps `top2` after the full body read
+
+### Prototype
+
+Path:
+
+`client (HTTP)` -> `patched faasd gateway :8083` -> `MSG_PEEK` -> `sendfd(SCM_RIGHTS)` -> `timing-fn worker (C container, direct socket I/O)`
+
+Key points:
+
+- the gateway waits until the socket is readable
+- `top1` is stamped immediately before `MSG_PEEK`
+- the gateway routes by parsing `/function/<name>` from the peeked request line
+- the worker performs the first consuming read on the original client socket
+
+## 3. Files involved
+
+Main benchmark files:
+
+- `benchmarks/micro/micro-bench2-initial-http/client/run_payload_sweep.py`
+- `benchmarks/micro/micro-bench2-initial-http/function/timing_fn/timing_fn.c`
+- `benchmarks/micro/micro-bench2-initial-http/proto_function/timing-fn/timing_fn_worker.c`
+- `benchmarks/micro/micro-bench2-initial-http/common/bench2_rdtsc.h`
+
+Gateway and mode-switch helpers:
+
+- `benchmarks/micro/micro-bench2-initial-http/proto_gateway/`
+- `benchmarks/micro/micro-bench2-initial-http/scripts/build_copy_enable_vanilla_gateway.sh`
+- `benchmarks/micro/micro-bench2-initial-http/scripts/pi_enable_vanilla_gateway.sh`
+- `benchmarks/micro/micro-bench2-initial-http/scripts/build_copy_enable_proto_gateway.sh`
+- `benchmarks/micro/micro-bench2-initial-http/scripts/pi_enable_proto_gateway.sh`
+- `benchmarks/micro/micro-bench2-initial-http/scripts/pi_restore_vanilla_gateway.sh`
+
+## 4. Quick re-run — Vanilla HTTP
+
+```bash
+export PI_IP=192.168.2.2
+export PI_SSH=romero@${PI_IP}
+
+cd ~/Prototype_sendfd
+
+bash benchmarks/micro/micro-bench2-initial-http/scripts/prepare_vanilla_stack.sh
+
+curl -sS http://${PI_IP}:8082/function/timing-fn
+
+python3 benchmarks/micro/micro-bench2-initial-http/client/run_payload_sweep.py \
+  --host ${PI_IP} \
+  --port 8082 \
+  --out benchmarks/micro/micro-bench2-initial-http/results/vanilla_http.csv \
+  --requests 50
+```
+
+## 5. Quick re-run — Prototype HTTP
+
+```bash
+export PI_IP=192.168.2.2
+export PI_SSH=romero@${PI_IP}
+
+cd ~/Prototype_sendfd
+
+bash benchmarks/micro/micro-bench2-initial-http/scripts/prepare_proto_stack.sh
+
+curl -sS http://${PI_IP}:8083/function/timing-fn
+
+python3 benchmarks/micro/micro-bench2-initial-http/client/run_payload_sweep.py \
+  --host ${PI_IP} \
+  --port 8083 \
+  --out benchmarks/micro/micro-bench2-initial-http/results/proto_http.csv \
+  --requests 50
+```
+
+## 6. Notes
+
+- `:8080` remains the normal faasd management and forwarding endpoint
+- `:8082` is the vanilla benchmark entrypoint
+- `:8083` is the prototype benchmark entrypoint
+- both listeners are implemented inside the same custom gateway image, and the Pi-side mode-switch scripts decide which benchmark mode is active
+
+
+
+===== FILE: benchmarks/micro/micro-bench2-initial-http/function/timing_fn/timing_fn.c =====
+#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE
+
+#include <errno.h>
+#include <inttypes.h>
+#include <netdb.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+#include "../../common/bench2_rdtsc.h"
+
+static long long parse_header_int64(const char *hdr, size_t hdr_len, const char *needle)
+{
+    size_t needle_len = strlen(needle);
+    const char *p = hdr;
+    const char *end = hdr + hdr_len;
+
+    while (p < end) {
+        const char *nl = memchr(p, '\n', (size_t)(end - p));
+        size_t line_len = nl ? (size_t)(nl - p) : (size_t)(end - p);
+
+        if (line_len >= needle_len) {
+            int match = 1;
+
+            for (size_t k = 0; k < needle_len && match; k++) {
+                char c = p[k];
+                if (c >= 'A' && c <= 'Z') {
+                    c = (char)(c - 'A' + 'a');
+                }
+                match = (c == needle[k]);
+            }
+
+            if (match) {
+                const char *v = p + needle_len;
+                while (v < end && (*v == ' ' || *v == '\t')) {
+                    v++;
+                }
+
+                char *endp = NULL;
+                long long value = strtoll(v, &endp, 10);
+                if (endp && endp > v) {
+                    return value;
+                }
+            }
+        }
+
+        p = nl ? nl + 1 : end;
+    }
+
+    return -1;
+}
+
+static int header_has_token(const char *hdr, size_t hdr_len,
+                            const char *header_name, const char *token)
+{
+    const char *p = hdr;
+    const char *end = hdr + hdr_len;
+    size_t header_name_len = strlen(header_name);
+    size_t token_len = strlen(token);
+
+    while (p < end) {
+        const char *nl = memchr(p, '\n', (size_t)(end - p));
+        const char *line_end = nl ? (nl + 1) : end;
+        const char *line = p;
+
+        while (line < line_end && (*line == '\r' || *line == '\n')) {
+            line++;
+        }
+
+        if ((size_t)(line_end - line) >= header_name_len &&
+            strncasecmp(line, header_name, header_name_len) == 0) {
+            const char *value = line + header_name_len;
+            while (value < line_end && (*value == ' ' || *value == '\t')) {
+                value++;
+            }
+
+            for (const char *cursor = value; cursor + token_len <= line_end; cursor++) {
+                if (strncasecmp(cursor, token, token_len) == 0) {
+                    return 1;
+                }
+            }
+        }
+
+        p = line_end;
+    }
+
+    return 0;
+}
+
+static int ensure_capacity(char **buf, size_t *cap, size_t needed)
+{
+    if (needed <= *cap) {
+        return 0;
+    }
+
+    size_t new_cap = *cap ? *cap : 8192;
+    while (new_cap < needed) {
+        if (new_cap > ((size_t)-1) / 2) {
+            return -1;
+        }
+        new_cap *= 2;
+    }
+
+    char *new_buf = realloc(*buf, new_cap);
+    if (!new_buf) {
+        return -1;
+    }
+
+    *buf = new_buf;
+    *cap = new_cap;
+    return 0;
+}
+
+static int read_more(int fd, char **buf, size_t *len, size_t *cap)
+{
+    if (ensure_capacity(buf, cap, *len + 4096 + 1) != 0) {
+        return -1;
+    }
+
+    for (;;) {
+        ssize_t n = read(fd, *buf + *len, *cap - *len - 1);
+        if (n < 0 && errno == EINTR) {
+            continue;
+        }
+        if (n <= 0) {
+            return -1;
+        }
+
+        *len += (size_t)n;
+        (*buf)[*len] = '\0';
+        return 0;
+    }
+}
+
+static ssize_t find_subseq(const char *buf, size_t len, const char *needle)
+{
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0 || len < needle_len) {
+        return -1;
+    }
+
+    for (size_t i = 0; i + needle_len <= len; i++) {
+        if (memcmp(buf + i, needle, needle_len) == 0) {
+            return (ssize_t)i;
+        }
+    }
+
+    return -1;
+}
+
+static ssize_t find_line_end(const char *buf, size_t start, size_t len, size_t *eol_len_out)
+{
+    for (size_t i = start; i < len; i++) {
+        if (buf[i] == '\n') {
+            if (i > start && buf[i - 1] == '\r') {
+                *eol_len_out = 2;
+                return (ssize_t)(i - 1);
+            }
+            *eol_len_out = 1;
+            return (ssize_t)i;
+        }
+    }
+
+    return -1;
+}
+
+static int consume_chunked_body(int fd, char **buf, size_t *len, size_t *cap,
+                                size_t cursor, size_t *body_bytes_read_out)
+{
+    size_t body_bytes_read = 0;
+
+    for (;;) {
+        size_t eol_len = 0;
+        ssize_t line_end = -1;
+        while ((line_end = find_line_end(*buf, cursor, *len, &eol_len)) < 0) {
+            if (read_more(fd, buf, len, cap) != 0) {
+                return -1;
+            }
+        }
+
+        size_t line_len = (size_t)line_end - cursor;
+        if (line_len >= 64) {
+            return -1;
+        }
+
+        char line[64];
+        memcpy(line, *buf + cursor, line_len);
+        line[line_len] = '\0';
+
+        char *semi = strchr(line, ';');
+        if (semi) {
+            *semi = '\0';
+        }
+
+        errno = 0;
+        char *num_end = NULL;
+        unsigned long chunk_size = strtoul(line, &num_end, 16);
+        if (errno != 0 || !num_end || num_end == line) {
+            return -1;
+        }
+
+        cursor = (size_t)line_end + eol_len;
+
+        if (chunk_size == 0) {
+            for (;;) {
+                while ((line_end = find_line_end(*buf, cursor, *len, &eol_len)) < 0) {
+                    if (read_more(fd, buf, len, cap) != 0) {
+                        return -1;
+                    }
+                }
+
+                line_len = (size_t)line_end - cursor;
+                cursor = (size_t)line_end + eol_len;
+                if (line_len == 0) {
+                    *body_bytes_read_out = body_bytes_read;
+                    return 0;
+                }
+            }
+        }
+
+        while (*len - cursor < chunk_size + 1) {
+            if (read_more(fd, buf, len, cap) != 0) {
+                return -1;
+            }
+        }
+
+        body_bytes_read += (size_t)chunk_size;
+        cursor += (size_t)chunk_size;
+
+        if (*len - cursor >= 2 && (*buf)[cursor] == '\r' && (*buf)[cursor + 1] == '\n') {
+            cursor += 2;
+        } else if (*len - cursor >= 1 && (*buf)[cursor] == '\n') {
+            cursor += 1;
+        } else {
+            while (*len - cursor < 2) {
+                if (read_more(fd, buf, len, cap) != 0) {
+                    return -1;
+                }
+            }
+
+            if ((*buf)[cursor] == '\r' && (*buf)[cursor + 1] == '\n') {
+                cursor += 2;
+            } else if ((*buf)[cursor] == '\n') {
+                cursor += 1;
+            } else {
+                return -1;
+            }
+        }
+    }
+}
+
+static int write_all(int fd, const void *buf, size_t len)
+{
+    const uint8_t *p = (const uint8_t *)buf;
+
+    while (len > 0) {
+        ssize_t n = write(fd, p, len);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+
+        p += (size_t)n;
+        len -= (size_t)n;
+    }
+
+    return 0;
+}
+
+static void handle_connection(int conn_fd, const char *worker_name)
+{
+    uint64_t request_no = 0;
+
+    for (;;) {
+        request_no++;
+
+        size_t cap = 65536;
+        size_t len = 0;
+        char *buf = malloc(cap);
+        if (!buf) {
+            break;
+        }
+
+        ssize_t hdr_end = -1;
+        size_t hdr_sep_len = 0;
+        while (hdr_end < 0) {
+            if (len >= 1024 * 1024) {
+                free(buf);
+                goto done;
+            }
+
+            if (read_more(conn_fd, &buf, &len, &cap) != 0) {
+                free(buf);
+                goto done;
+            }
+
+            hdr_end = find_subseq(buf, len, "\r\n\r\n");
+            if (hdr_end >= 0) {
+                hdr_sep_len = 4;
+                break;
+            }
+
+            hdr_end = find_subseq(buf, len, "\n\n");
+            if (hdr_end >= 0) {
+                hdr_sep_len = 2;
+                break;
+            }
+        }
+
+        size_t hdr_bytes = (size_t)hdr_end + hdr_sep_len;
+        long long top1_ll = parse_header_int64(buf, hdr_bytes, "x-bench2-top1-rdtsc:");
+        long long cntfrq_ll = parse_header_int64(buf, hdr_bytes, "x-bench2-cntfrq:");
+        long long cl = parse_header_int64(buf, hdr_bytes, "content-length:");
+        if (cl < 0) {
+            cl = 0;
+        }
+        int is_chunked = header_has_token(buf, hdr_bytes, "transfer-encoding:", "chunked");
+
+        int should_close = 0;
+        {
+            const char *p = buf;
+            const char *end = buf + hdr_bytes;
+
+            while (p < end) {
+                const char *nl = memchr(p, '\n', (size_t)(end - p));
+                size_t line_len = nl ? (size_t)(nl - p) : (size_t)(end - p);
+                const char key[] = "connection:";
+
+                if (line_len >= sizeof(key) - 1) {
+                    int match = 1;
+                    for (size_t k = 0; k < sizeof(key) - 1 && match; k++) {
+                        char c = p[k];
+                        if (c >= 'A' && c <= 'Z') {
+                            c = (char)(c - 'A' + 'a');
+                        }
+                        match = (c == key[k]);
+                    }
+
+                    if (match) {
+                        const char *v = p + sizeof(key) - 1;
+                        const char *ve = nl ? nl : end;
+                        while (v + 4 < ve) {
+                            if ((v[0] == 'c' || v[0] == 'C') &&
+                                (v[1] == 'l' || v[1] == 'L') &&
+                                (v[2] == 'o' || v[2] == 'O') &&
+                                (v[3] == 's' || v[3] == 'S') &&
+                                (v[4] == 'e' || v[4] == 'E')) {
+                                should_close = 1;
+                                break;
+                            }
+                            v++;
+                        }
+                    }
+                }
+
+                p = nl ? nl + 1 : end;
+            }
+        }
+
+        size_t body_in = 0;
+        if (is_chunked) {
+            if (consume_chunked_body(conn_fd, &buf, &len, &cap, hdr_bytes, &body_in) != 0) {
+                free(buf);
+                goto done;
+            }
+        } else {
+            size_t body_need = (size_t)cl;
+            body_in = (len > hdr_bytes) ? (len - hdr_bytes) : 0;
+            if (body_in > body_need) {
+                body_in = body_need;
+            }
+
+            while (body_in < body_need) {
+                char scratch[8192];
+                size_t want = body_need - body_in;
+                if (want > sizeof(scratch)) {
+                    want = sizeof(scratch);
+                }
+
+                ssize_t n = read(conn_fd, scratch, want);
+                if (n < 0 && errno == EINTR) {
+                    continue;
+                }
+                if (n <= 0) {
+                    free(buf);
+                    goto done;
+                }
+                body_in += (size_t)n;
+            }
+        }
+
+        uint64_t top2 = bench2_rdtsc();
+        free(buf);
+        uint64_t freq = bench2_cntfrq();
+        uint64_t top1 = (top1_ll > 0) ? (uint64_t)top1_ll : 0;
+        uint64_t cntfrq = (cntfrq_ll > 0) ? (uint64_t)cntfrq_ll : freq;
+        uint64_t delta = (top2 > top1) ? (top2 - top1) : 0;
+        uint64_t delta_ns = (cntfrq > 0) ? (uint64_t)(((long double)delta * 1000000000.0L) / (long double)cntfrq) : 0;
+
+        char json[640];
+        int jlen = snprintf(
+            json,
+            sizeof(json),
+            "{\"worker\":\"%s\",\"request_no\":%" PRIu64
+            ",\"path\":\"vanilla\""
+            ",\"top1_rdtsc\":%" PRIu64
+            ",\"top2_rdtsc\":%" PRIu64
+            ",\"delta_cycles\":%" PRIu64
+            ",\"cntfrq\":%" PRIu64
+            ",\"delta_ns\":%" PRIu64
+            ",\"body_bytes_read\":%zu"
+            ",\"content_length\":%lld}\n",
+            worker_name,
+            request_no,
+            top1,
+            top2,
+            delta,
+            cntfrq,
+            delta_ns,
+            body_in,
+            cl);
+        if (jlen <= 0 || (size_t)jlen >= sizeof(json)) {
+            goto done;
+        }
+
+        char resp[896];
+        int rlen = snprintf(
+            resp,
+            sizeof(resp),
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: %s\r\n"
+            "\r\n"
+            "%s",
+            jlen,
+            should_close ? "close" : "keep-alive",
+            json);
+        if (rlen <= 0 || (size_t)rlen >= sizeof(resp)) {
+            goto done;
+        }
+
+        if (write_all(conn_fd, resp, (size_t)rlen) != 0) {
+            goto done;
+        }
+
+        if (should_close) {
+            break;
+        }
+    }
+
+done:
+    close(conn_fd);
+}
+
+int main(void)
+{
+    const char *worker_name = getenv("BENCH2_WORKER_NAME");
+    if (!worker_name || worker_name[0] == '\0') {
+        worker_name = "bench2-init-fn";
+    }
+
+    const char *port_str = getenv("BENCH2_LISTEN_PORT");
+    if (!port_str || port_str[0] == '\0') {
+        port_str = "8080";
+    }
+
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
+
+    struct addrinfo hints = {0};
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_flags = AI_PASSIVE;
+
+    struct addrinfo *res = NULL;
+    if (getaddrinfo(NULL, port_str, &hints, &res) != 0) {
+        fprintf(stderr, "[bench2-init-fn] getaddrinfo failed\n");
+        return 1;
+    }
+
+    int listen_fd = -1;
+    for (struct addrinfo *it = res; it; it = it->ai_next) {
+        listen_fd = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        if (listen_fd < 0) {
+            continue;
+        }
+
+        int one = 1;
+        setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+        if (bind(listen_fd, it->ai_addr, it->ai_addrlen) == 0 && listen(listen_fd, 128) == 0) {
+            break;
+        }
+
+        close(listen_fd);
+        listen_fd = -1;
+    }
+    freeaddrinfo(res);
+
+    if (listen_fd < 0) {
+        fprintf(stderr, "[bench2-init-fn] bind/listen failed on port %s\n", port_str);
+        return 1;
+    }
+
+    fprintf(stderr, "[bench2-init-fn] listening on :%s\n", port_str);
+
+    for (;;) {
+        int conn_fd = accept(listen_fd, NULL, NULL);
+        if (conn_fd < 0) {
+            continue;
+        }
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            close(conn_fd);
+            continue;
+        }
+        if (pid == 0) {
+            close(listen_fd);
+            handle_connection(conn_fd, worker_name);
+            _exit(0);
+        }
+
+        close(conn_fd);
+    }
+}
+
+
