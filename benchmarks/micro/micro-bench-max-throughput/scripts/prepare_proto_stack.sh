@@ -28,29 +28,6 @@ bash "${SCRIPT_DIR}/build_push_deploy_proto_worker.sh"
 echo "[prepare] deploying and enabling prototype gateway"
 ENABLE_ON_PI=1 bash "${SCRIPT_DIR}/build_deploy_proto_gw.sh"
 
-# Wait for the proto gateway to be ready on port 9444 (test function endpoint, not /healthz)
-echo "[prepare] waiting for proto gateway to be ready on port 9444..."
-MAX_WAIT=60
-ELAPSED=0
-while [[ ${ELAPSED} -lt ${MAX_WAIT} ]]; do
-    # Test actual function endpoint instead of /healthz (proto gateway doesn't have /healthz)
-    if curl -sk --max-time 3 "https://${PI_HOST}:9444/function/${SMOKE_FN}" -X POST \
-        --data-binary "test" >/dev/null 2>&1; then
-        echo "[prepare] proto gateway is responding on port 9444"
-        break
-    fi
-    ELAPSED=$((ELAPSED + 3))
-    if [[ ${ELAPSED} -lt ${MAX_WAIT} ]]; then
-        echo "[prepare] gateway not ready yet... retrying in 3s (${ELAPSED}/${MAX_WAIT}s)"
-        sleep 3
-    fi
-done
-
-if [[ ${ELAPSED} -ge ${MAX_WAIT} ]]; then
-    echo "[error] timeout waiting for proto gateway on port 9444"
-    exit 1
-fi
-
 echo "[prepare] smoke-testing https://${PI_HOST}:9444/function/${SMOKE_FN}"
 "${PYTHON_BIN}" "${CLIENT_DIR}/simple_test.py" \
     --host "${PI_HOST}" \

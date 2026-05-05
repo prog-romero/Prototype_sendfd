@@ -27,7 +27,7 @@
 #define TLSPEEK_KEY_SIZE      32           /* AES-256 key size           */
 #define TLSPEEK_IV_SIZE       12           /* GCM / ChaCha20 nonce size  */
 #define TLSPEEK_TAG_SIZE      16           /* GCM / Poly1305 auth tag    */
-#define TLSPEEK_MAX_RECORD    16384        /* Max TLS record payload      */
+#define TLSPEEK_MAX_RECORD    16640        /* TLS 1.3 max app-data payload (2^14 + 256) */
 #define TLSPEEK_HEADER_SIZE   5            /* TLS record header size      */
 
 /* ─── Cipher suite identifiers (TLS 1.3 IANA values) ────────────────────── */
