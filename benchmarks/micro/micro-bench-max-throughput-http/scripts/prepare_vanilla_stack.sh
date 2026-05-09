@@ -4,7 +4,7 @@
 # The vanilla gateway routes by /function/<name> — no relay needed.
 set -euo pipefail
 
-BENCH="micro-bench3-keepalive-http"
+BENCH="micro-bench-max-throughput-http"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 PI_SSH="${PI_SSH:-romero@192.168.2.2}"
 PI_SUDO_PASSWORD="${PI_SUDO_PASSWORD:-tchiaze2003}"
@@ -32,7 +32,14 @@ docker buildx build \
   "${ROOT_DIR}"
 
 echo ""
-echo "=== [bench3-ka-vanilla] 2. Deploying timing-fn-a and timing-fn-b ==="
+echo "=== [bench3-ka-vanilla] 2. Enabling vanilla benchmark gateway listener ==="
+PI_SSH="$PI_SSH" \
+PI_SUDO_PASSWORD="$PI_SUDO_PASSWORD" \
+BUILDER_NAME="$BUILDER_NAME" \
+bash "${ROOT_DIR}/benchmarks/micro/${BENCH}/scripts/build_copy_enable_vanilla_gateway.sh"
+
+echo ""
+echo "=== [bench3-ka-vanilla] 3. Deploying timing-fn-a and timing-fn-b ==="
 ssh "${PI_SSH}" "
 export OPENFAAS_URL='${OPENFAAS_URL}'
 
@@ -52,13 +59,6 @@ faas-cli deploy \
   --gateway \"\$OPENFAAS_URL\" \
   --env BENCH2_WORKER_NAME=timing-fn-b
 "
-
-echo ""
-echo "=== [bench3-ka-vanilla] 3. Enabling vanilla benchmark gateway listener ==="
-PI_SSH="$PI_SSH" \
-PI_SUDO_PASSWORD="$PI_SUDO_PASSWORD" \
-BUILDER_NAME="$BUILDER_NAME" \
-bash "${ROOT_DIR}/benchmarks/micro/${BENCH}/scripts/build_copy_enable_vanilla_gateway.sh"
 
 echo ""
 echo "=== [bench3-ka-vanilla] 4. End-to-end tests ==="

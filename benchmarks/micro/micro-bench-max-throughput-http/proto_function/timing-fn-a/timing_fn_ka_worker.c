@@ -1,11 +1,11 @@
 /*
  * timing_fn_ka_worker.c — Keep-Alive HTTP prototype worker
+ * Function A: computes the SUM of two numbers from the request body.
  *
  * Receives an HTTP connection FD from the gateway via Unix socket.
  * Serves requests in a keep-alive loop:
  *   - If the next request targets THIS function → serve it, loop
- *   - If the next request targets ANOTHER function → relay FD back to
- *     the gateway relay socket with top1 timing and target_function set
+ *   - If the next request targets ANOTHER function → relay FD back to the gateway
  *
  * Environment variables:
  *   HTTPMIGRATE_KA_FUNCTION_NAME   this function's name (e.g. "timing-fn-a")
@@ -17,34 +17,28 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include "sendfd.h"
 #include "unix_socket.h"
-#include "bench2_rdtsc.h"
 
 /* ── Payload (must match gateway) ───────────────────────────────────────── */
 
-#define HTTPMIGRATE_MAGIC   0x484D4B41U   /* 'HMKA' */
-#define HTTPMIGRATE_VERSION 2U
+#define HTTPMIGRATE_MAGIC      0x484D4B41U   /* 'HMKA' */
+#define HTTPMIGRATE_VERSION    2U
 #define HTTPMIGRATE_TARGET_LEN 128
 
 typedef struct {
     uint32_t magic;
     uint32_t version;
-    uint64_t top1_rdtsc;
-    uint64_t cntfrq;
-    uint8_t  top1_set;
-    uint8_t  _pad[7];
     char     target_function[HTTPMIGRATE_TARGET_LEN];
 } httpmigrate_ka_payload_t;
 
@@ -114,197 +108,316 @@ static bool parse_request_owner(const unsigned char *buf, size_t len,
     return true;
 }
 
-/* Wait until TCP fd has incoming data (or peer closes). Returns 1=data, 0=closed, -1=error */
-static int wait_readable(int fd) {
-    struct pollfd pfd;
-    memset(&pfd, 0, sizeof(pfd));
-    pfd.fd = fd;
-    pfd.events = POLLIN | POLLHUP | POLLERR;
-#ifdef POLLRDHUP
-    pfd.events |= POLLRDHUP;
-#endif
+/* ── Session state machine ──────────────────────────────────────────────── */
+
+typedef enum {
+    S_READ_HEADERS,  /* accumulate request until \r\n\r\n                 */
+    S_READ_BODY,     /* drain remaining body bytes                        */
+    S_WRITE_RESP,    /* flush HTTP response                               */
+    S_PEEK_OWNER,    /* peek next request; relay fd if wrong owner        */
+} sess_state_t;
+
+typedef struct session {
+    int          fd;
+    uint64_t     req_no;
+    sess_state_t state;
+    /* read accumulation buffer */
+    unsigned char *buf;
+    size_t         cap;
+    size_t         len;
+    /* header-parsing results */
+    ssize_t    hdr_end;
+    size_t     hdr_sep;
+    long long  content_length;
+    size_t     body_in;
+    int        should_close;
+    double     a, b;
+    /* response write buffer */
+    char   resp[768];
+    size_t resp_len;
+    size_t resp_off;
+} session_t;
+
+/* ── Global epoll + session table ───────────────────────────────────────── */
+
+#define MAX_FD            65536
+#define WORKER_MAX_EVENTS 64
+
+static int        s_epoll_fd        = -1;
+static session_t *s_sessions[MAX_FD];   /* NULL = unused */
+
+/* ── Low-level helpers ───────────────────────────────────────────────────── */
+
+static int set_nonblocking(int fd) {
+    int f = fcntl(fd, F_GETFL, 0);
+    if (f < 0) return -1;
+    return fcntl(fd, F_SETFL, f | O_NONBLOCK);
+}
+
+static int epoll_add(int fd, uint32_t events) {
+    struct epoll_event ev = { .events = events, .data.fd = fd };
+    return epoll_ctl(s_epoll_fd, EPOLL_CTL_ADD, fd, &ev);
+}
+
+static int epoll_mod(int fd, uint32_t events) {
+    struct epoll_event ev = { .events = events, .data.fd = fd };
+    return epoll_ctl(s_epoll_fd, EPOLL_CTL_MOD, fd, &ev);
+}
+
+/* ── Session lifecycle ───────────────────────────────────────────────────── */
+
+static void session_close(session_t *s) {
+    if (!s) return;
+    if (s->fd >= 0 && s->fd < MAX_FD) s_sessions[s->fd] = NULL;
+    epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, s->fd, NULL);
+    close(s->fd);
+    free(s->buf);
+    free(s);
+}
+
+static session_t *session_new(int fd) {
+    if (fd < 0 || fd >= MAX_FD) { close(fd); return NULL; }
+    session_t *s = calloc(1, sizeof(*s));
+    if (!s) { close(fd); return NULL; }
+    s->fd      = fd;
+    s->req_no  = 1;
+    s->state   = S_READ_HEADERS;
+    s->hdr_end = -1;
+    s->a       = 1.0;
+    s->b       = 2.0;
+    s_sessions[fd] = s;
+    return s;
+}
+
+static void session_reset_for_next(session_t *s) {
+    s->len            = 0;
+    s->hdr_end        = -1;
+    s->hdr_sep        = 0;
+    s->content_length = 0;
+    s->body_in        = 0;
+    s->should_close   = 0;
+    s->a              = 1.0;
+    s->b              = 2.0;
+    s->resp_len       = 0;
+    s->resp_off       = 0;
+    s->req_no++;
+    s->state          = S_PEEK_OWNER;
+}
+
+/* ── UDS handoff: drain all pending FD deliveries from the gateway ───────── */
+
+static void handle_listen_fd(int listen_fd) {
     for (;;) {
-        int rc = poll(&pfd, 1, -1);
-        if (rc < 0) {
-            if (errno == EINTR) continue;
-            return -1;
+        int conn_fd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
+        if (conn_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            break;
         }
-        int avail = 0;
-        if (ioctl(fd, FIONREAD, &avail) == 0 && avail > 0) return 1;
-        if (pfd.revents & (POLLHUP | POLLERR
-#ifdef POLLRDHUP
-                           | POLLRDHUP
-#endif
-                          )) return 0;
-        /* Peek 1 byte to distinguish data vs close */
-        unsigned char byte;
-        ssize_t n = recv(fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT);
-        if (n > 0) return 1;
-        if (n == 0) return 0;
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) continue;
-        return -1;
+        httpmigrate_ka_payload_t payload;
+        memset(&payload, 0, sizeof(payload));
+        int client_fd = -1;
+        /* recvfd_with_state is blocking but completes in microseconds on UDS */
+        if (recvfd_with_state(conn_fd, &client_fd, &payload, sizeof(payload)) != 0) {
+            close(conn_fd);
+            continue;
+        }
+        close(conn_fd);
+        if (client_fd < 0) continue;
+        if (payload.magic != HTTPMIGRATE_MAGIC ||
+            payload.version != HTTPMIGRATE_VERSION) {
+            fprintf(stderr, "[ka-worker] bad magic 0x%08x — dropping fd\n",
+                    payload.magic);
+            close(client_fd);
+            continue;
+        }
+        if (set_nonblocking(client_fd) < 0) {
+            perror("[ka-worker] set_nonblocking");
+            close(client_fd);
+            continue;
+        }
+        session_t *s = session_new(client_fd);
+        if (!s) continue;  /* session_new closes client_fd on failure */
+        if (epoll_add(client_fd, EPOLLIN) < 0) {
+            perror("[ka-worker] epoll_add client_fd");
+            s_sessions[client_fd] = NULL;
+            free(s);
+            close(client_fd);
+        }
     }
 }
 
-/* ── Session loop ────────────────────────────────────────────────────────── */
+/* ── Per-session non-blocking state machine ─────────────────────────────── */
 
-static void process_session(int client_fd,
-                            httpmigrate_ka_payload_t *payload,
-                            const char *function_name,
+static void advance_session(session_t *s,
+                            const char *fn_name,
                             const char *relay_socket)
 {
-    uint64_t req_no = 0;
-    bool first_request = true;
+    int again;
+    do {
+        again = 0;
+        switch (s->state) {
 
-    /* Buffer for reading requests */
-    unsigned char *buf = NULL;
-    size_t cap = 0;
-
-    for (;;) {
-        req_no++;
-
-        uint64_t top1, cntfrq_stamp;
-
-        if (first_request && payload->top1_set) {
-            /* top1 was stamped at the gateway before the peek */
-            top1         = payload->top1_rdtsc;
-            cntfrq_stamp = payload->cntfrq;
-            first_request = false;
-        } else {
-            /* Wait for next request on the persistent connection */
-            int wrc = wait_readable(client_fd);
-            if (wrc <= 0) goto done; /* peer closed or error */
-
-            /* Stamp top1 before peek */
-            top1         = bench2_rdtsc();
-            cntfrq_stamp = bench2_cntfrq();
-
-            /* Peek request line to determine owner */
+        /* ── Peek next request; relay if wrong owner ──── */
+        case S_PEEK_OWNER: {
             unsigned char peek_buf[1024];
-            ssize_t pn = recv(client_fd, peek_buf, sizeof(peek_buf) - 1, MSG_PEEK);
-            if (pn <= 0) goto done;
+            ssize_t pn = recv(s->fd, peek_buf, sizeof(peek_buf) - 1,
+                              MSG_PEEK | MSG_DONTWAIT);
+            if (pn == 0) { session_close(s); return; }
+            if (pn < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+                session_close(s); return;
+            }
             peek_buf[pn] = '\0';
-
             char owner[HTTPMIGRATE_TARGET_LEN];
             if (!parse_request_owner(peek_buf, (size_t)pn, owner, sizeof(owner))) {
-                /* Cannot parse owner — close connection */
-                goto done;
+                session_close(s); return;
             }
-
-            if (strcmp(owner, function_name) != 0) {
-                /*
-                 * Sub-case B: wrong owner.
-                 * Relay the FD + top1 + target back to the gateway.
-                 */
-                httpmigrate_ka_payload_t relay_payload;
-                memset(&relay_payload, 0, sizeof(relay_payload));
-                relay_payload.magic      = HTTPMIGRATE_MAGIC;
-                relay_payload.version    = HTTPMIGRATE_VERSION;
-                relay_payload.top1_rdtsc = top1;
-                relay_payload.cntfrq     = cntfrq_stamp;
-                relay_payload.top1_set   = 1;
-                snprintf(relay_payload.target_function,
-                         sizeof(relay_payload.target_function), "%s", owner);
-
+            if (strcmp(owner, fn_name) != 0) {
+                /* wrong owner — relay fd to gateway, free this session */
+                httpmigrate_ka_payload_t rp;
+                memset(&rp, 0, sizeof(rp));
+                rp.magic   = HTTPMIGRATE_MAGIC;
+                rp.version = HTTPMIGRATE_VERSION;
+                snprintf(rp.target_function, sizeof(rp.target_function),
+                         "%s", owner);
+                /* de-register before sendfd_with_state (which closes our fd) */
+                int fd_to_relay = s->fd;
+                s_sessions[fd_to_relay] = NULL;
+                epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, fd_to_relay, NULL);
+                free(s->buf);
+                free(s);
                 int relay_fd = unix_client_connect(relay_socket);
                 if (relay_fd >= 0) {
-                    sendfd_with_state(relay_fd, client_fd, &relay_payload, sizeof(relay_payload));
+                    sendfd_with_state(relay_fd, fd_to_relay, &rp, sizeof(rp));
                     close(relay_fd);
                 } else {
-                    close(client_fd);
+                    close(fd_to_relay);
                 }
-                /* Our session with this fd ends here */
-                if (buf) free(buf);
                 return;
             }
+            /* correct owner: data already available — read headers next */
+            s->state = S_READ_HEADERS;
+            again    = 1;
+            break;
         }
 
-        /* ── Sub-case A (or first request): WE are the owner — read it ── */
-
-        /* Grow buffer if needed */
-        size_t total = 0;
-        ssize_t hdr_end = -1;
-        size_t hdr_sep = 0;
-
-        while (hdr_end < 0) {
-            if (cap < total + 4096 + 1) {
-                size_t nc = cap ? cap * 2 : 16384;
-                unsigned char *nb = realloc(buf, nc);
-                if (!nb) goto done;
-                buf = nb; cap = nc;
+        /* ── Accumulate until end-of-headers ─────────── */
+        case S_READ_HEADERS: {
+            int found = 0;
+            for (;;) {
+                if (s->cap < s->len + 4096 + 1) {
+                    size_t nc = s->cap ? s->cap * 2 : 16384;
+                    unsigned char *nb = realloc(s->buf, nc);
+                    if (!nb) { session_close(s); return; }
+                    s->buf = nb; s->cap = nc;
+                }
+                ssize_t n = recv(s->fd, s->buf + s->len,
+                                 s->cap - s->len - 1, MSG_DONTWAIT);
+                if (n > 0) {
+                    s->len += (size_t)n;
+                    s->buf[s->len] = '\0';
+                    ssize_t e4 = find_subseq(s->buf, s->len, "\r\n\r\n");
+                    if (e4 >= 0) { s->hdr_end = e4; s->hdr_sep = 4; found = 1; break; }
+                    ssize_t e2 = find_subseq(s->buf, s->len, "\n\n");
+                    if (e2 >= 0) { s->hdr_end = e2; s->hdr_sep = 2; found = 1; break; }
+                } else if (n == 0) {
+                    session_close(s); return;
+                } else {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                    session_close(s); return;
+                }
             }
-            ssize_t n = recv(client_fd, buf + total, cap - total - 1, 0);
-            if (n <= 0) goto done;
-            total += (size_t)n;
-            buf[total] = '\0';
-
-            ssize_t e4 = find_subseq(buf, total, "\r\n\r\n");
-            if (e4 >= 0) { hdr_end = e4; hdr_sep = 4; break; }
-            ssize_t e2 = find_subseq(buf, total, "\n\n");
-            if (e2 >= 0) { hdr_end = e2; hdr_sep = 2; break; }
+            if (!found) break;  /* wait for more data */
+            size_t hdr_sz = (size_t)s->hdr_end + s->hdr_sep;
+            s->content_length = parse_content_length((const char *)s->buf, hdr_sz);
+            if (s->content_length < 0) s->content_length = 0;
+            s->should_close = (
+                find_subseq(s->buf, hdr_sz, "Connection: close") >= 0 ||
+                find_subseq(s->buf, hdr_sz, "connection: close") >= 0
+            );
+            s->body_in = (s->len > hdr_sz) ? (s->len - hdr_sz) : 0;
+            if (s->body_in > 0) {
+                char *ep1 = NULL;
+                double va = strtod((const char *)(s->buf + hdr_sz), &ep1);
+                if (ep1 && ep1 != (const char *)(s->buf + hdr_sz)) {
+                    s->a = va;
+                    const char *p2   = ep1;
+                    const char *end2 = (const char *)(s->buf + hdr_sz) + s->body_in;
+                    while (p2 < end2 && (*p2 == ' ' || *p2 == '\t' || *p2 == ',')) p2++;
+                    if (p2 < end2) {
+                        char *ep2 = NULL;
+                        double vb = strtod(p2, &ep2);
+                        if (ep2 && ep2 != p2) s->b = vb;
+                    }
+                }
+            }
+            s->state = S_READ_BODY;
+            again    = 1;
+            break;
         }
 
-        size_t hdr_sz = (size_t)hdr_end + hdr_sep;
-        long long cl = parse_content_length((const char *)buf, hdr_sz);
-        if (cl < 0) cl = 0;
-
-        /* Check Connection: close */
-        int should_close = 0;
-        if (find_subseq(buf, hdr_sz, "Connection: close") >= 0 ||
-            find_subseq(buf, hdr_sz, "connection: close") >= 0)
-            should_close = 1;
-
-        /* Drain remaining body */
-        size_t body_read = (total > hdr_sz) ? (total - hdr_sz) : 0;
-        while (body_read < (size_t)cl) {
-            unsigned char scratch[16384];
-            size_t want = (size_t)cl - body_read;
-            if (want > sizeof(scratch)) want = sizeof(scratch);
-            ssize_t n = recv(client_fd, scratch, want, 0);
-            if (n <= 0) goto done;
-            body_read += (size_t)n;
+        /* ── Drain remaining body bytes ────────────────── */
+        case S_READ_BODY: {
+            while (s->body_in < (size_t)s->content_length) {
+                unsigned char scratch[16384];
+                size_t want = (size_t)s->content_length - s->body_in;
+                if (want > sizeof(scratch)) want = sizeof(scratch);
+                ssize_t n = recv(s->fd, scratch, want, MSG_DONTWAIT);
+                if (n > 0) {
+                    s->body_in += (size_t)n;
+                } else if (n == 0) {
+                    session_close(s); return;
+                } else {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+                    session_close(s); return;
+                }
+            }
+            /* body complete — compute result */
+            double result = s->a + s->b;   /* SUM */
+            char json[768];
+            int jl = snprintf(json, sizeof(json),
+                "{\"worker\":\"%s\",\"request_no\":% " PRIu64 ",\"result\":%.6g,\"_pad\":\"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\"}",
+                fn_name, s->req_no, result);
+            s->resp_len = (size_t)snprintf(s->resp, sizeof(s->resp),
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: %s\r\n"
+                "\r\n%s",
+                jl,
+                s->should_close ? "close" : "keep-alive",
+                json);
+            s->resp_off = 0;
+            s->state    = S_WRITE_RESP;
+            epoll_mod(s->fd, EPOLLOUT);  /* switch to write-ready watch */
+            again = 1;
+            break;
         }
 
-        /* Stamp top2 */
-        uint64_t top2  = bench2_rdtsc();
-        uint64_t freq  = cntfrq_stamp ? cntfrq_stamp : bench2_cntfrq();
-        uint64_t delta = (top2 > top1) ? (top2 - top1) : 0;
-        uint64_t delta_ns = freq ? (uint64_t)(((long double)delta * 1e9L) / (long double)freq) : 0;
+        /* ── Flush HTTP response ───────────────────────── */
+        case S_WRITE_RESP: {
+            while (s->resp_off < s->resp_len) {
+                ssize_t n = write(s->fd,
+                                  s->resp + s->resp_off,
+                                  s->resp_len - s->resp_off);
+                if (n > 0) {
+                    s->resp_off += (size_t)n;
+                } else if (n == 0) {
+                    session_close(s); return;
+                } else {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+                    session_close(s); return;
+                }
+            }
+            if (s->should_close) { session_close(s); return; }
+            session_reset_for_next(s);
+            epoll_mod(s->fd, EPOLLIN);  /* back to read-ready watch */
+            /* no again=1: must wait for new request bytes */
+            break;
+        }
 
-        /* Build JSON response */
-        char json[512];
-        int jl = snprintf(json, sizeof(json),
-            "{\"worker\":\"%s\",\"request_no\":%" PRIu64
-            ",\"path\":\"prototype-http-ka\""
-            ",\"top1_rdtsc\":%" PRIu64
-            ",\"top2_rdtsc\":%" PRIu64
-            ",\"delta_cycles\":%" PRIu64
-            ",\"cntfrq\":%" PRIu64
-            ",\"delta_ns\":%" PRIu64
-            ",\"body_bytes_read\":%zu"
-            ",\"content_length\":%lld}",
-            function_name, req_no,
-            top1, top2, delta, freq, delta_ns,
-            body_read, cl);
-
-        char resp[768];
-        int rl = snprintf(resp, sizeof(resp),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: %s\r\n"
-            "\r\n%s",
-            jl,
-            should_close ? "close" : "keep-alive",
-            json);
-
-        if (write(client_fd, resp, (size_t)rl) < 0) goto done;
-        if (should_close) goto done;
-    }
-
-done:
-    if (buf) free(buf);
-    close(client_fd);
+        } /* end switch */
+    } while (again);
 }
 
 /* ── main ────────────────────────────────────────────────────────────────── */
@@ -338,36 +451,44 @@ int main(void) {
         return 1;
     }
     chmod(sock_path, 0777);
+    set_nonblocking(listen_fd);   /* required for drain-accept loop */
 
-    fprintf(stderr, "[ka-worker] %s listening on %s, relay=%s\n",
+    s_epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (s_epoll_fd < 0) { perror("[ka-worker] epoll_create1"); return 1; }
+
+    if (epoll_add(listen_fd, EPOLLIN) < 0) {
+        perror("[ka-worker] epoll_add listen_fd");
+        return 1;
+    }
+
+    memset(s_sessions, 0, sizeof(s_sessions));
+    fprintf(stderr, "[ka-worker] %s listening on %s, relay=%s [epoll multi-session]\n",
             fn_name, sock_path, relay_socket);
 
+    struct epoll_event events[WORKER_MAX_EVENTS];
     for (;;) {
-        int conn_fd = unix_accept(listen_fd);
-        if (conn_fd < 0) continue;
-
-        httpmigrate_ka_payload_t payload;
-        memset(&payload, 0, sizeof(payload));
-        int client_fd = -1;
-
-        if (recvfd_with_state(conn_fd, &client_fd, &payload, sizeof(payload)) != 0) {
-            close(conn_fd);
-            continue;
+        int n = epoll_wait(s_epoll_fd, events, WORKER_MAX_EVENTS, -1);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            perror("[ka-worker] epoll_wait");
+            break;
         }
-        close(conn_fd);
-
-        if (client_fd < 0) continue;
-        if (payload.magic != HTTPMIGRATE_MAGIC ||
-            payload.version != HTTPMIGRATE_VERSION) {
-            fprintf(stderr, "[ka-worker] bad magic 0x%08x\n", payload.magic);
-            close(client_fd);
-            continue;
+        for (int i = 0; i < n; i++) {
+            int      efd = events[i].data.fd;
+            uint32_t rev = events[i].events;
+            if (efd == listen_fd) {
+                handle_listen_fd(listen_fd);
+                continue;
+            }
+            session_t *s = (efd >= 0 && efd < MAX_FD) ? s_sessions[efd] : NULL;
+            if (!s) {
+                epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, efd, NULL);
+                close(efd);
+                continue;
+            }
+            if (rev & (EPOLLHUP | EPOLLERR)) { session_close(s); continue; }
+            advance_session(s, fn_name, relay_socket);
         }
-
-        /* Make fd blocking */
-        int flags = fcntl(client_fd, F_GETFL, 0);
-        if (flags >= 0) fcntl(client_fd, F_SETFL, flags & ~O_NONBLOCK);
-
-        process_session(client_fd, &payload, fn_name, relay_socket);
     }
+    return 0;
 }

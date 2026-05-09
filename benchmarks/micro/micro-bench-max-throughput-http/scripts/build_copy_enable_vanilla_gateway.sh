@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 PI_SSH="${PI_SSH:-romero@192.168.2.2}"
-PI_SUDO_PASSWORD="${PI_SUDO_PASSWORD:-}"
+PI_SUDO_PASSWORD="${PI_SUDO_PASSWORD:-tchiaze2003}"
 IMAGE_REF="${IMAGE_REF:-docker.io/local/faasd-gateway-bench3-ka-http:arm64}"
 LOCAL_ARCHIVE="${LOCAL_ARCHIVE:-$ROOT_DIR/dist/faasd-gateway-bench3-ka-http-arm64.tar}"
 REMOTE_ARCHIVE="${REMOTE_ARCHIVE:-/tmp/faasd-gateway-bench3-ka-http-arm64.tar}"
@@ -17,7 +17,7 @@ BUILDER_NAME="${BUILDER_NAME:-bench2-arm64-builder}"
 USE_LOCAL_CACHE="${USE_LOCAL_CACHE:-auto}"
 BUILD_PROGRESS="${BUILD_PROGRESS:-plain}"
 
-DOCKERFILE_SRC="$ROOT_DIR/benchmarks/micro/micro-bench3-keepalive-http/proto_gateway/Dockerfile"
+DOCKERFILE_SRC="$ROOT_DIR/benchmarks/micro/micro-bench-max-throughput-http/proto_gateway/Dockerfile"
 DOCKERFILE_TMP="$(mktemp /tmp/faasd-gateway-dockerfile.XXXXXX)"
 
 mkdir -p "$(dirname "$LOCAL_ARCHIVE")" "$CACHE_DIR"
@@ -114,10 +114,16 @@ if [ "$KEEP_REMOTE_ARCHIVE" != "1" ]; then
 fi
 
 if [ "$ENABLE_ON_PI" = "1" ]; then
-  ssh "$PI_SSH" "cd ~/Prototype_sendfd && PI_SUDO_PASSWORD='$PI_SUDO_PASSWORD' BENCH_GATEWAY_IMAGE='$IMAGE_REF' bash benchmarks/micro/micro-bench3-keepalive-http/scripts/pi_enable_vanilla_gateway.sh"
+  # ✅ CRITICAL: sync scripts to Pi so it runs the LATEST version
+  SCRIPT_DIR="$ROOT_DIR/benchmarks/micro/micro-bench-max-throughput-http/scripts"
+  echo "[sync] syncing scripts to Pi"
+  ssh "$PI_SSH" "mkdir -p ~/Prototype_sendfd/benchmarks/micro/micro-bench-max-throughput-http/scripts"
+  rsync -az "$SCRIPT_DIR/" "$PI_SSH:~/Prototype_sendfd/benchmarks/micro/micro-bench-max-throughput-http/scripts/"
+
+  ssh "$PI_SSH" "cd ~/Prototype_sendfd && PI_SUDO_PASSWORD='$PI_SUDO_PASSWORD' BENCH_GATEWAY_IMAGE='$IMAGE_REF' bash benchmarks/micro/micro-bench-max-throughput-http/scripts/pi_enable_vanilla_gateway.sh"
 else
   echo "[info] image imported. To enable it later on the Pi:"
-  echo "  cd ~/Prototype_sendfd && BENCH_GATEWAY_IMAGE=$IMAGE_REF bash benchmarks/micro/micro-bench3-keepalive-http/scripts/pi_enable_vanilla_gateway.sh"
+  echo "  cd ~/Prototype_sendfd && BENCH_GATEWAY_IMAGE=$IMAGE_REF bash benchmarks/micro/micro-bench-max-throughput-http/scripts/pi_enable_vanilla_gateway.sh"
 fi
 
 echo "[ok] gateway image built, copied, and imported"

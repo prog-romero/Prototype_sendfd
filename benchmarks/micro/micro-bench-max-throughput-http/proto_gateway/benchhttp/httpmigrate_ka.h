@@ -13,17 +13,12 @@ extern "C" {
 #define HTTPMIGRATE_TARGET_LEN 128
 
 /*
- * Extended payload for Keep-Alive mode.
- * - top1_rdtsc / cntfrq / top1_set: timing from whoever last peeked the fd
+ * Payload for Keep-Alive mode.
  * - target_function: the /function/<name> the next request is for
  */
 typedef struct {
     uint32_t magic;
     uint32_t version;
-    uint64_t top1_rdtsc;
-    uint64_t cntfrq;
-    uint8_t  top1_set;
-    uint8_t  _pad[7];
     char     target_function[HTTPMIGRATE_TARGET_LEN];
 } httpmigrate_ka_payload_t;
 

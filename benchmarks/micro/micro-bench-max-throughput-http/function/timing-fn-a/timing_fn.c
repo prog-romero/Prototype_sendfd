@@ -1,5 +1,14 @@
-#define _POSIX_C_SOURCE 200809L
+/*
+ * timing_fn.c — Simple HTTP function worker (vanilla mode, epoll multi-session)
+ * Function A: computes the SUM of two numbers from the request body.
+ * Body format: "<a> <b>" (two space-separated doubles).
+ * If parsing fails, defaults to a=1, b=2.
+ *
+ * Epoll-based single-process server: handles all TCP connections concurrently
+ * without fork() — same architecture as the proto epoll worker.
+ */
 #define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
 #include <inttypes.h>
@@ -9,528 +18,459 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <sys/wait.h>
 
-#include "bench2_rdtsc.h"
-
-static long long parse_header_int64(const char *hdr, size_t hdr_len, const char *needle)
-{
-    size_t needle_len = strlen(needle);
-    const char *p = hdr;
-    const char *end = hdr + hdr_len;
-
-    while (p < end) {
-        const char *nl = memchr(p, '\n', (size_t)(end - p));
-        size_t line_len = nl ? (size_t)(nl - p) : (size_t)(end - p);
-
-        if (line_len >= needle_len) {
-            int match = 1;
-
-            for (size_t k = 0; k < needle_len && match; k++) {
-                char c = p[k];
-                if (c >= 'A' && c <= 'Z') {
-                    c = (char)(c - 'A' + 'a');
-                }
-                match = (c == needle[k]);
-            }
-
-            if (match) {
-                const char *v = p + needle_len;
-                while (v < end && (*v == ' ' || *v == '\t')) {
-                    v++;
-                }
-
-                char *endp = NULL;
-                long long value = strtoll(v, &endp, 10);
-                if (endp && endp > v) {
-                    return value;
-                }
-            }
-        }
-
-        p = nl ? nl + 1 : end;
-    }
-
-    return -1;
-}
-
-static int header_has_token(const char *hdr, size_t hdr_len,
-                            const char *header_name, const char *token)
-{
-    const char *p = hdr;
-    const char *end = hdr + hdr_len;
-    size_t header_name_len = strlen(header_name);
-    size_t token_len = strlen(token);
-
-    while (p < end) {
-        const char *nl = memchr(p, '\n', (size_t)(end - p));
-        const char *line_end = nl ? (nl + 1) : end;
-        const char *line = p;
-
-        while (line < line_end && (*line == '\r' || *line == '\n')) {
-            line++;
-        }
-
-        if ((size_t)(line_end - line) >= header_name_len &&
-            strncasecmp(line, header_name, header_name_len) == 0) {
-            const char *value = line + header_name_len;
-            while (value < line_end && (*value == ' ' || *value == '\t')) {
-                value++;
-            }
-
-            for (const char *cursor = value; cursor + token_len <= line_end; cursor++) {
-                if (strncasecmp(cursor, token, token_len) == 0) {
-                    return 1;
-                }
-            }
-        }
-
-        p = line_end;
-    }
-
-    return 0;
-}
-
-static int ensure_capacity(char **buf, size_t *cap, size_t needed)
-{
-    if (needed <= *cap) {
-        return 0;
-    }
-
-    size_t new_cap = *cap ? *cap : 8192;
-    while (new_cap < needed) {
-        if (new_cap > ((size_t)-1) / 2) {
-            return -1;
-        }
-        new_cap *= 2;
-    }
-
-    char *new_buf = realloc(*buf, new_cap);
-    if (!new_buf) {
-        return -1;
-    }
-
-    *buf = new_buf;
-    *cap = new_cap;
-    return 0;
-}
-
-static int read_more(int fd, char **buf, size_t *len, size_t *cap)
-{
-    if (ensure_capacity(buf, cap, *len + 4096 + 1) != 0) {
-        return -1;
-    }
-
-    for (;;) {
-        ssize_t n = read(fd, *buf + *len, *cap - *len - 1);
-        if (n < 0 && errno == EINTR) {
-            continue;
-        }
-        if (n <= 0) {
-            return -1;
-        }
-
-        *len += (size_t)n;
-        (*buf)[*len] = '\0';
-        return 0;
-    }
-}
+/* ── HTTP parsing helpers ─────────────────────────────────────────────── */
 
 static ssize_t find_subseq(const char *buf, size_t len, const char *needle)
 {
-    size_t needle_len = strlen(needle);
-    if (needle_len == 0 || len < needle_len) {
-        return -1;
-    }
-
-    for (size_t i = 0; i + needle_len <= len; i++) {
-        if (memcmp(buf + i, needle, needle_len) == 0) {
-            return (ssize_t)i;
-        }
-    }
-
+    size_t nlen = strlen(needle);
+    if (!nlen || len < nlen) return -1;
+    for (size_t i = 0; i + nlen <= len; i++)
+        if (memcmp(buf + i, needle, nlen) == 0) return (ssize_t)i;
     return -1;
 }
 
-static ssize_t find_line_end(const char *buf, size_t start, size_t len, size_t *eol_len_out)
+static long long parse_content_length(const char *hdr, size_t hlen)
 {
-    for (size_t i = start; i < len; i++) {
-        if (buf[i] == '\n') {
-            if (i > start && buf[i - 1] == '\r') {
-                *eol_len_out = 2;
-                return (ssize_t)(i - 1);
+    const char *p = hdr, *end = hdr + hlen;
+    while (p < end) {
+        const char *nl = memchr(p, '\n', (size_t)(end - p));
+        size_t ll = nl ? (size_t)(nl - p) : (size_t)(end - p);
+        const char *needle = "content-length:";
+        size_t nlen = strlen(needle);
+        if (ll >= nlen) {
+            int m = 1;
+            for (size_t k = 0; k < nlen && m; k++) {
+                char c = p[k];
+                if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+                m = (c == needle[k]);
             }
-            *eol_len_out = 1;
-            return (ssize_t)i;
+            if (m) {
+                const char *v = p + nlen;
+                while (v < end && (*v == ' ' || *v == '\t')) v++;
+                char *ep = NULL;
+                long long val = strtoll(v, &ep, 10);
+                if (ep && ep > v) return val;
+            }
         }
+        p = nl ? nl + 1 : end;
     }
-
     return -1;
 }
 
-static int consume_chunked_body(int fd, char **buf, size_t *len, size_t *cap,
-                                size_t cursor, size_t *body_bytes_read_out)
+static int has_connection_close(const char *hdr, size_t hlen)
 {
-    size_t body_bytes_read = 0;
-
-    for (;;) {
-        size_t eol_len = 0;
-        ssize_t line_end = -1;
-        while ((line_end = find_line_end(*buf, cursor, *len, &eol_len)) < 0) {
-            if (read_more(fd, buf, len, cap) != 0) {
-                return -1;
-            }
-        }
-
-        size_t line_len = (size_t)line_end - cursor;
-        if (line_len >= 64) {
-            return -1;
-        }
-
-        char line[64];
-        memcpy(line, *buf + cursor, line_len);
-        line[line_len] = '\0';
-
-        char *semi = strchr(line, ';');
-        if (semi) {
-            *semi = '\0';
-        }
-
-        errno = 0;
-        char *num_end = NULL;
-        unsigned long chunk_size = strtoul(line, &num_end, 16);
-        if (errno != 0 || !num_end || num_end == line) {
-            return -1;
-        }
-
-        cursor = (size_t)line_end + eol_len;
-
-        if (chunk_size == 0) {
-            for (;;) {
-                while ((line_end = find_line_end(*buf, cursor, *len, &eol_len)) < 0) {
-                    if (read_more(fd, buf, len, cap) != 0) {
-                        return -1;
-                    }
-                }
-
-                line_len = (size_t)line_end - cursor;
-                cursor = (size_t)line_end + eol_len;
-                if (line_len == 0) {
-                    *body_bytes_read_out = body_bytes_read;
-                    return 0;
-                }
-            }
-        }
-
-        while (*len - cursor < chunk_size + 1) {
-            if (read_more(fd, buf, len, cap) != 0) {
-                return -1;
-            }
-        }
-
-        body_bytes_read += (size_t)chunk_size;
-        cursor += (size_t)chunk_size;
-
-        if (*len - cursor >= 2 && (*buf)[cursor] == '\r' && (*buf)[cursor + 1] == '\n') {
-            cursor += 2;
-        } else if (*len - cursor >= 1 && (*buf)[cursor] == '\n') {
-            cursor += 1;
-        } else {
-            while (*len - cursor < 2) {
-                if (read_more(fd, buf, len, cap) != 0) {
-                    return -1;
-                }
-            }
-
-            if ((*buf)[cursor] == '\r' && (*buf)[cursor + 1] == '\n') {
-                cursor += 2;
-            } else if ((*buf)[cursor] == '\n') {
-                cursor += 1;
-            } else {
-                return -1;
-            }
-        }
-    }
+    return find_subseq(hdr, hlen, "Connection: close") >= 0 ||
+           find_subseq(hdr, hlen, "connection: close") >= 0;
 }
 
-static int write_all(int fd, const void *buf, size_t len)
+static int has_transfer_chunked(const char *hdr, size_t hlen)
 {
-    const uint8_t *p = (const uint8_t *)buf;
+    return find_subseq(hdr, hlen, "Transfer-Encoding: chunked") >= 0 ||
+           find_subseq(hdr, hlen, "transfer-encoding: chunked") >= 0;
+}
 
-    while (len > 0) {
-        ssize_t n = write(fd, p, len);
-        if (n < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            return -1;
-        }
-
-        p += (size_t)n;
-        len -= (size_t)n;
-    }
-
+static int chunked_complete(const char *buf, size_t len)
+{
+    if (find_subseq(buf, len, "\r\n0\r\n\r\n") >= 0) return 1;
+    if (find_subseq(buf, len, "\n0\n\n") >= 0) return 1;
     return 0;
 }
 
-static void handle_connection(int conn_fd, const char *worker_name)
+static int decode_chunked_body(const char *in, size_t in_len, char **out, size_t *out_len)
 {
-    uint64_t request_no = 0;
+    size_t pos = 0, cap = in_len ? in_len : 1, used = 0;
+    char *dst = malloc(cap + 1);
+    if (!dst) return -1;
 
-    for (;;) {
-        request_no++;
+    while (pos < in_len) {
+        size_t line_end = pos;
+        while (line_end < in_len && in[line_end] != '\n') line_end++;
+        if (line_end >= in_len) { free(dst); return -1; }
 
-        size_t cap = 65536;
-        size_t len = 0;
-        char *buf = malloc(cap);
-        if (!buf) {
-            break;
+        size_t line_len = line_end - pos;
+        if (line_len > 0 && in[pos + line_len - 1] == '\r') line_len--;
+
+        char szbuf[64];
+        if (line_len == 0 || line_len >= sizeof(szbuf)) { free(dst); return -1; }
+        memcpy(szbuf, in + pos, line_len);
+        szbuf[line_len] = '\0';
+
+        char *semi = strchr(szbuf, ';');
+        if (semi) *semi = '\0';
+
+        char *ep = NULL;
+        unsigned long long chunk_sz = strtoull(szbuf, &ep, 16);
+        if (!ep || ep == szbuf) { free(dst); return -1; }
+
+        pos = line_end + 1;
+        if (chunk_sz == 0) break;
+        if (pos + (size_t)chunk_sz > in_len) { free(dst); return -1; }
+
+        if (used + (size_t)chunk_sz > cap) {
+            size_t nc = cap * 2;
+            while (nc < used + (size_t)chunk_sz) nc *= 2;
+            char *nb = realloc(dst, nc + 1);
+            if (!nb) { free(dst); return -1; }
+            dst = nb; cap = nc;
         }
+        memcpy(dst + used, in + pos, (size_t)chunk_sz);
+        used += (size_t)chunk_sz;
+        pos += (size_t)chunk_sz;
 
-        ssize_t hdr_end = -1;
-        size_t hdr_sep_len = 0;
-        while (hdr_end < 0) {
-            if (len >= 1024 * 1024) {
-                free(buf);
-                goto done;
-            }
-
-            if (read_more(conn_fd, &buf, &len, &cap) != 0) {
-                free(buf);
-                goto done;
-            }
-
-            hdr_end = find_subseq(buf, len, "\r\n\r\n");
-            if (hdr_end >= 0) {
-                hdr_sep_len = 4;
-                break;
-            }
-
-            hdr_end = find_subseq(buf, len, "\n\n");
-            if (hdr_end >= 0) {
-                hdr_sep_len = 2;
-                break;
-            }
-        }
-
-        size_t hdr_bytes = (size_t)hdr_end + hdr_sep_len;
-        long long top1_ll = parse_header_int64(buf, hdr_bytes, "x-bench2-top1-rdtsc:");
-        long long cntfrq_ll = parse_header_int64(buf, hdr_bytes, "x-bench2-cntfrq:");
-        long long cl = parse_header_int64(buf, hdr_bytes, "content-length:");
-        if (cl < 0) {
-            cl = 0;
-        }
-        int is_chunked = header_has_token(buf, hdr_bytes, "transfer-encoding:", "chunked");
-
-        int should_close = 0;
-        {
-            const char *p = buf;
-            const char *end = buf + hdr_bytes;
-
-            while (p < end) {
-                const char *nl = memchr(p, '\n', (size_t)(end - p));
-                size_t line_len = nl ? (size_t)(nl - p) : (size_t)(end - p);
-                const char key[] = "connection:";
-
-                if (line_len >= sizeof(key) - 1) {
-                    int match = 1;
-                    for (size_t k = 0; k < sizeof(key) - 1 && match; k++) {
-                        char c = p[k];
-                        if (c >= 'A' && c <= 'Z') {
-                            c = (char)(c - 'A' + 'a');
-                        }
-                        match = (c == key[k]);
-                    }
-
-                    if (match) {
-                        const char *v = p + sizeof(key) - 1;
-                        const char *ve = nl ? nl : end;
-                        while (v + 4 < ve) {
-                            if ((v[0] == 'c' || v[0] == 'C') &&
-                                (v[1] == 'l' || v[1] == 'L') &&
-                                (v[2] == 'o' || v[2] == 'O') &&
-                                (v[3] == 's' || v[3] == 'S') &&
-                                (v[4] == 'e' || v[4] == 'E')) {
-                                should_close = 1;
-                                break;
-                            }
-                            v++;
-                        }
-                    }
-                }
-
-                p = nl ? nl + 1 : end;
-            }
-        }
-
-        size_t body_in = 0;
-        if (is_chunked) {
-            if (consume_chunked_body(conn_fd, &buf, &len, &cap, hdr_bytes, &body_in) != 0) {
-                free(buf);
-                goto done;
-            }
-        } else {
-            size_t body_need = (size_t)cl;
-            body_in = (len > hdr_bytes) ? (len - hdr_bytes) : 0;
-            if (body_in > body_need) {
-                body_in = body_need;
-            }
-
-            while (body_in < body_need) {
-                char scratch[8192];
-                size_t want = body_need - body_in;
-                if (want > sizeof(scratch)) {
-                    want = sizeof(scratch);
-                }
-
-                ssize_t n = read(conn_fd, scratch, want);
-                if (n < 0 && errno == EINTR) {
-                    continue;
-                }
-                if (n <= 0) {
-                    free(buf);
-                    goto done;
-                }
-                body_in += (size_t)n;
-            }
-        }
-
-        uint64_t top2 = bench2_rdtsc();
-        free(buf);
-        uint64_t freq = bench2_cntfrq();
-        uint64_t top1 = (top1_ll > 0) ? (uint64_t)top1_ll : 0;
-        uint64_t cntfrq = (cntfrq_ll > 0) ? (uint64_t)cntfrq_ll : freq;
-        uint64_t delta = (top2 > top1) ? (top2 - top1) : 0;
-        uint64_t delta_ns = (cntfrq > 0) ? (uint64_t)(((long double)delta * 1000000000.0L) / (long double)cntfrq) : 0;
-
-        char json[640];
-        int jlen = snprintf(
-            json,
-            sizeof(json),
-            "{\"worker\":\"%s\",\"request_no\":%" PRIu64
-            ",\"path\":\"vanilla\""
-            ",\"top1_rdtsc\":%" PRIu64
-            ",\"top2_rdtsc\":%" PRIu64
-            ",\"delta_cycles\":%" PRIu64
-            ",\"cntfrq\":%" PRIu64
-            ",\"delta_ns\":%" PRIu64
-            ",\"body_bytes_read\":%zu"
-            ",\"content_length\":%lld}\n",
-            worker_name,
-            request_no,
-            top1,
-            top2,
-            delta,
-            cntfrq,
-            delta_ns,
-            body_in,
-            cl);
-        if (jlen <= 0 || (size_t)jlen >= sizeof(json)) {
-            goto done;
-        }
-
-        char resp[896];
-        int rlen = snprintf(
-            resp,
-            sizeof(resp),
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: %s\r\n"
-            "\r\n"
-            "%s",
-            jlen,
-            should_close ? "close" : "keep-alive",
-            json);
-        if (rlen <= 0 || (size_t)rlen >= sizeof(resp)) {
-            goto done;
-        }
-
-        if (write_all(conn_fd, resp, (size_t)rlen) != 0) {
-            goto done;
-        }
-
-        if (should_close) {
-            break;
-        }
+        if (pos < in_len && in[pos] == '\r') pos++;
+        if (pos < in_len && in[pos] == '\n') pos++;
     }
 
-done:
-    close(conn_fd);
+    dst[used] = '\0';
+    *out = dst;
+    *out_len = used;
+    return 0;
 }
+
+/* ── Session state machine ────────────────────────────────────────────── */
+
+typedef enum {
+    S_READ_HEADERS,
+    S_READ_BODY,
+    S_WRITE_RESP,
+} sess_state_t;
+
+typedef struct session {
+    int          fd;
+    uint64_t     req_no;
+    sess_state_t state;
+    /* read accumulation buffer */
+    char  *buf;
+    size_t cap;
+    size_t len;
+    /* header-parsing results */
+    ssize_t   hdr_end;
+    size_t    hdr_sep;
+    size_t    hdr_bytes;
+    long long content_length;
+    int       chunked;
+    size_t    body_in;
+    int       should_close;
+    double    a, b;
+    /* response write buffer */
+    char   resp[512];
+    size_t resp_len;
+    size_t resp_off;
+} session_t;
+
+/* ── Global epoll + session table ────────────────────────────────────── */
+
+#define MAX_FD            65536
+#define WORKER_MAX_EVENTS 64
+
+static int        s_epoll_fd = -1;
+static session_t *s_sessions[MAX_FD];
+
+/* ── Low-level helpers ───────────────────────────────────────────────── */
+
+static int epoll_add(int fd, uint32_t events)
+{
+    struct epoll_event ev = { .events = events, .data.fd = fd };
+    return epoll_ctl(s_epoll_fd, EPOLL_CTL_ADD, fd, &ev);
+}
+
+static int epoll_mod(int fd, uint32_t events)
+{
+    struct epoll_event ev = { .events = events, .data.fd = fd };
+    return epoll_ctl(s_epoll_fd, EPOLL_CTL_MOD, fd, &ev);
+}
+
+/* ── Session lifecycle ───────────────────────────────────────────────── */
+
+static void session_close(session_t *s)
+{
+    if (!s) return;
+    if (s->fd >= 0 && s->fd < MAX_FD) s_sessions[s->fd] = NULL;
+    epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, s->fd, NULL);
+    close(s->fd);
+    free(s->buf);
+    free(s);
+}
+
+static session_t *session_new(int fd)
+{
+    if (fd < 0 || fd >= MAX_FD) { close(fd); return NULL; }
+    session_t *s = calloc(1, sizeof(*s));
+    if (!s) { close(fd); return NULL; }
+    s->fd      = fd;
+    s->req_no  = 1;
+    s->state   = S_READ_HEADERS;
+    s->hdr_end = -1;
+    s->a       = 1.0;
+    s->b       = 2.0;
+    s_sessions[fd] = s;
+    return s;
+}
+
+static void session_reset_for_next(session_t *s)
+{
+    s->len            = 0;
+    s->hdr_end        = -1;
+    s->hdr_sep        = 0;
+    s->hdr_bytes      = 0;
+    s->content_length = 0;
+    s->chunked        = 0;
+    s->body_in        = 0;
+    s->should_close   = 0;
+    s->a              = 1.0;
+    s->b              = 2.0;
+    s->resp_len       = 0;
+    s->resp_off       = 0;
+    s->req_no++;
+    s->state          = S_READ_HEADERS;
+}
+
+/* ── Per-session non-blocking state machine ──────────────────────────── */
+
+static void advance_session(session_t *s, const char *worker_name)
+{
+    int again;
+    do {
+        again = 0;
+        switch (s->state) {
+
+        case S_READ_HEADERS: {
+            int found = 0;
+            for (;;) {
+                if (s->cap < s->len + 4096 + 1) {
+                    size_t nc = s->cap ? s->cap * 2 : 16384;
+                    char *nb = realloc(s->buf, nc);
+                    if (!nb) { session_close(s); return; }
+                    s->buf = nb; s->cap = nc;
+                }
+                ssize_t n = recv(s->fd, s->buf + s->len,
+                                 s->cap - s->len - 1, MSG_DONTWAIT);
+                if (n > 0) {
+                    s->len += (size_t)n;
+                    s->buf[s->len] = '\0';
+                    ssize_t e4 = find_subseq(s->buf, s->len, "\r\n\r\n");
+                    if (e4 >= 0) { s->hdr_end = e4; s->hdr_sep = 4; found = 1; break; }
+                    ssize_t e2 = find_subseq(s->buf, s->len, "\n\n");
+                    if (e2 >= 0) { s->hdr_end = e2; s->hdr_sep = 2; found = 1; break; }
+                } else if (n == 0) {
+                    session_close(s); return;
+                } else {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                    session_close(s); return;
+                }
+            }
+            if (!found) break;
+            size_t hdr_sz = (size_t)s->hdr_end + s->hdr_sep;
+            s->hdr_bytes = hdr_sz;
+            s->content_length = parse_content_length(s->buf, hdr_sz);
+            if (s->content_length < 0) s->content_length = 0;
+            s->chunked = has_transfer_chunked(s->buf, hdr_sz);
+            s->should_close = has_connection_close(s->buf, hdr_sz);
+            s->body_in = (s->len > hdr_sz) ? (s->len - hdr_sz) : 0;
+            s->state = S_READ_BODY;
+            again    = 1;
+            break;
+        }
+
+        case S_READ_BODY: {
+            while ((!s->chunked && s->body_in < (size_t)s->content_length) ||
+                   (s->chunked && !chunked_complete(s->buf + s->hdr_bytes, s->body_in))) {
+                size_t want = s->chunked ? 4096 : ((size_t)s->content_length - s->body_in);
+                if (s->cap < s->len + want + 1) {
+                    size_t nc = s->cap ? s->cap * 2 : 16384;
+                    while (nc < s->len + want + 1) nc *= 2;
+                    char *nb = realloc(s->buf, nc);
+                    if (!nb) { session_close(s); return; }
+                    s->buf = nb; s->cap = nc;
+                }
+                ssize_t n = recv(s->fd, s->buf + s->len, want, MSG_DONTWAIT);
+                if (n > 0) {
+                    s->len += (size_t)n;
+                    s->buf[s->len] = '\0';
+                    s->body_in += (size_t)n;
+                } else if (n == 0) {
+                    session_close(s); return;
+                } else {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+                    session_close(s); return;
+                }
+            }
+            if (s->content_length > 0 || s->chunked) {
+                const char *body = s->buf + s->hdr_bytes;
+                size_t body_len = s->chunked ? s->body_in : (size_t)s->content_length;
+                char *decoded = NULL;
+                if (s->chunked) {
+                    if (decode_chunked_body(body, body_len, &decoded, &body_len) == 0) {
+                        body = decoded;
+                    }
+                }
+                const char *end2 = body + body_len;
+                char *ep1 = NULL;
+                double va = strtod(body, &ep1);
+                if (ep1 && ep1 != body) {
+                    s->a = va;
+                    const char *p2 = ep1;
+                    while (p2 < end2 && (*p2 == ' ' || *p2 == '\t' || *p2 == ',')) p2++;
+                    if (p2 < end2) {
+                        char *ep2 = NULL;
+                        double vb = strtod(p2, &ep2);
+                        if (ep2 && ep2 != p2) s->b = vb;
+                    }
+                }
+                free(decoded);
+            }
+            /* body complete — compute result */
+            double result = s->a + s->b;   /* SUM */
+            char json[256];
+            int jl = snprintf(json, sizeof(json),
+                "{\"worker\":\"%s\",\"request_no\":%" PRIu64 ",\"result\":%.6g}\n",
+                worker_name, s->req_no, result);
+            if (jl <= 0 || (size_t)jl >= sizeof(json)) { session_close(s); return; }
+            s->resp_len = (size_t)snprintf(s->resp, sizeof(s->resp),
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: %s\r\n"
+                "\r\n%s",
+                jl,
+                s->should_close ? "close" : "keep-alive",
+                json);
+            s->resp_off = 0;
+            s->state    = S_WRITE_RESP;
+            epoll_mod(s->fd, EPOLLOUT);
+            again = 1;
+            break;
+        }
+
+        case S_WRITE_RESP: {
+            while (s->resp_off < s->resp_len) {
+                ssize_t n = write(s->fd,
+                                  s->resp + s->resp_off,
+                                  s->resp_len - s->resp_off);
+                if (n > 0) {
+                    s->resp_off += (size_t)n;
+                } else if (n == 0) {
+                    session_close(s); return;
+                } else {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+                    session_close(s); return;
+                }
+            }
+            if (s->should_close) { session_close(s); return; }
+            session_reset_for_next(s);
+            epoll_mod(s->fd, EPOLLIN);
+            break;
+        }
+
+        } /* end switch */
+    } while (again);
+}
+
+/* ── Accept new TCP connections ──────────────────────────────────────── */
+
+static void handle_accept(int listen_fd)
+{
+    for (;;) {
+        int conn_fd = accept4(listen_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        if (conn_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            break;
+        }
+        session_t *s = session_new(conn_fd);
+        if (!s) continue;
+        if (epoll_add(conn_fd, EPOLLIN) < 0) {
+            perror("[vanilla-fn] epoll_add");
+            s_sessions[conn_fd] = NULL;
+            free(s);
+            close(conn_fd);
+        }
+    }
+}
+
+/* ── main ────────────────────────────────────────────────────────────── */
 
 int main(void)
 {
     const char *worker_name = getenv("BENCH2_WORKER_NAME");
-    if (!worker_name || worker_name[0] == '\0') {
-        worker_name = "bench2-init-fn";
-    }
+    if (!worker_name || worker_name[0] == '\0') worker_name = "timing-fn-a";
 
     const char *port_str = getenv("BENCH2_LISTEN_PORT");
-    if (!port_str || port_str[0] == '\0') {
-        port_str = "8080";
-    }
+    if (!port_str || port_str[0] == '\0') port_str = "8080";
 
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGCHLD, SIG_IGN);
 
     struct addrinfo hints = {0};
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_flags    = AI_PASSIVE;
 
     struct addrinfo *res = NULL;
     if (getaddrinfo(NULL, port_str, &hints, &res) != 0) {
-        fprintf(stderr, "[bench2-init-fn] getaddrinfo failed\n");
+        fprintf(stderr, "[vanilla-fn] getaddrinfo failed\n");
         return 1;
     }
 
     int listen_fd = -1;
     for (struct addrinfo *it = res; it; it = it->ai_next) {
-        listen_fd = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
-        if (listen_fd < 0) {
-            continue;
-        }
-
+        listen_fd = socket(it->ai_family,
+                           it->ai_socktype | SOCK_NONBLOCK | SOCK_CLOEXEC,
+                           it->ai_protocol);
+        if (listen_fd < 0) continue;
         int one = 1;
         setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-
-        if (bind(listen_fd, it->ai_addr, it->ai_addrlen) == 0 && listen(listen_fd, 128) == 0) {
-            break;
-        }
-
+        if (bind(listen_fd, it->ai_addr, it->ai_addrlen) == 0 &&
+            listen(listen_fd, 1024) == 0) break;
         close(listen_fd);
         listen_fd = -1;
     }
     freeaddrinfo(res);
 
     if (listen_fd < 0) {
-        fprintf(stderr, "[bench2-init-fn] bind/listen failed on port %s\n", port_str);
+        fprintf(stderr, "[vanilla-fn] bind/listen failed on port %s\n", port_str);
         return 1;
     }
 
-    fprintf(stderr, "[bench2-init-fn] listening on :%s\n", port_str);
+    s_epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (s_epoll_fd < 0) { perror("[vanilla-fn] epoll_create1"); return 1; }
 
-    for (;;) {
-        int conn_fd = accept(listen_fd, NULL, NULL);
-        if (conn_fd < 0) {
-            continue;
-        }
-
-        pid_t pid = fork();
-        if (pid < 0) {
-            close(conn_fd);
-            continue;
-        }
-        if (pid == 0) {
-            close(listen_fd);
-            handle_connection(conn_fd, worker_name);
-            _exit(0);
-        }
-
-        close(conn_fd);
+    if (epoll_add(listen_fd, EPOLLIN) < 0) {
+        perror("[vanilla-fn] epoll_add listen_fd");
+        return 1;
     }
+
+    memset(s_sessions, 0, sizeof(s_sessions));
+    fprintf(stderr, "[vanilla-fn] %s listening on :%s [epoll multi-session]\n",
+            worker_name, port_str);
+
+    struct epoll_event events[WORKER_MAX_EVENTS];
+    for (;;) {
+        int n = epoll_wait(s_epoll_fd, events, WORKER_MAX_EVENTS, -1);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            perror("[vanilla-fn] epoll_wait");
+            break;
+        }
+        for (int i = 0; i < n; i++) {
+            int      efd = events[i].data.fd;
+            uint32_t rev = events[i].events;
+            if (efd == listen_fd) {
+                handle_accept(listen_fd);
+                continue;
+            }
+            session_t *s = (efd >= 0 && efd < MAX_FD) ? s_sessions[efd] : NULL;
+            if (!s) {
+                epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, efd, NULL);
+                close(efd);
+                continue;
+            }
+            if (rev & (EPOLLHUP | EPOLLERR)) { session_close(s); continue; }
+            advance_session(s, worker_name);
+        }
+    }
+    return 0;
 }

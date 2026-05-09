@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
-
-	"golang.org/x/sys/unix"
 )
 
 type VanillaConfig struct {
@@ -49,17 +46,6 @@ func MaybeStartProtoFromEnv() {
 	go func() {
 		log.Printf("[benchhttp-ka-proto] enabled listen=%s socket_dir=%s relay=%s",
 			cfg.ListenAddr, cfg.SocketDir, cfg.RelaySocket)
-
-		// Pin to CPU 0 for stable timing
-		runtime.LockOSThread()
-
-		var cpuSet unix.CPUSet
-		cpuSet.Set(0)
-		if err := unix.SchedSetaffinity(0, &cpuSet); err != nil {
-			log.Printf("[benchhttp-ka-proto] WARNING: failed to pin CPU: %v", err)
-		} else {
-			log.Printf("[benchhttp-ka-proto] pinned to CPU 0")
-		}
 
 		if err := RunProto(cfg); err != nil {
 			log.Printf("[benchhttp-ka-proto] stopped: %v", err)

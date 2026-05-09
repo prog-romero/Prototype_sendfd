@@ -23,8 +23,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
  && rm -rf /var/lib/apt/lists/*
 
 COPY libtlspeek/common/*.h libtlspeek/common/*.c /src/benchhttp/
-COPY benchmarks/micro/micro-bench3-keepalive-http/proto_gateway/benchhttp/ /src/benchhttp/
-COPY benchmarks/micro/micro-bench3-keepalive-http/proto_gateway/patches/openfaas-faas-gateway-httpmigrate.patch /src/gateway-httpmigrate.patch
+COPY benchmarks/micro/micro-bench-max-throughput-http/proto_gateway/benchhttp/ /src/benchhttp/
+COPY benchmarks/micro/micro-bench-max-throughput-http/proto_gateway/patches/openfaas-faas-gateway-httpmigrate.patch /src/gateway-httpmigrate.patch
 
 RUN install -d /out
 

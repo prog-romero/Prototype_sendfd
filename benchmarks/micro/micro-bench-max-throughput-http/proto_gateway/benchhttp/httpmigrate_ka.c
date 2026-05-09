@@ -20,32 +20,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/* ── Timing ─────────────────────────────────────────────────────────────── */
-
-static uint64_t bench_rdtsc(void) {
-#if defined(__aarch64__)
-    uint64_t val;
-    __asm__ volatile ("isb; mrs %0, cntvct_el0" : "=r"(val));
-    return val;
-#elif defined(__x86_64__) || defined(__i386__)
-    uint32_t lo, hi;
-    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
-    return ((uint64_t)hi << 32) | lo;
-#else
-    return 0;
-#endif
-}
-
-static uint64_t bench_cntfrq(void) {
-#if defined(__aarch64__)
-    uint64_t val;
-    __asm__ volatile ("mrs %0, cntfrq_el0" : "=r"(val));
-    return val;
-#else
-    return 1000000000ULL;
-#endif
-}
-
 static void wait_readable(int fd) {
     struct pollfd pfd;
     pfd.fd = fd;
@@ -67,9 +41,6 @@ int httpmigrate_ka_accept_peek(
 
     wait_readable(client_fd);
 
-    uint64_t t1   = bench_rdtsc();
-    uint64_t freq = bench_cntfrq();
-
     ssize_t n = recv(client_fd, headers_buf, headers_buf_sz - 1, MSG_PEEK);
     if (n <= 0) {
         close(client_fd);
@@ -80,11 +51,8 @@ int httpmigrate_ka_accept_peek(
     if (headers_len_out) *headers_len_out = (int)n;
 
     memset(payload_out, 0, sizeof(*payload_out));
-    payload_out->magic      = HTTPMIGRATE_MAGIC;
-    payload_out->version    = HTTPMIGRATE_VERSION;
-    payload_out->top1_rdtsc = t1;
-    payload_out->cntfrq     = freq;
-    payload_out->top1_set   = 1;
+    payload_out->magic   = HTTPMIGRATE_MAGIC;
+    payload_out->version = HTTPMIGRATE_VERSION;
 
     return client_fd;
 }

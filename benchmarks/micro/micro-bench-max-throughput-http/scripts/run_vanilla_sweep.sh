@@ -4,7 +4,7 @@
 # For each core count:
 #   1. Restart faasd on the Pi
 #   2. Redeploy timing-fn-a and timing-fn-b (fresh vanilla function containers)
-#   3. Wait until both functions are healthy on port 8082
+#   3. Wait until both functions are healthy on port 8080 (native faasd)
 #   4. Re-pin gateway + function containers to the requested CPU set
 #   5. Run the concurrency sweep in alternate mode via wrk
 #
@@ -24,8 +24,8 @@ PIN_SCRIPT="/tmp/pi_pin_all_http.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="$(cd "${SCRIPT_DIR}/../results" && pwd)"
 
-GATEWAY_URL_A="http://192.168.2.2:8082/function/timing-fn-a"
-GATEWAY_URL_B="http://192.168.2.2:8082/function/timing-fn-b"
+GATEWAY_URL_A="http://192.168.2.2:8080/function/timing-fn-a"
+GATEWAY_URL_B="http://192.168.2.2:8080/function/timing-fn-b"
 OPENFAAS_GATEWAY="http://127.0.0.1:8080"
 
 # Function images — override via env if you have newer tags.
@@ -40,41 +40,13 @@ PAYLOAD_KB="${PAYLOAD_KB:-32}"
 # Core counts to sweep — space-separated list.  Override to run a subset.
 CORES_LIST="${CORES_LIST:-1 2 3 4}"
 
-# Benchmark HTTP port (vanilla benchmark gateway maps 8082→8085 inside container)
-BENCH_HTTP_PORT=8082
-
 # Seconds between health-check retries
 HEALTH_RETRY_S=5
 HEALTH_TIMEOUT_S=120
-# Max seconds to wait for port 8082 to become TCP-reachable after restart
-PORT_OPEN_TIMEOUT_S=90
 
 # Seconds to wait for OpenFaaS API after restart
 API_TIMEOUT_S=180
 API_RETRY_S=3
-
-# ---------------------------------------------------------------------------
-# Helper: wait until TCP port is open (benchmark gateway, port 8082)
-# ---------------------------------------------------------------------------
-wait_port_open() {
-    local port="$1"
-    local host="192.168.2.2"
-    local deadline=$(( $(date +%s) + PORT_OPEN_TIMEOUT_S ))
-    echo "[port] Waiting for TCP port ${host}:${port} (benchmark gateway)..."
-    while true; do
-        if bash -c "</dev/tcp/${host}/${port}" 2>/dev/null; then
-            echo "[port] Port ${port} is open."
-            return 0
-        fi
-        if [[ $(date +%s) -ge ${deadline} ]]; then
-            echo "[error] Port ${port} never opened on ${host} after ${PORT_OPEN_TIMEOUT_S}s."
-            echo "[error] Ensure scripts/prepare_vanilla_stack.sh was run before this script."
-            exit 1
-        fi
-        echo "[port] Port ${port} not yet open. Retrying in 3s..."
-        sleep 3
-    done
-}
 
 # ---------------------------------------------------------------------------
 # Helper: wait until OpenFaaS gateway API is reachable on the Pi (port 8080)
@@ -124,11 +96,11 @@ redeploy_vanilla_functions() {
 }
 
 # ---------------------------------------------------------------------------
-# Helper: wait until both functions respond HTTP 200 on port 8082
+# Helper: wait until both functions respond HTTP 200 on port 8080
 # ---------------------------------------------------------------------------
 wait_healthy() {
     local deadline=$(( $(date +%s) + HEALTH_TIMEOUT_S ))
-    echo "[health] Waiting for timing-fn-a and timing-fn-b on port 8082..."
+    echo "[health] Waiting for timing-fn-a and timing-fn-b on port 8080..."
     while true; do
         local ok_a ok_b
         # Use POST with empty body — timing functions expect POST.
@@ -149,30 +121,6 @@ wait_healthy() {
         sleep "${HEALTH_RETRY_S}"
     done
 }
-
-# ---------------------------------------------------------------------------
-# Setup: enable vanilla HTTP benchmark gateway (port 8082) in docker-compose
-# ---------------------------------------------------------------------------
-ENABLE_VANILLA_SCRIPT="/tmp/pi_enable_vanilla_gw_bench3http.sh"
-echo "[setup] Uploading pi_enable_vanilla_gateway.sh to Pi..."
-scp "${SCRIPT_DIR}/pi_enable_vanilla_gateway.sh" "${PI_HOST}:${ENABLE_VANILLA_SCRIPT}"
-
-echo "[setup] Patching docker-compose on Pi to enable vanilla HTTP gateway on port 8082..."
-# pi_enable_vanilla_gateway.sh patches /var/lib/faasd/docker-compose.yaml to add:
-#   BENCH3_HTTP_ENABLE=1, BENCH3_HTTP_LISTEN=:8085, BENCH3_HTTP_UPSTREAM=127.0.0.1:8080
-#   and port mapping 8082:8085
-ssh "${PI_HOST}" \
-    "PI_SUDO_PASSWORD='${PI_PASS}' \
-     BENCH_GATEWAY_IMAGE='docker.io/local/faasd-gateway-bench3-ka-http:arm64' \
-     bash ${ENABLE_VANILLA_SCRIPT}"
-
-echo "[setup] Restarting faasd after compose patch..."
-ssh "${PI_HOST}" "printf '%s\n' '${PI_PASS}' | sudo -S systemctl restart faasd"
-echo "[setup] Waiting for OpenFaaS API after patch+restart..."
-wait_openfaas_api
-echo "[setup] Waiting for port 8082 to open after initial restart..."
-wait_port_open "${BENCH_HTTP_PORT}"
-echo "[setup] Vanilla HTTP benchmark gateway is ready on port 8082."
 
 # ---------------------------------------------------------------------------
 # Setup: upload pin script
@@ -198,10 +146,7 @@ for CORES in ${CORES_LIST}; do
     # 2. Redeploy vanilla functions
     redeploy_vanilla_functions
 
-    # 3a. Wait for the benchmark gateway port 8082 to be TCP-open
-    wait_port_open "${BENCH_HTTP_PORT}"
-
-    # 3b. Wait for both functions to respond 200 via the benchmark gateway
+    # 3. Wait for both functions to respond 200 via the native faasd gateway
     wait_healthy
 
     # 4. Re-pin gateway + function containers to the requested core set

@@ -16,7 +16,7 @@ BUILDER_NAME="${BUILDER_NAME:-bench2-arm64-builder}"
 USE_LOCAL_CACHE="${USE_LOCAL_CACHE:-auto}"
 BUILD_PROGRESS="${BUILD_PROGRESS:-plain}"
 
-DOCKERFILE_SRC="$ROOT_DIR/benchmarks/micro/micro-bench3-keepalive-http/proto_gateway/Dockerfile"
+DOCKERFILE_SRC="$ROOT_DIR/benchmarks/micro/micro-bench-max-throughput-http/proto_gateway/Dockerfile"
 DOCKERFILE_TMP="$(mktemp /tmp/faasd-gateway-dockerfile.XXXXXX)"
 
 mkdir -p "$(dirname "$LOCAL_ARCHIVE")" "$CACHE_DIR"
@@ -125,15 +125,16 @@ fi
 
 if [ "$ENABLE_ON_PI" = "1" ]; then
   # ✅ CRITICAL: sync scripts to Pi so it runs the LATEST version
-  SCRIPT_DIR="$ROOT_DIR/benchmarks/micro/micro-bench3-keepalive-http/scripts"
+  SCRIPT_DIR="$ROOT_DIR/benchmarks/micro/micro-bench-max-throughput-http/scripts"
   echo "[sync] syncing scripts to Pi"
-  rsync -az "$SCRIPT_DIR/" "$PI_SSH:~/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive-http/scripts/"
+  ssh "$PI_SSH" "mkdir -p ~/Prototype_sendfd/benchmarks/micro/micro-bench-max-throughput-http/scripts"
+  rsync -az "$SCRIPT_DIR/" "$PI_SSH:~/Prototype_sendfd/benchmarks/micro/micro-bench-max-throughput-http/scripts/"
 
   echo "[ssh] enabling prototype gateway with image $IMAGE_REF"
-  ssh "$PI_SSH" "cd ~/Prototype_sendfd && PI_SUDO_PASSWORD='$PI_SUDO_PASSWORD' PROTO_GATEWAY_IMAGE='$IMAGE_REF' bash benchmarks/micro/micro-bench3-keepalive-http/scripts/pi_enable_proto_gateway.sh"
+  ssh "$PI_SSH" "cd ~/Prototype_sendfd && PI_SUDO_PASSWORD='$PI_SUDO_PASSWORD' PROTO_GATEWAY_IMAGE='$IMAGE_REF' bash benchmarks/micro/micro-bench-max-throughput-http/scripts/pi_enable_proto_gateway.sh"
 else
   echo "[info] image imported. To enable it later on the Pi:"
-  echo "  cd ~/Prototype_sendfd && PROTO_GATEWAY_IMAGE=$IMAGE_REF bash benchmarks/micro/micro-bench3-keepalive-http/scripts/pi_enable_proto_gateway.sh"
+  echo "  cd ~/Prototype_sendfd && PROTO_GATEWAY_IMAGE=$IMAGE_REF bash benchmarks/micro/micro-bench-max-throughput-http/scripts/pi_enable_proto_gateway.sh"
 fi
 
 echo "[ok] gateway image built, copied, and imported"

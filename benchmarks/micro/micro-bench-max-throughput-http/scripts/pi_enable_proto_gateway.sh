@@ -64,7 +64,10 @@ if isinstance(env, dict):
     env['HTTPMIGRATE_KA_SOCKET_DIR'] = '/run/tlsmigrate'
     env['HTTPMIGRATE_KA_RELAY_SOCKET'] = '/run/tlsmigrate/relay.sock'
 else:
-    env = [e for e in env if not e.startswith('HTTPMIGRATE_')]
+    # Remove all HTTPMIGRATE and BENCH3_HTTP vars before re-adding what proto needs
+    env = [e for e in env if not (
+        e.startswith('HTTPMIGRATE_') or e.startswith('BENCH3_HTTP_')
+    )]
     env.extend([
         'HTTPMIGRATE_KA_ENABLE=1',
         'HTTPMIGRATE_KA_LISTEN=:8083',
@@ -75,6 +78,8 @@ else:
 
 # --- Ports ---
 ports = gw.get('ports', [])
+# Remove stale vanilla-bench port mapping (8082) and ensure proto port (8083)
+ports[:] = [p for p in ports if not (isinstance(p, str) and p.split(':', 1)[0] == '8082')]
 if '8083:8083' not in ports:
     ports.append('8083:8083')
 gw['ports'] = ports

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -75,6 +76,7 @@ func RunProto(cfg ProtoConfig) error {
 		)
 
 		if clientFD < 0 {
+			time.Sleep(10 * time.Millisecond) // prevent spin if epoll enters error state
 			continue
 		}
 
@@ -94,7 +96,7 @@ func RunProto(cfg ProtoConfig) error {
 }
 
 // runRelay listens on cfg.RelaySocket for sessions forwarded back by wrong-owner
-// workers. The payload already holds top1_rdtsc/cntfrq/top1_set and target_function.
+// workers. The payload holds target_function (and magic/version).
 func runRelay(cfg ProtoConfig) error {
 	cRelay := C.CString(cfg.RelaySocket)
 	defer C.free(unsafe.Pointer(cRelay))
@@ -113,6 +115,7 @@ func runRelay(cfg ProtoConfig) error {
 	for {
 		clientFD := C.httpmigrate_ka_accept_recv(listenFD, payload)
 		if clientFD < 0 {
+			time.Sleep(10 * time.Millisecond) // prevent spin if epoll enters error state
 			continue
 		}
 

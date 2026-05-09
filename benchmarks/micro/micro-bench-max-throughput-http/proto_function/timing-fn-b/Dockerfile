@@ -8,8 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
  && rm -rf /var/lib/apt/lists/*
 
-COPY benchmarks/micro/micro-bench3-keepalive-http/common/bench2_rdtsc.h /src/bench2_rdtsc.h
-COPY benchmarks/micro/micro-bench3-keepalive-http/proto_function/timing-fn-b/timing_fn_ka_worker.c /src/timing_fn_ka_worker.c
+COPY benchmarks/micro/micro-bench-max-throughput-http/proto_function/timing-fn-b/timing_fn_ka_worker.c /src/timing_fn_ka_worker.c
 COPY libtlspeek/common/*.h libtlspeek/common/*.c /src/
 
 RUN install -d /out \

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Deploy the full keep-alive prototype HTTP stack to the Pi.
 # Gateway: builds the patched gateway with relay support
-# Workers: timing-fn-a and timing-fn-b with keep-alive loop
+# Workers: timing-fn-a and timing-fn-b with epoll multi-session design
 set -euo pipefail
 
-BENCH="micro-bench3-keepalive-http"
+BENCH="micro-bench-max-throughput-http"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 PI_SSH="${PI_SSH:-romero@192.168.2.2}"
 PI_SUDO_PASSWORD="${PI_SUDO_PASSWORD:-tchiaze2003}"
@@ -16,14 +16,14 @@ WORKER_B_IMAGE="${WORKER_B_IMAGE:-ttl.sh/timing-fn-b-ka-http:24h}"
 GW_IMAGE="${GW_IMAGE:-docker.io/local/faasd-gateway-bench3-ka-http:arm64}"
 GW_ARCHIVE="${ROOT_DIR}/dist/faasd-gateway-bench3-ka-http-arm64.tar"
 
-echo "=== [bench3-ka-proto] 1. Building Keep-Alive Prototype Gateway ==="
+echo "=== [bench-max-tput-proto] 1. Building Keep-Alive Prototype Gateway ==="
 PI_SSH="$PI_SSH" \
 PI_SUDO_PASSWORD="$PI_SUDO_PASSWORD" \
 BUILDER_NAME="$BUILDER_NAME" \
 bash "${ROOT_DIR}/benchmarks/micro/${BENCH}/scripts/build_copy_enable_proto_gateway.sh"
 
 echo ""
-echo "=== [bench3-ka-proto] 2. Waiting for gateway to be ready ==="
+echo "=== [bench-max-tput-proto] 2. Waiting for gateway to be ready ==="
 ssh "${PI_SSH}" '
 for i in $(seq 1 45); do
   if curl -sf http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
@@ -38,7 +38,7 @@ exit 1
 '
 
 echo ""
-echo "=== [bench3-ka-proto] 3. Building worker images for timing-fn-a and timing-fn-b ==="
+echo "=== [bench-max-tput-proto] 3. Building worker images for timing-fn-a and timing-fn-b ==="
 docker buildx build \
   --builder "${BUILDER_NAME}" \
   --platform linux/arm64 \
@@ -56,7 +56,7 @@ docker buildx build \
   "${ROOT_DIR}"
 
 echo ""
-echo "=== [bench3-ka-proto] 4. Deploying timing-fn-a and timing-fn-b ==="
+echo "=== [bench-max-tput-proto] 4. Deploying timing-fn-a and timing-fn-b ==="
 ssh "${PI_SSH}" "
 export OPENFAAS_URL='${OPENFAAS_URL}'
 
@@ -85,7 +85,7 @@ faas-cli deploy \
 "
 
 echo ""
-echo "=== [bench3-ka-proto] 5. Waiting for worker sockets ==="
+echo "=== [bench-max-tput-proto] 5. Waiting for worker sockets ==="
 ssh "${PI_SSH}" "
 for i in \$(seq 1 30); do
   A_OK=0; B_OK=0
@@ -102,7 +102,7 @@ echo 'WARNING: sockets not found after 90s'
 "
 
 echo ""
-echo "=== [bench3-ka-proto] 6. End-to-end tests ==="
+echo "=== [bench-max-tput-proto] 6. End-to-end tests ==="
 echo "Testing fn-a..."
 curl -sf "http://192.168.2.2:8083/function/timing-fn-a" -X POST -H "Content-Length: 0" \
   && echo "[ok] Proto HTTP timing-fn-a works!" \
