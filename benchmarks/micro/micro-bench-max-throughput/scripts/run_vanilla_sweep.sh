@@ -23,9 +23,9 @@ GATEWAY_URL_A="https://192.168.2.2:8444/function/bench2-fn-a"
 GATEWAY_URL_B="https://192.168.2.2:8444/function/bench2-fn-b"
 OPENFAAS_GATEWAY="http://127.0.0.1:8080"
 
-# Set FN_IMAGE in the shell to override this fallback image.
-DEFAULT_FN_IMAGE="ttl.sh/bench3-keepalive-vanilla-fn-20260503114431:24h"
-FN_IMAGE="${FN_IMAGE:-${DEFAULT_FN_IMAGE}}"
+# One-time function image to reuse across the 1..4 core sweeps.
+# If empty, it is built/pushed/deployed using this benchmark's function script.
+FN_IMAGE="${FN_IMAGE:-}"
 
 # Seconds to wait between health-check retries after restart
 HEALTH_RETRY_S=5
@@ -78,6 +78,30 @@ redeploy_functions() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: build/push/deploy vanilla function once.
+# Captures the IMAGE_REF from script output into FN_IMAGE.
+# ---------------------------------------------------------------------------
+prepare_vanilla_function_image() {
+    if [[ -n "${FN_IMAGE}" ]]; then
+        echo "[setup] Reusing provided FN_IMAGE=${FN_IMAGE}"
+        return 0
+    fi
+
+    echo "[setup] Building/pushing/deploying vanilla function via max-throughput flow..."
+    local build_output
+    build_output=$(PI_SUDO_PASSWORD="${PI_PASS}" bash "${SCRIPT_DIR}/build_push_deploy_vanilla_function.sh")
+    printf '%s\n' "${build_output}"
+
+    FN_IMAGE=$(printf '%s\n' "${build_output}" | sed -n 's/^IMAGE_REF=//p' | tail -n 1)
+    if [[ -z "${FN_IMAGE}" ]]; then
+        echo "[error] Failed to parse IMAGE_REF from build_push_deploy_vanilla_function.sh output."
+        exit 1
+    fi
+
+    echo "[setup] Vanilla function image selected: ${FN_IMAGE}"
+}
+
+# ---------------------------------------------------------------------------
 # Helper: wait until both functions respond with HTTP 200 (or any reply)
 # ---------------------------------------------------------------------------
 wait_healthy() {
@@ -103,6 +127,9 @@ wait_healthy() {
 # Upload pin script once at the start
 echo "[setup] Uploading pi_pin_all.sh to Pi..."
 scp "${SCRIPT_DIR}/pi_pin_all.sh" "${PI_HOST}:${PIN_SCRIPT}"
+
+# Build/push/deploy function once using this benchmark's deployment flow.
+prepare_vanilla_function_image
 
 # ---------------------------------------------------------------------------
 # Main sweep loop

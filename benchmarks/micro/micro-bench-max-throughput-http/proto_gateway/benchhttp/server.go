@@ -17,23 +17,15 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 	"unsafe"
 )
 
 const targetSize = 128
 
 // RunProto starts the keep-alive zero-copy HTTP gateway.
-// It also spawns runRelay() to receive FDs returned by wrong-owner workers.
+// It handles both direct TCP ingress and relay UDS ingress in one epoll loop.
 func RunProto(cfg ProtoConfig) error {
 	os.MkdirAll(cfg.SocketDir, 0777)
-
-	// Start the relay listener in background
-	go func() {
-		if err := runRelay(cfg); err != nil {
-			log.Printf("[benchhttp-ka] relay stopped: %v", err)
-		}
-	}()
 
 	addr, err := net.ResolveTCPAddr("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -58,76 +50,103 @@ func RunProto(cfg ProtoConfig) error {
 	if err := syscall.Listen(listenFD, 4096); err != nil {
 		return err
 	}
+	if C.httpmigrate_ka_set_nonblocking(C.int(listenFD)) != 0 {
+		return fmt.Errorf("set nonblock listen fd failed")
+	}
+
+	cRelay := C.CString(cfg.RelaySocket)
+	defer C.free(unsafe.Pointer(cRelay))
+	relayFD := int(C.httpmigrate_ka_unix_server(cRelay))
+	if relayFD < 0 {
+		return fmt.Errorf("relay listen failed: %s", cfg.RelaySocket)
+	}
+	defer syscall.Close(relayFD)
 
 	headerBuf := make([]byte, 8192)
 	payload := (*C.httpmigrate_ka_payload_t)(C.malloc(C.size_t(C.sizeof_httpmigrate_ka_payload_t)))
 	defer C.free(unsafe.Pointer(payload))
+	relayPayload := (*C.httpmigrate_ka_payload_t)(C.malloc(C.size_t(C.sizeof_httpmigrate_ka_payload_t)))
+	defer C.free(unsafe.Pointer(relayPayload))
 
-	log.Printf("[benchhttp-ka] started keep-alive zero-copy HTTP gateway on %s", cfg.ListenAddr)
+	epollFD, err := syscall.EpollCreate1(0)
+	if err != nil {
+		return fmt.Errorf("epoll create: %w", err)
+	}
+	defer syscall.Close(epollFD)
+
+	if err := syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_ADD, listenFD,
+		&syscall.EpollEvent{Events: syscall.EPOLLIN, Fd: int32(listenFD)}); err != nil {
+		return fmt.Errorf("epoll add listen fd: %w", err)
+	}
+	if err := syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_ADD, relayFD,
+		&syscall.EpollEvent{Events: syscall.EPOLLIN, Fd: int32(relayFD)}); err != nil {
+		return fmt.Errorf("epoll add relay fd: %w", err)
+	}
+
+	log.Printf("[benchhttp-ka] started keep-alive zero-copy HTTP gateway on %s relay=%s [epoll]",
+		cfg.ListenAddr, cfg.RelaySocket)
+
+	events := make([]syscall.EpollEvent, 64)
 
 	for {
-		var hdrLen C.int
-		clientFD := C.httpmigrate_ka_accept_peek(
-			C.int(listenFD),
-			(*C.uchar)(unsafe.Pointer(&headerBuf[0])),
-			C.size_t(len(headerBuf)),
-			&hdrLen,
-			payload,
-		)
-
-		if clientFD < 0 {
-			time.Sleep(10 * time.Millisecond) // prevent spin if epoll enters error state
-			continue
+		n, err := syscall.EpollWait(epollFD, events, -1)
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			return fmt.Errorf("epoll wait: %w", err)
 		}
 
-		fnName, ok := parseFunctionName(headerBuf[:int(hdrLen)])
-		if !ok {
-			log.Printf("[benchhttp-ka] failed to parse function name")
-			syscall.Close(int(clientFD))
-			continue
-		}
+		for i := 0; i < n; i++ {
+			fd := int(events[i].Fd)
 
-		setPayloadTarget(payload, fnName)
+			if fd == listenFD {
+				for {
+					var hdrLen C.int
+					clientFD := C.httpmigrate_ka_accept_peek(
+						C.int(listenFD),
+						(*C.uchar)(unsafe.Pointer(&headerBuf[0])),
+						C.size_t(len(headerBuf)),
+						&hdrLen,
+						payload,
+					)
+					if clientFD < 0 {
+						break
+					}
 
-		if err := dispatchToFunction(cfg.SocketDir, fnName, int(clientFD), payload); err != nil {
-			log.Printf("[benchhttp-ka] dispatch failed fn=%s: %v", fnName, err)
-		}
-	}
-}
+					fnName, ok := parseFunctionName(headerBuf[:int(hdrLen)])
+					if !ok {
+						log.Printf("[benchhttp-ka] failed to parse function name")
+						_ = syscall.Close(int(clientFD))
+						continue
+					}
 
-// runRelay listens on cfg.RelaySocket for sessions forwarded back by wrong-owner
-// workers. The payload holds target_function (and magic/version).
-func runRelay(cfg ProtoConfig) error {
-	cRelay := C.CString(cfg.RelaySocket)
-	defer C.free(unsafe.Pointer(cRelay))
+					setPayloadTarget(payload, fnName)
+					if err := dispatchToFunction(cfg.SocketDir, fnName, int(clientFD), payload); err != nil {
+						log.Printf("[benchhttp-ka] dispatch failed fn=%s: %v", fnName, err)
+					}
+				}
+				continue
+			}
 
-	listenFD := C.httpmigrate_ka_unix_server(cRelay)
-	if listenFD < 0 {
-		return fmt.Errorf("relay listen failed: %s", cfg.RelaySocket)
-	}
-	defer syscall.Close(int(listenFD))
+			if fd == relayFD {
+				for {
+					clientFD := C.httpmigrate_ka_accept_recv(C.int(relayFD), relayPayload)
+					if clientFD < 0 {
+						break
+					}
 
-	payload := (*C.httpmigrate_ka_payload_t)(C.malloc(C.size_t(C.sizeof_httpmigrate_ka_payload_t)))
-	defer C.free(unsafe.Pointer(payload))
+					fnName := payloadTarget(relayPayload)
+					if fnName == "" {
+						_ = syscall.Close(int(clientFD))
+						continue
+					}
 
-	log.Printf("[benchhttp-ka] relay listener started on %s", cfg.RelaySocket)
-
-	for {
-		clientFD := C.httpmigrate_ka_accept_recv(listenFD, payload)
-		if clientFD < 0 {
-			time.Sleep(10 * time.Millisecond) // prevent spin if epoll enters error state
-			continue
-		}
-
-		fnName := payloadTarget(payload)
-		if fnName == "" {
-			syscall.Close(int(clientFD))
-			continue
-		}
-
-		log.Printf("[benchhttp-ka] relay: routing fd to fn=%s", fnName)
-		if err := dispatchToFunction(cfg.SocketDir, fnName, int(clientFD), payload); err != nil {
-			log.Printf("[benchhttp-ka] relay dispatch failed fn=%s: %v", fnName, err)
+					if err := dispatchToFunction(cfg.SocketDir, fnName, int(clientFD), relayPayload); err != nil {
+						log.Printf("[benchhttp-ka] relay dispatch failed fn=%s: %v", fnName, err)
+					}
+				}
+			}
 		}
 	}
 }

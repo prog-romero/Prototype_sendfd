@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 )
 
 func Run(cfg Config, _ http.Handler) error {
@@ -44,8 +43,6 @@ func serveConn(conn net.Conn, upstream string, transport *http.Transport) error 
 	writer := bufio.NewWriter(conn)
 
 	for {
-		top1, cntfrq := stampTop1(conn)
-
 		req, err := http.ReadRequest(reader)
 		if err != nil {
 			return err
@@ -62,13 +59,6 @@ func serveConn(conn net.Conn, upstream string, transport *http.Transport) error 
 		req.URL.Host = upstream
 		req.RequestURI = ""
 		req.Host = upstream
-
-		if top1 > 0 {
-			req.Header.Set("X-Bench2-Top1-Rdtsc", strconv.FormatUint(top1, 10))
-		}
-		if cntfrq > 0 {
-			req.Header.Set("X-Bench2-Cntfrq", strconv.FormatUint(cntfrq, 10))
-		}
 
 		resp, err := transport.RoundTrip(req)
 		if err != nil {
@@ -97,23 +87,4 @@ func serveConn(conn net.Conn, upstream string, transport *http.Transport) error 
 			return nil
 		}
 	}
-}
-
-func stampTop1(conn net.Conn) (uint64, uint64) {
-	if fdConn, ok := conn.(interface {
-		RawFD() int
-		Pending() int
-	}); ok {
-		if fdConn.Pending() == 0 {
-			/*
-			 * wolfSSL can read ahead at the record layer, so the raw socket may
-			 * appear empty even though the next HTTP request is already buffered
-			 * internally. Wait only briefly for raw readability, then stamp
-			 * immediately before the first consuming read.
-			 */
-			benchWaitReadableTimeout(fdConn.RawFD(), 5)
-		}
-	}
-
-	return benchReadCounter(), benchCounterFreq()
 }

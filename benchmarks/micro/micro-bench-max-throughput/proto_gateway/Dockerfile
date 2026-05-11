@@ -4,7 +4,7 @@
 # Build from workspace root:
 #   docker buildx build \
 #     --platform linux/arm64 \
-#     -f benchmarks/micro/micro-bench3-keepalive/proto_gateway/Dockerfile \
+#     -f benchmarks/micro/micro-bench-max-throughput/proto_gateway/Dockerfile \
 #     -t docker.io/local/bench3-keepalive-gateway:arm64 \
 #     --load .
 #
@@ -84,11 +84,11 @@ RUN cd /src/libtlspeek \
  && cp -f libtlspeek.a /usr/local/lib/libtlspeek.a \
  && ldconfig
 
-# ── bench3 common headers and gateway add-on packages ─────────────────────
-COPY benchmarks/micro/micro-bench3-keepalive/common/ /src/common/
-COPY benchmarks/micro/micro-bench3-keepalive/common/ /src/bench2common/
-COPY benchmarks/micro/micro-bench3-keepalive/proto_gateway/bench2gw/ /src/bench2gw/
-COPY benchmarks/micro/micro-bench3-keepalive/proto_gateway/benchhttps/ /src/benchhttps/
+# ── max-throughput common headers and gateway add-on packages ─────────────
+COPY benchmarks/micro/micro-bench-max-throughput/common/ /src/common/
+COPY benchmarks/micro/micro-bench-max-throughput/common/ /src/bench2common/
+COPY benchmarks/micro/micro-bench-max-throughput/proto_gateway/bench2gw/ /src/bench2gw/
+COPY benchmarks/micro/micro-bench-max-throughput/proto_gateway/benchhttps/ /src/benchhttps/
 
 # Make common headers available to the CGO compilation in the build context
 RUN cp /src/bench2common/bench2_rdtsc.h  /src/bench2gw/bench2_rdtsc.h \

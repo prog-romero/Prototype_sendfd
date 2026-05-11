@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # manual_proto_test.sh
 #
-# Prepares and tests the prototype deployment using the exact bench3 flow.
+# Prepares and tests the prototype deployment using this benchmark's flow.
 # This validates that the prototype gateway + worker are working correctly
 # before running the full max-throughput evaluation.
 #
@@ -19,7 +19,6 @@ PI_HOST="romero@192.168.2.2"
 PI_PASS="tchiaze2003"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BENCH3_SCRIPT_DIR="$(cd "${SCRIPT_DIR}/../../micro-bench3-keepalive/scripts" && pwd)"
 CLIENT_DIR="${SCRIPT_DIR}/../client"
 
 echo ""
@@ -28,12 +27,12 @@ echo "PROTOTYPE DEPLOYMENT + MANUAL TEST"
 echo "=========================================="
 echo ""
 
-# Step 1: Use bench3 prepare_proto_stack.sh to build, deploy, and smoke test
-echo "[1/2] Preparing prototype stack using bench3 deployment flow..."
+# Step 1: Build, deploy, and smoke test this benchmark's prototype stack.
+echo "[1/2] Preparing prototype stack using max-throughput deployment flow..."
 echo "      (This builds gateway & worker, deploys them, and smoke tests)"
 echo ""
 
-PI_SUDO_PASSWORD="${PI_PASS}" bash "${BENCH3_SCRIPT_DIR}/prepare_proto_stack.sh"
+PI_SUDO_PASSWORD="${PI_PASS}" bash "${SCRIPT_DIR}/prepare_proto_stack.sh"
 
 echo ""
 echo "[2/2] Running extended manual test with timing data..."

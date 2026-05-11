@@ -34,7 +34,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}/../../../../"
-DOCKERFILE="${REPO_ROOT}/benchmarks/micro/micro-bench3-keepalive/vanilla_function/Dockerfile"
+DOCKERFILE="${REPO_ROOT}/benchmarks/micro/micro-bench-max-throughput/vanilla_function/Dockerfile"
 
 : "${PI_SSH:=romero@192.168.2.2}"
 : "${BUILDER_NAME:=bench2-arm64-builder}"
@@ -150,6 +150,10 @@ build_cmd+=("${REPO_ROOT}")
 "${build_cmd[@]}"
 
 echo "[3/3] deploying ${FUNCTION_A} and ${FUNCTION_B} on ${PI_SSH}"
+CPU_ENV_ARG=""
+if [[ -n "${CPU_SET}" ]]; then
+  CPU_ENV_ARG="--env CPU_SET=${CPU_SET}"
+fi
 ssh "${PI_SSH}" "
   set -euo pipefail
   fa-deploy() {
@@ -158,7 +162,7 @@ ssh "${PI_SSH}" "
     faas-cli deploy --image '${IMAGE_REF}' --name \"\$name\" --gateway '${GATEWAY_URL}' \\
       --env BENCH2_WORKER_NAME=\"\$name\" \\
       --env BENCH2_LISTEN_PORT=8080 \\
-      --env CPU_SET='${CPU_SET:-}' \\
+      ${CPU_ENV_ARG} \\
       --label com.openfaas.scale.zero=false
   }
 

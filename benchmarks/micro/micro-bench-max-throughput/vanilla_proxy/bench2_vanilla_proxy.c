@@ -1,20 +1,9 @@
 /*
  * bench2_vanilla_proxy.c — Benchmark-2 keepalive vanilla TLS proxy.
  *
- * Listens on :8444 (TLS, wolfSSL).  For each persistent TLS connection from
- * the client it services all HTTP/1.1 keepalive requests with the following
- * timing discipline:
- *
- *   bench2_wait_readable(tcp_fd)   // spin until encrypted bytes arrive
- *   top1 = bench2_rdtsc()          // stamp — data already in kernel buffer
- *   wolfSSL_read(ssl, ...)         // TLS decrypt → HTTP request
- *   ... inject X-Bench2-Top1-Rdtsc: <top1> header ...
- *   forward to faasd gateway (:8080)
- *   read HTTP response (contains top2 stamped by container function)
- *   forward response back over TLS
- *
- * The container function (bench2_vanilla_fn) reads X-Bench2-Top1-Rdtsc,
- * stamps top2 after reading the full body, and returns the delta in JSON.
+ * Listens on :8444 (TLS, wolfSSL). For each persistent TLS connection from
+ * the client, it forwards HTTP/1.1 keepalive requests to the faasd gateway
+ * and relays responses back over TLS.
  *
  * Build (on Raspberry Pi):
  *   gcc -O2 -Wall -o bench2_vanilla_proxy bench2_vanilla_proxy.c \
@@ -38,17 +27,19 @@
 #include <wolfssl/ssl.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <sched.h>
 #include <unistd.h>
 
@@ -183,18 +174,23 @@ static int connect_tcp(const char *host, const char *port)
     return fd;
 }
 
+static int set_nonblocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
+    return 0;
+}
+
 /* ─── Per-connection handler ─────────────────────────────────────────────── */
 
 /*
  * handle_connection — run inside a forked child.
  *
  * Performs the TLS handshake, then loops over HTTP/1.1 keepalive requests:
- *   1. Wait for encrypted data (FIONREAD on raw TCP fd).
- *   2. Stamp top1 = bench2_rdtsc().
- *   3. Read full HTTP request via wolfSSL_read.
- *   4. Inject X-Bench2-Top1-Rdtsc header.
- *   5. Forward to faasd gateway; relay response back to TLS client.
- *   6. Repeat until Connection: close or read error.
+ *   1. Read full HTTP request via wolfSSL_read.
+ *   2. Forward to faasd gateway; relay response back to TLS client.
+ *   3. Repeat until Connection: close or read error.
  */
 static void handle_connection(int client_fd, WOLFSSL_CTX *ctx,
                               const char *gw_host, const char *gw_port)
@@ -209,15 +205,8 @@ static void handle_connection(int client_fd, WOLFSSL_CTX *ctx,
         return;
     }
 
-    int tcp_fd = wolfSSL_get_fd(ssl);   /* raw kernel socket for FIONREAD */
-
     /* ── keepalive request loop ── */
     for (;;) {
-        /* Wait until encrypted TLS record(s) for next request are in buffer */
-        bench2_wait_readable(tcp_fd);
-        uint64_t top1  = bench2_rdtsc();
-        uint64_t freq  = bench2_cntfrq();
-
         /* ── Read HTTP request headers ── */
         size_t cap = 65536, len = 0;
         char *req = malloc(cap);
@@ -269,17 +258,6 @@ static void handle_connection(int client_fd, WOLFSSL_CTX *ctx,
             body_in_buf   += (size_t)n;
         }
 
-        /* ── Build the timing header to inject ── */
-        char top1_hdr[128];
-        int  top1_hdr_len = snprintf(top1_hdr, sizeof(top1_hdr),
-                                     "X-Bench2-Top1-Rdtsc: %llu\r\n"
-                                     "X-Bench2-Cntfrq: %llu\r\n",
-                                     (unsigned long long)top1,
-                                     (unsigned long long)freq);
-        if (top1_hdr_len <= 0 || (size_t)top1_hdr_len >= sizeof(top1_hdr)) {
-            free(req); break;
-        }
-
         /* ── Connect to faasd gateway and forward request ── */
         int gw_fd = connect_tcp(gw_host, gw_port);
         if (gw_fd < 0) {
@@ -288,16 +266,7 @@ static void handle_connection(int client_fd, WOLFSSL_CTX *ctx,
             free(req); goto done;
         }
 
-        /*
-         * Insert top1_hdr just before the final \r\n\r\n:
-         *   req[0..hdr_end+1]  — all headers up to and including last \r\n
-         *   top1_hdr           — new header
-         *   req[hdr_end+2..]   — final \r\n + body
-         */
-        size_t insert_at = (size_t)hdr_end + 2;  /* byte after last header's \r\n */
-        if (write_all(gw_fd, req, insert_at)                      != 0 ||
-            write_all(gw_fd, top1_hdr, (size_t)top1_hdr_len)      != 0 ||
-            write_all(gw_fd, req + insert_at, len - insert_at)    != 0) {
+        if (write_all(gw_fd, req, len) != 0) {
             close(gw_fd); free(req); goto done;
         }
         free(req);
@@ -384,6 +353,21 @@ done:
     close(client_fd);
 }
 
+typedef struct {
+    int client_fd;
+    WOLFSSL_CTX *ctx;
+    char gw_host[256];
+    char gw_port[16];
+} proxy_conn_args_t;
+
+static void *proxy_conn_thread(void *arg)
+{
+    proxy_conn_args_t *args = (proxy_conn_args_t *)arg;
+    handle_connection(args->client_fd, args->ctx, args->gw_host, args->gw_port);
+    free(args);
+    return NULL;
+}
+
 /* ─── main ──────────────────────────────────────────────────────────────── */
 
 static void usage(const char *prog)
@@ -428,8 +412,6 @@ int main(int argc, char **argv)
     snprintf(gw_port, sizeof(gw_port), "%s", col + 1);
 
     signal(SIGPIPE, SIG_IGN);
-    signal(SIGCHLD, SIG_IGN);
-
     wolfSSL_Init();
     WOLFSSL_CTX *ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
     if (!ctx) { fprintf(stderr, "[bench2-proxy] wolfSSL_CTX_new failed\n"); return 1; }
@@ -471,32 +453,86 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (set_nonblocking(listen_fd) != 0) {
+        fprintf(stderr, "[bench2-proxy] set_nonblocking(listen_fd) failed: %s\n", strerror(errno));
+        close(listen_fd);
+        wolfSSL_CTX_free(ctx);
+        wolfSSL_Cleanup();
+        return 1;
+    }
+
+    int epfd = epoll_create1(EPOLL_CLOEXEC);
+    if (epfd < 0) {
+        fprintf(stderr, "[bench2-proxy] epoll_create1 failed: %s\n", strerror(errno));
+        close(listen_fd);
+        wolfSSL_CTX_free(ctx);
+        wolfSSL_Cleanup();
+        return 1;
+    }
+
+    struct epoll_event lev;
+    memset(&lev, 0, sizeof(lev));
+    lev.events = EPOLLIN;
+    lev.data.fd = listen_fd;
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &lev) != 0) {
+        fprintf(stderr, "[bench2-proxy] epoll_ctl add listen_fd failed: %s\n", strerror(errno));
+        close(epfd);
+        close(listen_fd);
+        wolfSSL_CTX_free(ctx);
+        wolfSSL_Cleanup();
+        return 1;
+    }
+
     fprintf(stderr, "[bench2-proxy] listening on %s:%s → upstream %s:%s\n",
             listen_host, listen_port, gw_host, gw_port);
 
+    struct epoll_event events[32];
+
     for (;;) {
-        int client_fd = accept(listen_fd, NULL, NULL);
-        if (client_fd < 0) {
+        int n = epoll_wait(epfd, events, (int)(sizeof(events) / sizeof(events[0])), -1);
+        if (n < 0) {
             if (errno == EINTR) continue;
-            perror("[bench2-proxy] accept");
-            continue;
+            fprintf(stderr, "[bench2-proxy] epoll_wait failed: %s\n", strerror(errno));
+            break;
         }
 
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("[bench2-proxy] fork");
-            close(client_fd);
-            continue;
+        for (int i = 0; i < n; i++) {
+            if (events[i].data.fd != listen_fd) continue;
+
+            for (;;) {
+                int client_fd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
+                if (client_fd < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                    if (errno == EINTR) continue;
+                    perror("[bench2-proxy] accept4");
+                    break;
+                }
+
+                proxy_conn_args_t *args = calloc(1, sizeof(*args));
+                if (!args) {
+                    close(client_fd);
+                    continue;
+                }
+
+                args->client_fd = client_fd;
+                args->ctx = ctx;
+                snprintf(args->gw_host, sizeof(args->gw_host), "%s", gw_host);
+                snprintf(args->gw_port, sizeof(args->gw_port), "%s", gw_port);
+
+                pthread_t tid;
+                if (pthread_create(&tid, NULL, proxy_conn_thread, args) != 0) {
+                    close(client_fd);
+                    free(args);
+                    continue;
+                }
+                pthread_detach(tid);
+            }
         }
-        if (pid == 0) {
-            /* child */
-            close(listen_fd);
-            handle_connection(client_fd, ctx, gw_host, gw_port);
-            wolfSSL_CTX_free(ctx);
-            wolfSSL_Cleanup();
-            exit(0);
-        }
-        /* parent */
-        close(client_fd);
     }
+
+    close(epfd);
+    close(listen_fd);
+    wolfSSL_CTX_free(ctx);
+    wolfSSL_Cleanup();
+    return 1;
 }

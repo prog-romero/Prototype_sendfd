@@ -13,6 +13,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -54,10 +55,23 @@ int unix_server_socket(const char *path, int backlog)
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 
+int unix_set_nonblocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
+    return 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+
 int unix_accept(int listen_fd)
 {
     int conn_fd = accept(listen_fd, NULL, NULL);
     if (conn_fd < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            return -1;
+        }
         perror("[unix] accept() failed");
         return -1;
     }

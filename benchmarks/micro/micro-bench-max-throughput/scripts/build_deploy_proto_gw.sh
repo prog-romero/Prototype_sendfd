@@ -58,7 +58,7 @@ builder_has_cache() {
     docker buildx du --builder "${BUILDER_NAME}" 2>/dev/null | awk 'NR == 2 { found = 1 } END { exit(found ? 0 : 1) }'
 }
 
-DOCKERFILE="${REPO_ROOT}/benchmarks/micro/micro-bench3-keepalive/proto_gateway/Dockerfile"
+DOCKERFILE="${REPO_ROOT}/benchmarks/micro/micro-bench-max-throughput/proto_gateway/Dockerfile"
 
 cleanup_cache() {
     local tmp_cache

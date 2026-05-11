@@ -11,20 +11,20 @@
 #include "unix_socket.h"
 
 #include <errno.h>
-#include <poll.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-static void wait_readable(int fd) {
-    struct pollfd pfd;
-    pfd.fd = fd;
-    pfd.events = POLLIN;
-    poll(&pfd, 1, 5000);
+int httpmigrate_ka_set_nonblocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
+    return 0;
 }
 
 /* ── httpmigrate_ka_accept_peek ─────────────────────────────────────────── */
@@ -38,10 +38,13 @@ int httpmigrate_ka_accept_peek(
 {
     int client_fd = accept(listen_fd, NULL, NULL);
     if (client_fd < 0) return -1;
+    if (httpmigrate_ka_set_nonblocking(client_fd) != 0) {
+        close(client_fd);
+        return -1;
+    }
 
-    wait_readable(client_fd);
-
-    ssize_t n = recv(client_fd, headers_buf, headers_buf_sz - 1, MSG_PEEK);
+    ssize_t n = recv(client_fd, headers_buf, headers_buf_sz - 1,
+                     MSG_PEEK | MSG_DONTWAIT);
     if (n <= 0) {
         close(client_fd);
         return -1;
@@ -80,6 +83,10 @@ int httpmigrate_ka_unix_server(const char* sock_path)
 {
     int fd = unix_server_socket(sock_path, 4096);
     if (fd < 0) return -1;
+    if (httpmigrate_ka_set_nonblocking(fd) != 0) {
+        close(fd);
+        return -1;
+    }
     (void)chmod(sock_path, 0777);
     return fd;
 }
@@ -93,6 +100,10 @@ int httpmigrate_ka_accept_recv(int relay_listen_fd,
 
     int conn_fd = unix_accept(relay_listen_fd);
     if (conn_fd < 0) return -1;
+    if (httpmigrate_ka_set_nonblocking(conn_fd) != 0) {
+        close(conn_fd);
+        return -1;
+    }
 
     int client_fd = -1;
     if (recvfd_with_state(conn_fd, &client_fd, payload_out, sizeof(*payload_out)) != 0) {

@@ -603,7 +603,15 @@ def main() -> None:
         fn_b=args.fn_b,
     )
 
-    out_dir = (script_dir / args.out_dir).resolve() if not Path(args.out_dir).is_absolute() else Path(args.out_dir)
+    out_dir_arg = Path(args.out_dir).expanduser()
+    if out_dir_arg.is_absolute():
+        out_dir = out_dir_arg.resolve()
+    elif args.out_dir == DEFAULT_OUT_DIR:
+        # Keep historical behavior for the script default.
+        out_dir = (script_dir / out_dir_arg).resolve()
+    else:
+        # For user-provided relative paths, resolve from current working directory.
+        out_dir = (Path.cwd() / out_dir_arg).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if rate_values:

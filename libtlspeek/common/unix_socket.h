@@ -28,6 +28,14 @@ int unix_server_socket(const char *path, int backlog);
 int unix_accept(int listen_fd);
 
 /**
+ * Set O_NONBLOCK on an existing socket fd.
+ *
+ * @param fd socket descriptor.
+ * @return 0 on success, -1 on error.
+ */
+int unix_set_nonblocking(int fd);
+
+/**
  * Create a Unix domain socket and connect to the server at path.
  *
  * @param path  Socket filesystem path (e.g. /tmp/worker_0.sock).

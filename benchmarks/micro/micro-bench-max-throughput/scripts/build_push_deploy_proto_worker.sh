@@ -26,7 +26,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}/../../../../"
-DOCKERFILE="${REPO_ROOT}/benchmarks/micro/micro-bench3-keepalive/proto_worker/Dockerfile"
+DOCKERFILE="${REPO_ROOT}/benchmarks/micro/micro-bench-max-throughput/proto_worker/Dockerfile"
 
 : "${PI_SSH:=romero@192.168.2.2}"
 : "${BUILDER_NAME:=bench2-arm64-builder}"
@@ -56,7 +56,7 @@ promote_tmp_cache() {
 
 prime_local_cache_from_gateway() {
   local gateway_dockerfile
-  gateway_dockerfile="${REPO_ROOT}/benchmarks/micro/micro-bench3-keepalive/proto_gateway/Dockerfile"
+  gateway_dockerfile="${REPO_ROOT}/benchmarks/micro/micro-bench-max-throughput/proto_gateway/Dockerfile"
 
   echo "[build] priming local cache from ${gateway_dockerfile} via ${BUILDER_NAME}"
 

@@ -28,7 +28,10 @@
 #include <unistd.h>
 #include <errno.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/epoll.h>
+#include <sys/wait.h>
 #include <netinet/in.h>
 
 
@@ -40,6 +43,14 @@
 
 #define MAX_WORKERS   256  /* Increased for fair evaluation with many workers */
 #define LISTEN_BACKLOG 4096
+
+static int set_nonblocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) return -1;
+    return 0;
+}
 
 /* ─────────────────────────────────────────────────────────────────────────── */
 /* TCP server socket setup                                                      */
@@ -66,6 +77,9 @@ static int create_tcp_listener(int port)
     }
     if (listen(sock, LISTEN_BACKLOG) < 0) {
         perror("[gw] listen"); close(sock); return -1;
+    }
+    if (set_nonblocking(sock) < 0) {
+        perror("[gw] set_nonblocking(listen)"); close(sock); return -1;
     }
 
     fprintf(stderr, "[gw] TCP listener on port %d (fd=%d)\n", port, sock);
@@ -318,22 +332,51 @@ int main(int argc, char *argv[])
     for (int i = 0; i < num_gw_processes; i++) {
         pid_t pid = fork();
         if (pid == 0) {
-            /* Child process: Accept and handle connections */
-            while (1) {
-                struct sockaddr_in client_addr;
-                socklen_t addrlen = sizeof(client_addr);
+            int epfd = epoll_create1(EPOLL_CLOEXEC);
+            if (epfd < 0) {
+                perror("[gw-child] epoll_create1");
+                exit(1);
+            }
 
-                int client_fd = accept(tcp_listen_fd,
-                                       (struct sockaddr *)&client_addr,
-                                       &addrlen);
-                if (client_fd < 0) {
+            struct epoll_event lev;
+            memset(&lev, 0, sizeof(lev));
+            lev.events = EPOLLIN;
+            lev.data.fd = tcp_listen_fd;
+            if (epoll_ctl(epfd, EPOLL_CTL_ADD, tcp_listen_fd, &lev) != 0) {
+                perror("[gw-child] epoll_ctl add listen");
+                close(epfd);
+                exit(1);
+            }
+
+            struct epoll_event events[64];
+
+            /* Child process: epoll-driven accept loop */
+            while (1) {
+                int n = epoll_wait(epfd, events, (int)(sizeof(events) / sizeof(events[0])), -1);
+                if (n < 0) {
                     if (errno == EINTR) continue;
-                    perror("[gw-child] accept");
+                    perror("[gw-child] epoll_wait");
                     continue;
                 }
 
-                /* In pre-forked mode, we handle the connection directly without forking again */
-                handle_connection(client_fd, wctx, n_workers);
+                for (int e = 0; e < n; e++) {
+                    if (events[e].data.fd != tcp_listen_fd) continue;
+
+                    while (1) {
+                        int client_fd = accept(tcp_listen_fd,
+                                               NULL,
+                                               NULL);
+                        if (client_fd < 0) {
+                            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                            if (errno == EINTR) continue;
+                            perror("[gw-child] accept");
+                            break;
+                        }
+
+                        /* Keep per-client socket in blocking mode for wolfSSL handshake path. */
+                        handle_connection(client_fd, wctx, n_workers);
+                    }
+                }
             }
             exit(0);
         } else if (pid < 0) {

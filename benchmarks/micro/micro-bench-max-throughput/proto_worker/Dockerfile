@@ -8,7 +8,7 @@
 # Build from workspace root:
 #   docker buildx build \
 #     --platform linux/arm64 \
-#     -f benchmarks/micro/micro-bench3-keepalive/proto_worker/Dockerfile \
+#     -f benchmarks/micro/micro-bench-max-throughput/proto_worker/Dockerfile \
 #     -t ttl.sh/bench3-keepalive-proto-worker:24h \
 #     --load .
 #
@@ -73,10 +73,10 @@ RUN cd /src/libtlspeek \
  && cp -f libtlspeek.a /usr/local/lib/libtlspeek.a \
  && ldconfig
 
-# bench3 common headers and worker
-COPY benchmarks/micro/micro-bench3-keepalive/common/bench2_rdtsc.h  /src/bench2_rdtsc.h
-COPY benchmarks/micro/micro-bench3-keepalive/common/bench2_payload.h /src/bench2_payload.h
-COPY benchmarks/micro/micro-bench3-keepalive/proto_worker/bench2_proto_worker.c /src/
+# max-throughput common headers and worker
+COPY benchmarks/micro/micro-bench-max-throughput/common/bench2_rdtsc.h  /src/bench2_rdtsc.h
+COPY benchmarks/micro/micro-bench-max-throughput/common/bench2_payload.h /src/bench2_payload.h
+COPY benchmarks/micro/micro-bench-max-throughput/proto_worker/bench2_proto_worker.c /src/
 
 RUN install -d /out \
  && extra_cflags='' \

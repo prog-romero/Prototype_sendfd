@@ -39,25 +39,12 @@
  *   serial         — TLS session state (keys, IV, seq-num, wolfSSL export blob).
  *   target_function— null-terminated name of the function that should handle
  *                    the next request on this connection.
- *   top1_rdtsc     — bench2_rdtsc() value stamped at top1:
- *                      · For the first request: stamped by the gateway C shim
- *                        just before tls_read_peek().
- *                      · For a relayed request: stamped by the wrong-owner
- *                        container just before its tls_read_peek().
- *   cntfrq         — CNTFRQ_EL0 / bench2_cntfrq() at the time top1 was stamped,
- *                    so the receiver can convert cycles to nanoseconds.
- *   top1_set       — 1 when top1_rdtsc / cntfrq are valid.
- *   _pad           — reserved, zero.
  */
 typedef struct {
     uint32_t         magic;
     uint32_t         version;
     tlspeek_serial_t serial;
     char             target_function[BENCH2_KA_TARGET_LEN];
-    uint64_t         top1_rdtsc;
-    uint64_t         cntfrq;
-    uint8_t          top1_set;
-    uint8_t          _pad[7];
 } bench2_keepalive_payload_t;
 
 #endif /* BENCH2_PAYLOAD_H */

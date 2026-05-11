@@ -5,14 +5,7 @@
  * rdtsc/CNTVCT-based counters. The existing bench2_rdtsc()/bench2_cntfrq()
  * names are kept so the rest of the benchmark code and CSV schema stay intact.
  *
- * Usage pattern:
- *
- *   bench2_wait_readable(fd);            // spin-yield until FIONREAD > 0
- *   uint64_t top1 = bench2_rdtsc();      // stamp — data is already in buffer
- *   ... perform read/wolfSSL_read ...
- *   uint64_t top2 = bench2_rdtsc();      // stamp — after full payload read
- *   uint64_t delta = top2 - top1;        // already nanoseconds
- *   uint64_t freq  = bench2_cntfrq();    // fixed 1 GHz scale
+ * names are kept so older benchmark helpers can still build unchanged.
  */
 #ifndef BENCH2_RDTSC_H
 #define BENCH2_RDTSC_H
@@ -55,8 +48,7 @@ static inline uint64_t bench2_cntfrq(void)
  * in fd's kernel receive buffer.
  *
  * Must be called on the raw TCP socket fd (not on a wolfSSL handle, not on a
- * Unix-domain socket). Call immediately before bench2_rdtsc() so that top1 is
- * stamped only when the data is already sitting in the kernel buffer.
+ * Unix-domain socket).
  */
 static inline void bench2_wait_readable(int fd)
 {

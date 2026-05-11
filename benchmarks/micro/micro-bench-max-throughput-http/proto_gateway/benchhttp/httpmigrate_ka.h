@@ -47,6 +47,9 @@ int httpmigrate_ka_unix_server(const char* sock_path);
 int httpmigrate_ka_accept_recv(int relay_listen_fd,
                                httpmigrate_ka_payload_t* payload_out);
 
+/* Set O_NONBLOCK on an fd, returning 0 on success and -1 on error. */
+int httpmigrate_ka_set_nonblocking(int fd);
+
 #ifdef __cplusplus
 }
 #endif

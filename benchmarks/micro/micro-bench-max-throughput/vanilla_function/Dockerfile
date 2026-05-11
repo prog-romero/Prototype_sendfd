@@ -1,10 +1,9 @@
 # Bench3 keepalive vanilla function image (arm64).
-# Plain HTTP server — no TLS.  Timing: reads X-Bench2-Top1-Rdtsc from gateway,
-# stamps top2 after full body read, returns JSON delta.
+# Plain HTTP server — no TLS. Returns arithmetic JSON for the owned function.
 #
 # Build from workspace root:
 #   docker buildx build --platform linux/arm64 \
-#     -f benchmarks/micro/micro-bench3-keepalive/vanilla_function/Dockerfile \
+#     -f benchmarks/micro/micro-bench-max-throughput/vanilla_function/Dockerfile \
 #     -t ttl.sh/bench3-keepalive-vanilla-fn:24h --push .
 
 FROM debian:bookworm AS build
@@ -17,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # Mirror source tree so that #include "../common/bench2_rdtsc.h" resolves.
-COPY benchmarks/micro/micro-bench3-keepalive/common/bench2_rdtsc.h /src/common/bench2_rdtsc.h
-COPY benchmarks/micro/micro-bench3-keepalive/vanilla_function/bench2_vanilla_fn.c /src/vanilla_function/bench2_vanilla_fn.c
+COPY benchmarks/micro/micro-bench-max-throughput/common/bench2_rdtsc.h /src/common/bench2_rdtsc.h
+COPY benchmarks/micro/micro-bench-max-throughput/vanilla_function/bench2_vanilla_fn.c /src/vanilla_function/bench2_vanilla_fn.c
 
 RUN install -d /out \
  && gcc -O2 -Wall -Wextra \

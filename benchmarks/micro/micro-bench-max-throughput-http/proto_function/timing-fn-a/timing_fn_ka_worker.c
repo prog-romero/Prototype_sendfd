@@ -145,6 +145,7 @@ typedef struct session {
 
 static int        s_epoll_fd        = -1;
 static session_t *s_sessions[MAX_FD];   /* NULL = unused */
+static uint8_t    s_pending_uds[MAX_FD];
 
 /* ── Low-level helpers ───────────────────────────────────────────────────── */
 
@@ -204,45 +205,80 @@ static void session_reset_for_next(session_t *s) {
     s->state          = S_PEEK_OWNER;
 }
 
+static void add_client_session_from_payload(int client_fd,
+                                            const httpmigrate_ka_payload_t *payload)
+{
+    if (client_fd < 0) return;
+    if (!payload || payload->magic != HTTPMIGRATE_MAGIC ||
+        payload->version != HTTPMIGRATE_VERSION) {
+        fprintf(stderr, "[ka-worker] bad magic/version — dropping fd\n");
+        close(client_fd);
+        return;
+    }
+
+    if (set_nonblocking(client_fd) < 0) {
+        perror("[ka-worker] set_nonblocking");
+        close(client_fd);
+        return;
+    }
+
+    session_t *s = session_new(client_fd);
+    if (!s) return;
+    if (epoll_add(client_fd, EPOLLIN) < 0) {
+        perror("[ka-worker] epoll_add client_fd");
+        s_sessions[client_fd] = NULL;
+        free(s);
+        close(client_fd);
+    }
+}
+
+static void handle_pending_uds_fd(int conn_fd)
+{
+    httpmigrate_ka_payload_t payload;
+    int client_fd = -1;
+
+    memset(&payload, 0, sizeof(payload));
+    if (recvfd_with_state(conn_fd, &client_fd, &payload, sizeof(payload)) != 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            return;
+        }
+        epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, conn_fd, NULL);
+        if (conn_fd >= 0 && conn_fd < MAX_FD) s_pending_uds[conn_fd] = 0;
+        close(conn_fd);
+        if (client_fd >= 0) close(client_fd);
+        return;
+    }
+
+    epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, conn_fd, NULL);
+    if (conn_fd >= 0 && conn_fd < MAX_FD) s_pending_uds[conn_fd] = 0;
+    close(conn_fd);
+    add_client_session_from_payload(client_fd, &payload);
+}
+
 /* ── UDS handoff: drain all pending FD deliveries from the gateway ───────── */
 
 static void handle_listen_fd(int listen_fd) {
     for (;;) {
-        int conn_fd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC);
+        int conn_fd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
         if (conn_fd < 0) {
+            if (errno == EINTR) continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
             break;
         }
-        httpmigrate_ka_payload_t payload;
-        memset(&payload, 0, sizeof(payload));
-        int client_fd = -1;
-        /* recvfd_with_state is blocking but completes in microseconds on UDS */
-        if (recvfd_with_state(conn_fd, &client_fd, &payload, sizeof(payload)) != 0) {
+
+        if (conn_fd >= MAX_FD) {
             close(conn_fd);
             continue;
         }
-        close(conn_fd);
-        if (client_fd < 0) continue;
-        if (payload.magic != HTTPMIGRATE_MAGIC ||
-            payload.version != HTTPMIGRATE_VERSION) {
-            fprintf(stderr, "[ka-worker] bad magic 0x%08x — dropping fd\n",
-                    payload.magic);
-            close(client_fd);
+
+        s_pending_uds[conn_fd] = 1;
+        if (epoll_add(conn_fd, EPOLLIN) < 0) {
+            s_pending_uds[conn_fd] = 0;
+            close(conn_fd);
             continue;
         }
-        if (set_nonblocking(client_fd) < 0) {
-            perror("[ka-worker] set_nonblocking");
-            close(client_fd);
-            continue;
-        }
-        session_t *s = session_new(client_fd);
-        if (!s) continue;  /* session_new closes client_fd on failure */
-        if (epoll_add(client_fd, EPOLLIN) < 0) {
-            perror("[ka-worker] epoll_add client_fd");
-            s_sessions[client_fd] = NULL;
-            free(s);
-            close(client_fd);
-        }
+
+        handle_pending_uds_fd(conn_fd);
     }
 }
 
@@ -376,7 +412,7 @@ static void advance_session(session_t *s,
             double result = s->a + s->b;   /* SUM */
             char json[768];
             int jl = snprintf(json, sizeof(json),
-                "{\"worker\":\"%s\",\"request_no\":% " PRIu64 ",\"result\":%.6g,\"_pad\":\"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\"}",
+                "{\"worker\":\"%s\",\"request_no\":%" PRIu64 ",\"result\":%.6g,\"_pad\":\"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\"}",
                 fn_name, s->req_no, result);
             s->resp_len = (size_t)snprintf(s->resp, sizeof(s->resp),
                 "HTTP/1.1 200 OK\r\n"
@@ -462,6 +498,7 @@ int main(void) {
     }
 
     memset(s_sessions, 0, sizeof(s_sessions));
+    memset(s_pending_uds, 0, sizeof(s_pending_uds));
     fprintf(stderr, "[ka-worker] %s listening on %s, relay=%s [epoll multi-session]\n",
             fn_name, sock_path, relay_socket);
 
@@ -480,6 +517,18 @@ int main(void) {
                 handle_listen_fd(listen_fd);
                 continue;
             }
+
+            if (efd >= 0 && efd < MAX_FD && s_pending_uds[efd]) {
+                if (rev & (EPOLLHUP | EPOLLERR)) {
+                    epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, efd, NULL);
+                    s_pending_uds[efd] = 0;
+                    close(efd);
+                    continue;
+                }
+                handle_pending_uds_fd(efd);
+                continue;
+            }
+
             session_t *s = (efd >= 0 && efd < MAX_FD) ? s_sessions[efd] : NULL;
             if (!s) {
                 epoll_ctl(s_epoll_fd, EPOLL_CTL_DEL, efd, NULL);

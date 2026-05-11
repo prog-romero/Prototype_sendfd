@@ -31,11 +31,10 @@ PROTO_PAYLOAD_KB="${PROTO_PAYLOAD_KB:-32}"
 CORES_LIST="${CORES_LIST:-1 2 3 4}"
 
 # One-time worker image to reuse across the 1..4 core sweeps.
-# If empty, it is built/pushed/deployed using the bench3 keepalive script.
+# If empty, it is built/pushed/deployed using this benchmark's worker script.
 PROTO_WORKER_IMAGE="${PROTO_WORKER_IMAGE:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BENCH3_SCRIPT_DIR="$(cd "${SCRIPT_DIR}/../../micro-bench3-keepalive/scripts" && pwd)"
 OUT_DIR="$(cd "${SCRIPT_DIR}/../results" && pwd)"
 
 GATEWAY_URL_A="https://${PI_ADDR}:9444/function/bench2-fn-a"
@@ -97,7 +96,7 @@ wait_proto_gateway_ready() {
 }
 
 # ---------------------------------------------------------------------------
-# Helper: build/push/deploy proto worker via the proven bench3 flow (once).
+# Helper: build/push/deploy proto worker once.
 # Captures the IMAGE_REF from script output into PROTO_WORKER_IMAGE.
 # ---------------------------------------------------------------------------
 prepare_proto_worker_image() {
@@ -106,9 +105,9 @@ prepare_proto_worker_image() {
         return 0
     fi
 
-    echo "[setup] Building/pushing/deploying proto worker via bench3 flow..."
+    echo "[setup] Building/pushing/deploying proto worker via max-throughput flow..."
     local build_output
-    build_output=$(PI_SUDO_PASSWORD="${PI_PASS}" bash "${BENCH3_SCRIPT_DIR}/build_push_deploy_proto_worker.sh")
+    build_output=$(PI_SUDO_PASSWORD="${PI_PASS}" bash "${SCRIPT_DIR}/build_push_deploy_proto_worker.sh")
     printf '%s\n' "${build_output}"
 
     PROTO_WORKER_IMAGE=$(printf '%s\n' "${build_output}" | sed -n 's/^IMAGE_REF=//p' | tail -n 1)
@@ -121,14 +120,14 @@ prepare_proto_worker_image() {
 }
 
 # ---------------------------------------------------------------------------
-# Helper: build/import/enable the proto gateway via the proven bench3 flow.
+# Helper: build/import/enable the proto gateway.
 # ---------------------------------------------------------------------------
 prepare_proto_gateway() {
-    echo "[setup] Building/importing/enabling proto gateway via bench3 flow..."
+    echo "[setup] Building/importing/enabling proto gateway via max-throughput flow..."
     PI_SUDO_PASSWORD="${PI_PASS}" \
     IMAGE_REF="${GATEWAY_IMAGE}" \
     ENABLE_ON_PI=1 \
-    bash "${BENCH3_SCRIPT_DIR}/build_deploy_proto_gw.sh"
+    bash "${SCRIPT_DIR}/build_deploy_proto_gw.sh"
 }
 
 # ---------------------------------------------------------------------------
@@ -249,7 +248,7 @@ echo "[setup] Uploading scripts to Pi..."
 scp "${SCRIPT_DIR}/pi_pin_all.sh"           "${PI_HOST}:${PIN_SCRIPT}"
 scp "${SCRIPT_DIR}/pi_restore_vanilla_gw.sh" "${PI_HOST}:${RESTORE_VANILLA_SCRIPT}"
 
-# Build/push/deploy worker once using the same bench3 deployment flow.
+# Build/push/deploy worker once using this benchmark's deployment flow.
 prepare_proto_worker_image
 
 prepare_proto_gateway
