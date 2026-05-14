@@ -1,0 +1,4 @@
+vanilla_csv=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench2-keepalive/results/combined_vanilla.csv
+prototype_csv=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench2-keepalive/results/combined_proto_quiet_20260417_132809.csv
+Matched cells: 219 rows/mode, 3 alphas, 10 payload sizes. Fairness note: rpc differs (vanilla=20, prototype=50).
+details=Matched (alpha, payload_size, switched) coverage; interpret cross-mode speedups with the rpc mismatch in mind.

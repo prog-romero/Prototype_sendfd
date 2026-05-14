@@ -110,7 +110,7 @@ wolfssl_listener_t* wolfssl_listener_new(const char* addr, const char* cert_file
         wolfssl_listener_close(listener);
         return NULL;
     }
-    if (listen(listener->listen_fd, 128) < 0) {
+    if (listen(listener->listen_fd, 4096) < 0) {
         wolfssl_listener_close(listener);
         return NULL;
     }

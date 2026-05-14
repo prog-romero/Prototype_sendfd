@@ -1,0 +1,84 @@
+[alpha0-step32] mode=vanilla topology=one_container fn_a=bench2-fn-a fn_b=bench2-fn-a
+[alpha0-step32] requests_per_payload=100 warmup=20 payload_sizes=32768,65536,98304,131072,163840,196608,229376,262144,294912,327680,360448,393216,425984,458752,491520,524288,557056,589824,622592,655360,688128,720896,753664,786432,819200,851968,884736,917504,950272,983040,1015808,1048576
+[alpha0-step32] output=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/results/combined_vanilla_one_container_step32kb_32_to_1024_alpha0_rpc50_20260424_103827.csv
+[single-alpha] mode=vanilla alpha=0 port=8444 rpc=50
+[single-alpha] uniform_requests_per_payload=100 warmup_per_payload=20
+[single-alpha] output=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/results/combined_vanilla_one_container_step32kb_32_to_1024_alpha0_rpc50_20260424_103827.csv
+Payload schedule (size, requests, warmup):
+      32,768 B  →   100 req  + 20 warmup
+      65,536 B  →   100 req  + 20 warmup
+      98,304 B  →   100 req  + 20 warmup
+     131,072 B  →   100 req  + 20 warmup
+     163,840 B  →   100 req  + 20 warmup
+     196,608 B  →   100 req  + 20 warmup
+     229,376 B  →   100 req  + 20 warmup
+     262,144 B  →   100 req  + 20 warmup
+     294,912 B  →   100 req  + 20 warmup
+     327,680 B  →   100 req  + 20 warmup
+     360,448 B  →   100 req  + 20 warmup
+     393,216 B  →   100 req  + 20 warmup
+     425,984 B  →   100 req  + 20 warmup
+     458,752 B  →   100 req  + 20 warmup
+     491,520 B  →   100 req  + 20 warmup
+     524,288 B  →   100 req  + 20 warmup
+     557,056 B  →   100 req  + 20 warmup
+     589,824 B  →   100 req  + 20 warmup
+     622,592 B  →   100 req  + 20 warmup
+     655,360 B  →   100 req  + 20 warmup
+     688,128 B  →   100 req  + 20 warmup
+     720,896 B  →   100 req  + 20 warmup
+     753,664 B  →   100 req  + 20 warmup
+     786,432 B  →   100 req  + 20 warmup
+     819,200 B  →   100 req  + 20 warmup
+     851,968 B  →   100 req  + 20 warmup
+     884,736 B  →   100 req  + 20 warmup
+     917,504 B  →   100 req  + 20 warmup
+     950,272 B  →   100 req  + 20 warmup
+     983,040 B  →   100 req  + 20 warmup
+   1,015,808 B  →   100 req  + 20 warmup
+   1,048,576 B  →   100 req  + 20 warmup
+
+Alpha values: [0]
+Total runs: 32  (1 alpha × 32 sizes)
+Total rows expected: 3,200
+Requests per TLS conn: 50
+Label: vanilla_one_container_step32kb_32_to_1024
+Output: /home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/results/combined_vanilla_one_container_step32kb_32_to_1024_alpha0_rpc50_20260424_103827.csv
+
+[ 1/32]  alpha= 0  payload=    32,768 B  (100 req + 20 warmup)
+  done — 100 ok, 0 errors
+
+[ 2/32]  alpha= 0  payload=    65,536 B  (100 req + 20 warmup)
+Traceback (most recent call last):
+  File "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/scripts/../client/run_combined_sweep.py", line 450, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/scripts/../client/run_combined_sweep.py", line 433, in main
+    run_sweep(
+  File "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/scripts/../client/run_combined_sweep.py", line 276, in run_sweep
+    data = pool.request(fn, payload)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/scripts/../client/run_combined_sweep.py", line 179, in request
+    data = do_request(self._conn, fn_name, payload)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive/scripts/../client/run_combined_sweep.py", line 146, in do_request
+    resp = conn.getresponse()
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/http/client.py", line 1448, in getresponse
+    response.begin()
+  File "/usr/lib/python3.12/http/client.py", line 336, in begin
+    version, status, reason = self._read_status()
+                              ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/http/client.py", line 297, in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/socket.py", line 707, in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/ssl.py", line 1252, in recv_into
+    return self.read(nbytes, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/ssl.py", line 1104, in read
+    return self._sslobj.read(len, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

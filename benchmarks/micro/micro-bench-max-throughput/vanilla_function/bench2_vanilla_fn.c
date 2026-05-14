@@ -556,7 +556,7 @@ int main(void)
 
         int one = 1;
         setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-        if (bind(listen_fd, it->ai_addr, it->ai_addrlen) == 0 && listen(listen_fd, 128) == 0) {
+        if (bind(listen_fd, it->ai_addr, it->ai_addrlen) == 0 && listen(listen_fd, 4096) == 0) {
             break;
         }
 

@@ -1,0 +1,21 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  bench2-fn-a:
+    image: ttl.sh/bench2-vanilla-fn:24h
+    environment:
+      BENCH2_WORKER_NAME: bench2-fn-a
+      BENCH2_LISTEN_PORT: "8080"
+    labels:
+      com.openfaas.scale.zero: "false"
+
+  bench2-fn-b:
+    image: ttl.sh/bench2-vanilla-fn:24h
+    environment:
+      BENCH2_WORKER_NAME: bench2-fn-b
+      BENCH2_LISTEN_PORT: "8080"
+    labels:
+      com.openfaas.scale.zero: "false"

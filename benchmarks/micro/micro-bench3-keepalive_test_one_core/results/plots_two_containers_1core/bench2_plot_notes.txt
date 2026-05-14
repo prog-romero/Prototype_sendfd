@@ -1,0 +1,4 @@
+vanilla_csv=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive_test_one_core/results/combined_vanilla_two_containers_alpha0_32kb_to_1024kb_rpc50_20260512_131504.csv
+prototype_csv=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive_test_one_core/results/combined_proto_two_containers_alpha0_32kb_to_1024kb_rpc50_20260512_133110.csv
+Matched cells: 3200 rows/mode, 1 alphas, 32 payload sizes. rpc matched across both files.
+details=Matched (alpha, payload_size, switched) coverage; interpret cross-mode speedups with the rpc mismatch in mind.
