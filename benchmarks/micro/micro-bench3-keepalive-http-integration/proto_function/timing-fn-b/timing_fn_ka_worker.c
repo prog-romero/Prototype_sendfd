@@ -49,7 +49,12 @@
 static uint64_t get_ns(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts) != 0) {
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+            perror("[fn-worker] clock_gettime");
+            return 0;
+        }
+    }
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 

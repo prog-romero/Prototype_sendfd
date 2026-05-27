@@ -124,6 +124,14 @@ cd benchmarks/micro/micro-bench3-keepalive-http-integration/of-watchdog
 go build -o fwatchdog ./cmd/...
 ```
 
+### Gateway build (custom gateway image)
+
+```bash
+docker build \
+  -f benchmarks/micro/micro-bench3-keepalive-http-integration/faas/gateway/Dockerfile \
+  -t timing-gateway-ka-integration:latest .
+```
+
 ### C workers (from repo root)
 
 ```bash
@@ -161,6 +169,59 @@ faas-cli deploy \
   --env sendfd_socket_dir=/run/tlsmigrate \
   --fprocess /usr/local/bin/timing-fn-ka-worker
 ```
+
+## Update the gateway image in faasd
+
+When you rebuild the gateway image and want `faasd` to use the new image, do the following exactly.
+
+### 1) Stop faasd
+
+```bash
+sudo systemctl stop faasd
+```
+
+### 2) Remove the old gateway container from faasd
+
+```bash
+sudo ctr -n openfaas container rm gateway 2>/dev/null || true
+```
+
+### 3) Remove the old gateway image from containerd
+
+```bash
+sudo ctr -n openfaas images rm docker.io/romerosdd/openfaas-gateway-ka:latest 2>/dev/null || true
+```
+
+- This command may leave the image if a container still references it.
+- You must remove the container first, then remove the image.
+
+### 4) Pull the fresh gateway image into faasd's containerd namespace
+
+```bash
+sudo ctr -n openfaas image pull docker.io/romerosdd/openfaas-gateway-ka:latest
+```
+
+### 5) Start faasd again
+
+```bash
+sudo systemctl start faasd
+```
+
+### 6) Verify the gateway container and image
+
+```bash
+sudo ctr -n openfaas container ls
+sudo ctr -n openfaas images ls | grep romerosdd/openfaas-gateway-ka
+```
+
+### 7) Confirm the patched gateway is active
+
+```bash
+curl -s http://127.0.0.1:8080/function/timing-fn-a -d 'test' | python3 -m json.tool
+```
+
+- A correctly patched gateway returns monotonic nanosecond `top1_rdtsc` values.
+- If `top1_rdtsc` is still 19 digits, the old gateway behavior is still running.
 
 ## Run the bench
 
