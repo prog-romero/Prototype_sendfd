@@ -1,0 +1,896 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric}
+
+\geometry{margin=2cm, top=2.2cm, bottom=2.2cm}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.97,0.97,0.97}
+\definecolor{keywordcolor}{rgb}{0.13,0.29,0.53}
+
+\lstdefinestyle{gocode}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen}\itshape,
+    keywordstyle=\color{keywordcolor}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2,
+    frame=single,
+    rulecolor=\color{black!30}
+}
+
+\lstset{style=gocode}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Plan d'Intégration \texttt{sendfd} -- OpenFaaS/faasd}
+\lhead{Stage M2 ACS -- ISAE-SUPAERO}
+\cfoot{\thepage}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdftitle={Plan d'Intégration sendfd dans OpenFaaS/faasd},
+    pdfauthor={Stage M2 ACS}
+}
+
+% -----------------------------------------------------------------------
+\title{
+    \vspace{-1cm}
+    \textbf{Plan d'Intégration du Mécanisme \texttt{sendfd} \\
+    dans l'Écosystème OpenFaaS/faasd}\\[0.5em]
+    \large Rapport technique formel de conception
+}
+\author{Stage M2 ACS -- ISAE-SUPAERO}
+\date{\today}
+
+% =====================================================================
+% DOCUMENT BODY
+% =====================================================================
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+
+% ==============================================================
+% FULL REPORT BODY (append after header)
+% ==============================================================
+
+\newcommand{\actionbox}[1]{%
+  \vspace{0.35em}%
+  \noindent\colorbox{gray!12}{\parbox{\dimexpr\linewidth-2\fboxsep\relax}{%
+    \small\textbf{$\Rightarrow$ Action :} #1}}%
+  \vspace{0.35em}%
+}
+
+\begin{abstract}
+Ce rapport décrit le plan d'intégration formel du mécanisme \texttt{sendfd}/\texttt{SCM\_RIGHTS}
+dans OpenFaaS/faasd. L'objectif est d'éliminer les sauts TCP proxy en transmettant le socket brut
+du client directement au container de la fonction. Le \textbf{faasd provider est l'autorité unique}
+pour la résolution de l'IP du container cible. Chaque container crée au démarrage son socket UDS
+identifié par son IP tout en \textbf{conservant son serveur TCP habituel}. Un socket de relais
+permet de gérer les connexions keepalive. Aucun composant OpenFaaS n'est altéré.
+\end{abstract}
+
+\tableofcontents\newpage
+
+% ================================================================
+\section{Architecture et flux de données}
+% ================================================================
+
+\subsection{Flux vanilla (référence)}
+\textbf{Client} $\xrightarrow{\text{TCP}}$ \textbf{Gateway :8080}
+$\xrightarrow{\text{HTTP}}$ \textbf{faasd :8081}
+$\xrightarrow{\text{HTTP}}$ \textbf{Watchdog :8080}
+$\xrightarrow{\text{HTTP}}$ \textbf{Fonction}
+
+Coût : 3 sauts TCP aller-retour, 3 copies mémoire de la requête.
+
+\subsection{Flux prototype (cible)}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=0.8cm and 1.9cm,
+  box/.style={rectangle, draw, rounded corners, minimum width=2.8cm,
+              minimum height=0.65cm, text centered, font=\small\ttfamily},
+  arr/.style={->, thick},
+  darr/.style={->, thick, dashed, color=blue!70!black}
+]
+\node[box] (client) {Client};
+\node[box, right=of client] (gw) {Gateway :8080};
+\node[box, right=of gw] (faasd) {faasd :8081};
+\node[box, below=1.4cm of faasd] (wdog) {Watchdog};
+\node[box, right=of wdog] (fn) {Fonction};
+
+\draw[arr] (client) -- node[above]{\tiny TCP} (gw);
+\draw[arr] (gw) -- node[above]{\tiny GET /function-ip} (faasd);
+\draw[arr] (faasd) -- node[right]{\tiny \{ip\}} (wdog);
+\draw[darr] (gw) to[bend right=22] node[left, font=\tiny]{sendfd UDS} (wdog);
+\draw[darr] (wdog) -- node[above]{\tiny sendfd} (fn);
+\draw[arr] (fn) to[bend right=45] node[below, font=\tiny]{réponse directe} (client);
+\draw[darr] (fn) to[out=150,in=250] node[left, font=\tiny]{notify pipe} (gw);
+\end{tikzpicture}
+\end{center}
+
+\textbf{Gain} : 2 sauts TCP supprimés. La réponse part directement de la fonction vers le client.
+Le faasd provider reste la seule source de vérité pour l'IP.
+
+% ================================================================
+\section{Rôle central du faasd provider : résolution IP}
+% ================================================================
+
+\subsection{Principe}
+
+La Gateway ne calcule jamais elle-même l'IP d'un container.
+\textbf{Seul faasd connaît cette information} car il gère le cycle de vie des containers via
+containerd et le réseau CNI. La Gateway doit donc interroger faasd avant chaque sendfd.
+
+\subsection{Chaîne de résolution IP}
+
+\begin{enumerate}[label=\textbf{(\arabic*)}, leftmargin=*]
+  \item \textbf{Gateway $\to$ faasd} : \texttt{GET http://faasd:8081/system/function-ip/\{name\}}.
+    Nouvel endpoint ajouté à faasd, uniquement actif si \texttt{HTTPMIGRATE\_ENABLE=1}.
+  \item \textbf{faasd $\to$ containerd} : handler \texttt{MakeFunctionIPHandler()} appelle la
+    fonction existante \texttt{GetFunction(client, name, namespace)} -- charge le container,
+    récupère le PID de la tâche active.
+  \item \textbf{containerd $\to$ CNI} : \texttt{GetFunction()} appelle
+    \texttt{cninetwork.GetIPAddress(name, task.Pid())} qui scanne
+    \texttt{/var/run/cni/openfaas-cni-bridge/} : le nom de chaque fichier est l'IP du container.
+  \item \textbf{faasd $\to$ Gateway} : réponse JSON \texttt{\{"ip": "10.62.0.5"\}}.
+  \item \textbf{Gateway} : construit le chemin UDS hôte :
+    \texttt{/var/lib/faasd/tlsmigrate/10.62.0.5.sock}.
+\end{enumerate}
+
+\textbf{Justification} : Le \texttt{MakeScalingHandler} (scale-from-zero) s'exécute
+\emph{avant} \texttt{forwarding\_proxy.go}. Quand \texttt{ResolveContainerIP()} est appelé,
+le container est déjà démarré et son IP est disponible.
+
+\actionbox{
+  \textbf{Créer} \texttt{faasd/pkg/provider/handlers/ip\_endpoint.go} (nouveau fichier).
+  Fonction \texttt{MakeFunctionIPHandler(client *containerd.Client) http.HandlerFunc}~:
+  lire \texttt{mux.Vars(r)["name"]}, appeler \texttt{GetFunction()}, retourner
+  \texttt{\{"ip": fn.IP\}} en JSON. Actif seulement si \texttt{HTTPMIGRATE\_ENABLE=1}.
+  \textbf{Modifier} \texttt{faasd/cmd/provider.go}, dans \texttt{runProviderE()}, juste
+  avant \texttt{bootstrap.Serve()} : \texttt{http.HandleFunc("/system/function-ip/",
+  handlers.MakeFunctionIPHandler(client))} sous condition \texttt{HTTPMIGRATE\_ENABLE=1}.
+  \textit{Justification : endpoint additionnel, aucun handler existant modifié.}
+}
+
+% ================================================================
+\section{Sockets UDS nommés par IP et mode dual du watchdog}
+% ================================================================
+
+\subsection{Convention de nommage}
+
+Chaque container crée un socket UDS nommé d'après sa propre IP :
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Contexte} & \textbf{Chemin} \\
+\midrule
+Container (bind-mount destination) & \texttt{/run/tlsmigrate/<ip>.sock} \\
+Hôte (accès par la Gateway) & \texttt{/var/lib/faasd/tlsmigrate/<ip>.sock} \\
+Socket interne watchdog$\to$fonction & \texttt{/run/tlsmigrate/<ip>-fn.sock} \\
+Socket de relais keepalive (hôte) & \texttt{/var/lib/faasd/tlsmigrate/<ip>-relay.sock} \\
+Socket de relais keepalive (container) & \texttt{/run/tlsmigrate/<ip>-relay.sock} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Ces chemins désignent les mêmes fichiers grâce au bind-mount décrit en section~\ref{sec:deploy}.
+
+\subsection{Watchdog : mode dual (TCP + UDS simultanés)}
+
+Le watchdog continue de fonctionner sur \textbf{TCP :8080 exactement comme avant}.
+Il démarre en plus un serveur UDS en goroutine séparée.
+Les deux serveurs coexistent et sont indépendants :
+
+\begin{itemize}
+  \item \textbf{TCP :8080} : toutes les requêtes vanilla (y compris health checks, métriques),
+    exactement comme dans l'écosystème OpenFaaS non modifié.
+  \item \textbf{UDS \texttt{/run/tlsmigrate/<ip>.sock}} : reçoit les FDs envoyés par la Gateway
+    via \texttt{sendfd/SCM\_RIGHTS}.
+\end{itemize}
+
+\textbf{Justification} : le maintien du TCP :8080 préserve intégralement l'écosystème OpenFaaS
+(Prometheus, health checks, AlertManager). Le serveur UDS est une capacité additionnelle.
+
+\subsection{Comment le watchdog connaît sa propre IP}
+
+Nouvelle fonction \texttt{getContainerIP(ifaceName string) (string, error)} :
+\begin{enumerate}
+  \item \texttt{net.InterfaceByName("eth0")} pour obtenir l'interface réseau.
+  \item \texttt{iface.Addrs()} pour lister les adresses.
+  \item Retourne la première adresse IPv4 sans masque CIDR (ex: \texttt{"10.62.0.5"}).
+\end{enumerate}
+
+\actionbox{
+  \textbf{Créer} \texttt{of-watchdog/pkg/sendfd\_server.go} (nouveau fichier).
+  Contient : \texttt{getContainerIP()}, \texttt{StartSendFDServer()}, \texttt{handleFDMessage()}.
+  \textbf{Modifier} \texttt{of-watchdog/config/config.go} : ajouter les champs
+  \texttt{SendFDEnable bool} (\texttt{SENDFD\_ENABLE}) et
+  \texttt{SendFDSocketDir string} (\texttt{SENDFD\_SOCKET\_DIR}, défaut \texttt{/run/tlsmigrate})
+  à la struct \texttt{WatchdogConfig}, et les lire dans \texttt{New()}.
+  \textbf{Modifier} \texttt{of-watchdog/pkg/watchdog.go}, dans \texttt{Start()}, après
+  l'enregistrement du handler HTTP (ligne $\approx$72) et avant \texttt{listenUntilShutdown()} :
+  lancer \texttt{go StartSendFDServer(w.config, requestHandler)} si \texttt{SendFDEnable}.
+  \textit{Justification : le serveur TCP :8080 démarre normalement juste après.
+  La goroutine UDS n'interfère pas avec l'écosystème.}
+}
+
+\subsection{Canal de retour container $\to$ Gateway}
+
+Le container n'a besoin d'aucun chemin de socket pour notifier la Gateway.
+La Gateway crée un pipe anonyme (\texttt{os.Pipe()}) et envoie l'extrémité écriture
+(\texttt{pipeWriteFD}) au container dans le même message SCM\_RIGHTS que le \texttt{clientFD}.
+\begin{itemize}
+  \item Répondre au client : écrire dans \texttt{clientFD}.
+  \item Notifier la Gateway de fin de traitement : écrire 8 bytes dans \texttt{pipeWriteFD}.
+\end{itemize}
+Le container reçoit deux FDs directement -- aucun chemin à connaître.
+
+% ================================================================
+\section{Scénario keepalive : socket de relais}
+% ================================================================
+
+\subsection{Problème}
+
+HTTP/1.1 keepalive permet à un client d'envoyer plusieurs requêtes sur la même connexion TCP.
+Scénario problématique :
+\begin{enumerate}
+  \item Client envoie la requête 1 pour \texttt{/function/func-a} -- Gateway envoie le FD
+    au container \texttt{func-a}.
+  \item Client envoie la requête 2 pour \texttt{/function/func-b} sur la \emph{même} connexion.
+  \item \texttt{func-a} lit (MSG\_PEEK) depuis \texttt{clientFD}, détecte que la requête 2
+    n'est pas pour lui.
+  \item \texttt{func-a} doit rendre le FD à la Gateway pour qu'elle l'achemine vers
+    \texttt{func-b}.
+\end{enumerate}
+
+\subsection{Solution : socket de relais par container}
+
+Avant chaque \texttt{sendfd}, la Gateway crée un \textbf{socket de relais} identifié par l'IP
+du container destinataire :
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Côté} & \textbf{Chemin} \\
+\midrule
+Hôte (créé par Gateway) & \texttt{/var/lib/faasd/tlsmigrate/<ip>-relay.sock} \\
+Container (accessible via bind-mount) & \texttt{/run/tlsmigrate/<ip>-relay.sock} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Le container connaît son propre IP (via \texttt{eth0}) et peut donc déduire le chemin du socket
+de relais sans qu'aucune information supplémentaire lui soit transmise.
+
+\subsection{Cycle de vie du socket de relais}
+
+\begin{enumerate}
+  \item \textbf{Avant sendfd} : la Gateway crée le socket de relais à
+    \texttt{/var/lib/faasd/tlsmigrate/<ip>-relay.sock}.
+  \item Une goroutine Gateway écoute sur ce socket.
+  \item La Gateway envoie le \texttt{clientFD} au container principal (\texttt{<ip>.sock}).
+  \item \textbf{Cas normal} : la fonction traite la requête et écrit dans \texttt{pipeWriteFD}.
+    La goroutine de relais ferme le socket après timeout ou fermeture de la connexion.
+  \item \textbf{Cas keepalive (mauvaise destination)} : la fonction se connecte à
+    \texttt{/run/tlsmigrate/<own-ip>-relay.sock} et envoie \texttt{clientFD} via SCM\_RIGHTS.
+  \item La goroutine de relais reçoit le FD. Elle applique : MSG\_PEEK $\to$ extraire nouveau
+    chemin $\to$ \texttt{ResolveContainerIP()} vers faasd $\to$ créer nouveau pipe $\to$
+    \texttt{SendFDs()} vers le bon container.
+\end{enumerate}
+
+\actionbox{
+  \textbf{Créer} \texttt{faas/gateway/httpmigrate/relay\_server.go} (nouveau fichier).
+  \texttt{CreateRelaySocket(hostDir, containerIP string) (*RelayServer, error)} :
+  crée le socket UDS à \texttt{hostDir/<ip>-relay.sock}, lance la goroutine d'écoute.
+  \texttt{RelayServer.listenLoop()} : \texttt{ReadMsgUnix()} pour recevoir le FD retourné,
+  puis appelle le même pipeline : MSG\_PEEK $\to$ ResolveContainerIP $\to$ SendFDs.
+  \textbf{Modifier} \texttt{faas/gateway/httpmigrate/sendfd.go}, dans
+  \texttt{MigrateRequest()} : appeler \texttt{CreateRelaySocket(hostDir, containerIP)}
+  juste avant \texttt{SendFDs()}, passer \texttt{relayServer} à la goroutine de timing.
+  \textit{Justification : le socket de relais est créé uniquement pour les requêtes migrées,
+  ne touche aucun composant OpenFaaS existant.}
+}
+
+% ================================================================
+\section{Loop intelligente : remplacement de \texttt{ListenAndServe()}}
+% ================================================================
+
+\subsection{Pourquoi \texttt{http.Server.ListenAndServe()} est incompatible}
+
+Avant d'invoquer le moindre handler, \texttt{http.Server} lit et consomme les en-têtes HTTP
+depuis le buffer noyau du socket. Après cette lecture, le FD brut transmis via sendfd serait
+tronqué (sans en-têtes) et inutilisable par le container.
+
+\subsection{Algorithme de la loop intelligente}
+
+Pour chaque connexion :
+\begin{enumerate}[label=\textbf{Étape \arabic*:}, leftmargin=*]
+  \item \textbf{Accept()} sur le listener TCP \texttt{:8080}.
+  \item Extraire le \textbf{FD brut} : \texttt{conn.SyscallConn().Control()} +
+    \texttt{syscall.Dup()}.
+  \item \textbf{MSG\_PEEK} : \texttt{syscall.Recvfrom(rawFD, buf, syscall.MSG\_PEEK)} -- lecture
+    sans consommation. Buffer noyau intact.
+  \item Identifier la route depuis la première ligne HTTP :
+    chemin \texttt{/function/...} $\to$ branche sendfd ;
+    sinon $\to$ branche système (ChanListener).
+  \item \textbf{Construire \texttt{*http.Request}} : \texttt{http.ReadRequest(bytes.NewReader(peeked))}
+    sur la copie peekée. Socket noyau non modifié. Injecter \texttt{rawFD} dans le contexte.
+  \item \textbf{\texttt{mux.ServeHTTP(rw, req)}} : déclenche auth $\to$ CallID $\to$
+    scale-from-zero $\to$ forwarding\_proxy. Appel identique à ce que fait \texttt{http.Server}
+    en interne.
+\end{enumerate}
+
+\actionbox{
+  \textbf{Créer} \texttt{faas/gateway/httpmigrate/loop.go} :
+  \texttt{RunLoop(ln, fallback, mux)} et \texttt{handleConn()}.
+  \textbf{Créer} \texttt{faas/gateway/httpmigrate/chan\_listener.go} :
+  \texttt{ChanListener} implémentant \texttt{net.Listener} via \texttt{chan net.Conn}.
+  \textbf{Créer} \texttt{faas/gateway/httpmigrate/conn\_rw.go} :
+  \texttt{ConnRW} implémentant \texttt{http.ResponseWriter} sur \texttt{net.Conn}.
+  Méthode \texttt{SetMigrated()} : si appelée, \texttt{Write()} et \texttt{WriteHeader()} ne
+  font rien (réponse envoyée par la fonction). Sinon (erreur 401/503) : écriture réelle sur TCP.
+  \textbf{Modifier} \texttt{faas/gateway/main.go} (lignes $\approx$262--271) :
+  entourer \texttt{s.ListenAndServe()} dans \texttt{else} ; ajouter branche
+  \texttt{HTTPMIGRATE\_ENABLE=1} qui crée listener, ChanListener, serveur de secours et appelle
+  \texttt{httpmigrate.RunLoop()}.
+  \textit{Justification : sans la variable d'env, le code original est exécuté à l'identique.}
+}
+
+% ================================================================
+\section{Mécanisme de timing via le pipe de notification}
+% ================================================================
+
+\subsection{Problème}
+\texttt{seconds = time.Since(start)} dans \texttt{forwarding\_proxy.go} ne mesurerait que le
+temps du sendfd (quelques \textmu s) alors que la durée réelle de traitement peut être de plusieurs
+centaines de ms.
+
+\subsection{Solution}
+\begin{enumerate}
+  \item Avant sendfd : \texttt{pipeRead, pipeWrite := os.Pipe()}, enregistrer \texttt{t\_start}.
+  \item Envoyer \texttt{pipeWrite.Fd()} au container avec \texttt{clientFD} via SCM\_RIGHTS.
+  \item Lancer goroutine bloquée sur \texttt{io.ReadFull(pipeRead, buf8)}.
+  \item La fonction écrit 8 bytes (timestamp uint64 ns) dans \texttt{pipeWrite} après envoi
+    de la réponse.
+  \item Goroutine : calcule \texttt{realDuration = now - t\_start}, appelle
+    \texttt{notifier.Notify("completed", realDuration)}.
+\end{enumerate}
+
+\textbf{Résultat} : Prometheus reçoit la durée réelle. \texttt{notifier.Notify("completed")}
+est toujours appelé, avec la valeur correcte.
+
+\actionbox{
+  \textbf{Modifier} \texttt{faas/gateway/handlers/forwarding\_proxy.go}, dans la closure
+  de \texttt{MakeForwardingProxyHandler()} : ajouter branche \texttt{if rawFD, ok := ctx...}
+  qui appelle \texttt{migrateRequest()}. La goroutine de timing est lancée depuis
+  \texttt{migrateRequest()}. Le second \texttt{notifier.Notify("completed")} est déplacé
+  dans cette goroutine. Branche vanilla (\texttt{else}) : code identique à l'original.
+}
+
+% ================================================================
+\section{Détail des modifications -- faasd provider}
+% ================================================================
+
+\subsection{\texttt{faasd/pkg/provider/handlers/ip\_endpoint.go} -- CRÉER}
+
+\textbf{Contenu} : une seule fonction exportée \texttt{MakeFunctionIPHandler(client *containerd.Client) http.HandlerFunc}.
+\begin{itemize}
+  \item Lit \texttt{mux.Vars(r)["name"]} et le query param \texttt{?namespace=}
+    (défaut \texttt{"openfaas-fn"}).
+  \item Appelle \texttt{GetFunction(client, name, namespace)} (fonction existante dans
+    \texttt{function\_get.go}, non modifiée).
+  \item Retourne \texttt{\{"ip": fn.IP\}} JSON / HTTP 200.
+  \item Si container absent ou sans tâche : HTTP 404.
+\end{itemize}
+
+\textbf{Pourquoi ne pas modifier \texttt{FunctionStatus}} : le type \texttt{FunctionStatus}
+(dans \texttt{faas-provider/types/function\_status.go}) définit le contrat API public OpenFaaS.
+Y ajouter un champ \texttt{IP} casserait la compatibilité JSON des clients qui font
+\texttt{GET /system/functions}. L'endpoint dédié évite ce problème.
+
+\actionbox{
+  \textbf{Créer} \texttt{faasd/pkg/provider/handlers/ip\_endpoint.go}.
+  Package \texttt{handlers}, import de \texttt{containerd.io/containerd}, \texttt{encoding/json},
+  \texttt{net/http}, \texttt{github.com/gorilla/mux}. Aucun fichier existant modifié.
+}
+
+\subsection{\texttt{faasd/cmd/provider.go} -- MODIFIER}
+
+\textbf{Localisation} : dans la fonction \texttt{runProviderE()}, après la ligne
+\texttt{invokeResolver := handlers.NewInvokeResolver(client)} ($\approx$ ligne 85), et
+\textbf{avant} \texttt{bootstrap.Serve(ctx, handlers)}.
+
+\begin{lstlisting}[language=Go]
+if os.Getenv("HTTPMIGRATE_ENABLE") == "1" {
+    http.HandleFunc("/system/function-ip/",
+        handlers.MakeFunctionIPHandler(client))
+}
+\end{lstlisting}
+
+\textbf{Justification} : \texttt{bootstrap.Serve()} enregistre déjà les handlers
+OpenFaaS standard. L'ajout avant cet appel est additionnel. Sans la variable d'env,
+le comportement est identique à l'original.
+
+\actionbox{
+  \textbf{Modifier} \texttt{faasd/cmd/provider.go} ligne $\approx$105.
+  Ajouter le bloc conditionnel ci-dessus. Import \texttt{"net/http"} et
+  \texttt{handlers "faasd/pkg/provider/handlers"} déjà présents. Aucune autre modification.
+}
+
+\subsection{\texttt{faasd/pkg/provider/handlers/deploy.go} -- MODIFIER}
+\label{sec:deploy}
+
+\textbf{Localisation} : fonction \texttt{deploy()}, après la ligne \texttt{mounts := getOSMounts()}.
+
+\textbf{Modification} : ajouter un bind-mount conditionnel :
+\begin{itemize}
+  \item Source hôte : \texttt{/var/lib/faasd/tlsmigrate} (créé avec \texttt{os.MkdirAll} si absent).
+  \item Destination container : \texttt{/run/tlsmigrate}.
+  \item Options : \texttt{rbind, rw}.
+\end{itemize}
+
+\textbf{Effet} : tout fichier créé dans \texttt{/run/tlsmigrate/} depuis le container est
+instantanément visible dans \texttt{/var/lib/faasd/tlsmigrate/} sur l'hôte. C'est ce mécanisme
+qui rend les sockets UDS du watchdog accessibles à la Gateway.
+
+\textbf{Justification} : tous les mounts existants (secrets, \texttt{resolv.conf}) restent
+inchangés. La création de tâche, la configuration CNI et le démarrage du container ne sont
+pas affectés. Sans \texttt{HTTPMIGRATE\_ENABLE=1}, la fonction \texttt{deploy()} est identique.
+
+\actionbox{
+  \textbf{Modifier} \texttt{faasd/pkg/provider/handlers/deploy.go}, dans \texttt{deploy()},
+  après \texttt{mounts := getOSMounts()} ($\approx$ ligne 140).
+  Ajouter bloc conditionnel : \texttt{if os.Getenv("HTTPMIGRATE\_ENABLE") == "1" \{ ... \}}.
+  Import \texttt{"os"} déjà présent. Pas d'autre modification.
+}
+
+% ================================================================
+\section{Détail des modifications -- Gateway}
+% ================================================================
+
+\subsection{\texttt{faas/gateway/httpmigrate/sendfd.go} -- CRÉER}
+
+Ce fichier contient la logique de résolution IP et d'envoi SCM\_RIGHTS.
+
+\subsubsection{Fonction \texttt{ResolveContainerIP(providerURL, funcName string) (string, error)}}
+\begin{itemize}
+  \item URL : \texttt{providerURL + "/system/function-ip/" + funcName}.
+  \item \texttt{http.Get(url)} vers faasd (\texttt{http://faasd:8081/...}).
+  \item Décode \texttt{\{"ip": "10.62.0.5"\}}, retourne l'IP.
+  \item En cas d'erreur : retourne l'erreur (le caller répondra HTTP 503).
+\end{itemize}
+
+\subsubsection{Fonction \texttt{BuildSocketPath(dir, ip, suffix string) string}}
+Retourne \texttt{dir + "/" + ip + suffix + ".sock"}.
+Exemple socket principal : \texttt{suffix=""} $\to$
+\texttt{/var/lib/faasd/tlsmigrate/10.62.0.5.sock}.
+Exemple socket relais : \texttt{suffix="-relay"} $\to$
+\texttt{/var/lib/faasd/tlsmigrate/10.62.0.5-relay.sock}.
+
+\subsubsection{Fonction \texttt{SendFDs(sockPath string, clientFD, pipeWriteFD int) error}}
+\begin{enumerate}
+  \item \texttt{net.Dial("unix", sockPath)} -- connexion au socket du container.
+  \item \texttt{syscall.UnixRights(clientFD, pipeWriteFD)} -- construit le message de contrôle
+    SCM\_RIGHTS.
+  \item \texttt{unixConn.WriteMsgUnix(nil, rights, nil)} -- le noyau duplique les FDs
+    dans l'espace du watchdog.
+  \item Fermer la connexion UDS (canal de transfert uniquement).
+\end{enumerate}
+
+\actionbox{
+  \textbf{Créer} \texttt{faas/gateway/httpmigrate/sendfd.go}.
+  Package \texttt{httpmigrate}. Imports : \texttt{net}, \texttt{syscall}, \texttt{os},
+  \texttt{encoding/json}, \texttt{net/http}.
+  Aucun fichier existant modifié.
+}
+
+\subsection{\texttt{faas/gateway/httpmigrate/relay\_server.go} -- CRÉER}
+
+\subsubsection{Structure \texttt{RelayServer}}
+Champs : \texttt{ln *net.UnixListener}, \texttt{hostDir string}, \texttt{containerIP string},
+\texttt{providerURL string}, callback \texttt{onReturnedFD func(rawFD int)}.
+
+\subsubsection{Fonction \texttt{CreateRelaySocket(hostDir, ip, providerURL string) (*RelayServer, error)}}
+\begin{enumerate}
+  \item \texttt{os.Remove(hostDir + "/" + ip + "-relay.sock")} (nettoyage).
+  \item \texttt{net.Listen("unix", ...)} sur le chemin relay.
+  \item \texttt{os.Chmod(..., 0o777)} pour accès cross-UID.
+  \item Lance goroutine \texttt{rs.listenLoop()}.
+\end{enumerate}
+
+\subsubsection{Goroutine \texttt{listenLoop()}}
+Pour chaque connexion acceptée sur le socket de relais :
+\begin{enumerate}
+  \item \texttt{ReadMsgUnix(nil, oob)} pour recevoir le FD retourné.
+  \item \texttt{ParseSocketControlMessage(oob)} puis \texttt{ParseUnixRights()} $\to$
+    \texttt{returnedFD}.
+  \item MSG\_PEEK sur \texttt{returnedFD} $\to$ extraire nouveau chemin URL.
+  \item \texttt{ResolveContainerIP(providerURL, newFuncName)} $\to$ nouvelle IP.
+  \item \texttt{os.Pipe()} $\to$ nouveau \texttt{pipeRead, pipeWrite}.
+  \item \texttt{CreateRelaySocket()} pour le nouveau container (récursion possible).
+  \item \texttt{SendFDs(newSockPath, returnedFD, pipeWrite)} $\to$ envoi au bon container.
+  \item Goroutine de timing pour \texttt{notifier.Notify("completed", realDuration)}.
+\end{enumerate}
+
+\actionbox{
+  \textbf{Créer} \texttt{faas/gateway/httpmigrate/relay\_server.go}.
+  Package \texttt{httpmigrate}. Imports : \texttt{net}, \texttt{syscall}, \texttt{os}.
+  La fonction \texttt{CreateRelaySocket()} doit être appelée depuis \texttt{sendfd.go} dans
+  \texttt{MigrateRequest()}, juste avant \texttt{SendFDs()}.
+  \textit{Justification : les sockets de relais sont éphémères, créés et détruits par requête.
+  Aucun composant OpenFaaS n'est affecté.}
+}
+
+\subsection{\texttt{faas/gateway/handlers/forwarding\_proxy.go} -- MODIFIER}
+
+\subsubsection{Localisation}
+Closure de \texttt{MakeForwardingProxyHandler()}, bloc :
+
+\begin{lstlisting}[language=Go]
+start := time.Now()
+statusCode, err := forwardRequest(...)
+seconds := time.Since(start)
+for _, n := range notifiers { n.Notify(..., "completed", seconds) }
+\end{lstlisting}
+
+\subsubsection{Fonction \texttt{migrateRequest(w, r, rawFD int, providerURL string)}}
+À ajouter dans le même fichier :
+\begin{enumerate}
+  \item \texttt{funcName := middleware.GetServiceName(r.URL.Path)}.
+  \item \texttt{ip, err := httpmigrate.ResolveContainerIP(providerURL, funcName)}.
+    Si erreur : écrire HTTP 503, retourner.
+  \item \texttt{sockPath := httpmigrate.BuildSocketPath(hostDir, ip, "")}.
+  \item \texttt{pipeRead, pipeWrite := os.Pipe()}; \texttt{t\_start := time.Now()}.
+  \item \texttt{relay, \_ := httpmigrate.CreateRelaySocket(hostDir, ip, providerURL)}.
+  \item \texttt{httpmigrate.SendFDs(sockPath, rawFD, int(pipeWrite.Fd()))}.
+  \item Fermer \texttt{pipeWrite} et \texttt{rawFD} côté Gateway.
+  \item \texttt{rw.(*httpmigrate.ConnRW).SetMigrated()}.
+  \item Goroutine : \texttt{io.ReadFull(pipeRead, buf8)} $\to$ calculer durée $\to$
+    \texttt{notifier.Notify("completed", realDuration)}.
+\end{enumerate}
+
+\subsubsection{Branchement conditionnel}
+
+\begin{lstlisting}[language=Go]
+for _, n := range notifiers { n.Notify(..., "started") }
+if rawFD, ok := r.Context().Value(httpmigrate.RawFDKey).(int);
+        ok && os.Getenv("HTTPMIGRATE_ENABLE") == "1" {
+    migrateRequest(w, r, rawFD, baseURL.Host)
+    return
+}
+// -- code vanilla original inchange --
+start := time.Now()
+statusCode, err = forwardRequest(w, r, proxy.Client, baseURL, ...)
+seconds = time.Since(start)
+for _, n := range notifiers { n.Notify(..., "completed", seconds) }
+\end{lstlisting}
+
+\actionbox{
+  \textbf{Modifier} \texttt{faas/gateway/handlers/forwarding\_proxy.go}.
+  Ajouter la fonction \texttt{migrateRequest()} et le branchement conditionnel
+  dans la closure. Import de \texttt{faas/gateway/httpmigrate} à ajouter.
+  \textit{Justification : branche vanilla (\texttt{else}) identique à l'original.
+  Le premier \texttt{Notify("started")} reste à sa place. Le second \texttt{Notify("completed")}
+  est appelé dans la goroutine avec la durée réelle.}
+}
+
+\subsection{\texttt{faas/gateway/main.go} -- MODIFIER}
+
+\subsubsection{Localisation}
+Lignes $\approx$262--271, bloc final de \texttt{main()}.
+
+\subsubsection{Modification}
+\begin{lstlisting}[language=Go]
+if os.Getenv("HTTPMIGRATE_ENABLE") == "1" {
+    ln, _    := net.Listen("tcp", fmt.Sprintf(":%d", tcpPort))
+    fallback := httpmigrate.NewChanListener()
+    fbSrv    := &http.Server{Handler: r,
+                             ReadTimeout:  config.ReadTimeout,
+                             WriteTimeout: config.WriteTimeout}
+    go fbSrv.Serve(fallback)
+    httpmigrate.RunLoop(ln, fallback, r) // bloque
+} else {
+    log.Fatal(s.ListenAndServe()) // code original intact
+}
+\end{lstlisting}
+
+\actionbox{
+  \textbf{Modifier} \texttt{faas/gateway/main.go} à partir de la ligne $\approx$262.
+  Envelopper \texttt{s.ListenAndServe()} dans \texttt{else}. Ajouter la branche
+  \texttt{HTTPMIGRATE\_ENABLE=1}. Import \texttt{"net"} à ajouter.
+  \textit{Justification : sans la variable d'env, exécution identique à l'original.}
+}
+
+% ================================================================
+\section{Détail des modifications -- of-watchdog}
+% ================================================================
+
+\subsection{\texttt{of-watchdog/config/config.go} -- MODIFIER}
+
+\textbf{Localisation 1} : struct \texttt{WatchdogConfig}, fin de la struct.
+\textbf{Modification} : ajouter deux champs :
+\begin{lstlisting}[language=Go]
+SendFDEnable    bool   // active le serveur UDS (SENDFD_ENABLE=1)
+SendFDSocketDir string // repertoire des sockets (SENDFD_SOCKET_DIR)
+\end{lstlisting}
+
+\textbf{Localisation 2} : fonction \texttt{New(env []string)}, après le bloc existant.
+\textbf{Modification} : lire les variables :
+\begin{lstlisting}[language=Go]
+cfg.SendFDEnable    = getBoolEnv(env, "SENDFD_ENABLE", false)
+cfg.SendFDSocketDir = getEnv(env, "SENDFD_SOCKET_DIR", "/run/tlsmigrate")
+\end{lstlisting}
+
+\actionbox{
+  \textbf{Modifier} \texttt{of-watchdog/config/config.go} à deux endroits.
+  Les champs ont des valeurs par défaut (false, chaîne vide). Aucun test existant
+  n'est cassé. Les fonctions \texttt{getBoolEnv} et \texttt{getEnv} existent déjà
+  dans ce fichier.
+}
+
+\subsection{\texttt{of-watchdog/pkg/sendfd\_server.go} -- CRÉER}
+
+\subsubsection{Fonction \texttt{getContainerIP(ifaceName string) (string, error)}}
+Décrite en section 3.3.
+
+\subsubsection{Fonction \texttt{StartSendFDServer(cfg config.WatchdogConfig, handler http.Handler) error}}
+\begin{enumerate}
+  \item \texttt{getContainerIP("eth0")} $\to$ \texttt{containerIP}.
+  \item \texttt{sockPath = cfg.SendFDSocketDir + "/" + containerIP + ".sock"}.
+  \item \texttt{os.Remove(sockPath)} puis \texttt{net.Listen("unix", sockPath)}.
+  \item \texttt{os.Chmod(sockPath, 0o777)}.
+  \item Boucle : \texttt{Accept()} $\to$ goroutine \texttt{handleFDMessage(conn, handler)}.
+\end{enumerate}
+
+\subsubsection{Fonction \texttt{handleFDMessage(conn *net.UnixConn, handler http.Handler)}}
+\begin{enumerate}
+  \item \texttt{conn.ReadMsgUnix(nil, oob)}.
+  \item \texttt{syscall.ParseUnixRights()} $\to$ \texttt{fds = [clientFD, pipeWriteFD]}.
+  \item Construire chemin socket interne fonction :
+    \texttt{cfg.SendFDSocketDir + "/" + containerIP + "-fn.sock"}.
+  \item Connecter en Unix, envoyer \texttt{[clientFD, pipeWriteFD]} via SCM\_RIGHTS à la
+    fonction.
+  \item Fermer copies locales de \texttt{clientFD} et \texttt{pipeWriteFD}.
+\end{enumerate}
+
+\textbf{Dual-mode explicite} : le serveur TCP (port 8080) est géré par
+\texttt{listenUntilShutdown()} dans \texttt{watchdog.go} et tourne en parallèle.
+Les deux serveurs partagent le même \texttt{requestHandler} mais sont complètement
+indépendants au niveau des goroutines et des fds.
+
+\actionbox{
+  \textbf{Créer} \texttt{of-watchdog/pkg/sendfd\_server.go}.
+  Package \texttt{watchdog} (ou \texttt{sendfd} si séparé).
+  Imports : \texttt{net}, \texttt{syscall}, \texttt{os}, \texttt{net/http}.
+  Ce fichier n'importe et ne modifie aucun fichier existant du watchdog.
+}
+
+\subsection{\texttt{of-watchdog/pkg/watchdog.go} -- MODIFIER}
+
+\textbf{Localisation} : fonction \texttt{Start(ctx context.Context)}, après la ligne
+\texttt{http.HandleFunc("/", metrics.InstrumentHandler(...))} ($\approx$ ligne 72) et
+avant \texttt{listenUntilShutdown()}.
+
+\begin{lstlisting}[language=Go]
+// --- Dual-mode : serveur UDS additionnel ---
+if w.config.SendFDEnable {
+    go func() {
+        if err := StartSendFDServer(w.config, requestHandler); err != nil {
+            log.Printf("[sendfd] UDS server error: %v", err)
+        }
+    }()
+}
+// --- serveur TCP habituel (inchange) ---
+listenUntilShutdown(...)
+\end{lstlisting}
+
+\actionbox{
+  \textbf{Modifier} \texttt{of-watchdog/pkg/watchdog.go} ligne $\approx$95.
+  Ajouter le bloc goroutine conditionnel. Le reste de la fonction (\texttt{listenUntilShutdown},
+  métriques, health checks) est \textbf{inchangé}.
+  \textit{Justification : la goroutine UDS n'interfère pas avec le serveur TCP.
+  Sans \texttt{SENDFD\_ENABLE=1}, comportement identique à l'original.}
+}
+
+% ================================================================
+\section{Processus de la fonction (container)}
+% ================================================================
+
+Le processus de la fonction (adapté depuis \texttt{prototype/faasd\_tlsmigrate/function/%
+timing-fn/timing\_fn\_worker.c}) implémente trois responsabilités.
+
+\subsection{1. Création du socket UDS interne}
+Au démarrage : créer \texttt{/run/tlsmigrate/<own-ip>-fn.sock}
+(lecture de l'IP via \texttt{getifaddrs()} sur \texttt{eth0}).
+Ce socket est en écoute pour les messages provenant du watchdog.
+
+\subsection{2. Traitement d'une requête}
+Pour chaque message reçu du watchdog via SCM\_RIGHTS :
+\begin{enumerate}
+  \item Extraire \texttt{[clientFD, pipeWriteFD]}.
+  \item Lire la requête HTTP depuis \texttt{clientFD} (buffer noyau intact grâce à MSG\_PEEK).
+  \item Exécuter la logique métier.
+  \item Écrire la réponse HTTP dans \texttt{clientFD} (réponse directe au client).
+  \item Écrire 8 bytes (timestamp uint64 ns, CLOCK\_MONOTONIC) dans \texttt{pipeWriteFD}.
+  \item Fermer \texttt{clientFD} et \texttt{pipeWriteFD}.
+\end{enumerate}
+
+\subsection{3. Cas keepalive (mauvaise destination)}
+Avant d'écrire la réponse, la fonction fait un MSG\_PEEK sur \texttt{clientFD}
+pour vérifier s'il reste des données (requête 2 keepalive) :
+\begin{itemize}
+  \item Traiter la requête courante normalement.
+  \item Si MSG\_PEEK révèle une requête 2 : vérifier si le chemin correspond à la
+    propre fonction.
+  \item Si le chemin est différent : connecter à
+    \texttt{/run/tlsmigrate/<own-ip>-relay.sock} (socket de relais créé par la Gateway,
+    accessible via bind-mount). Envoyer \texttt{clientFD} via SCM\_RIGHTS.
+    Fermer la copie locale. La Gateway redirige vers le bon container.
+\end{itemize}
+
+\actionbox{
+  \textbf{Modifier} \texttt{prototype/faasd\_tlsmigrate/function/timing-fn/timing\_fn\_worker.c}
+  (ou créer un nouveau fichier de fonction adapté).
+  Changements par rapport au prototype existant :
+  (1) recevoir 2 FDs au lieu de 1 + payload TLS ;
+  (2) utiliser IP de eth0 comme nom de socket (au lieu d'un chemin fixe) ;
+  (3) écrire timestamp dans \texttt{pipeWriteFD} au lieu d'un socket séparé ;
+  (4) implémenter la logique de relais keepalive.
+}
+
+% ================================================================
+\section{Séquence complète annotée}
+% ================================================================
+
+\begin{enumerate}[label=\textbf{[\arabic*]}, leftmargin=*]
+  \item Client : \texttt{POST /function/my-func HTTP/1.1} sur \texttt{Gateway:8080}.
+  \item \textbf{loop.go} : \texttt{Accept()} $\to$ rawFD extrait (Dup) $\to$ MSG\_PEEK $\to$
+    chemin \texttt{/function/} $\to$ \texttt{http.ReadRequest(peeked)} $\to$ rawFD dans
+    contexte $\to$ \texttt{mux.ServeHTTP(rw, req)}.
+  \item \textbf{Auth} : si credentials invalides $\to$ \texttt{ConnRW.WriteHeader(401)} $\to$
+    réponse 401 sur TCP. Fin.
+  \item \textbf{ScalingHandler} : si 0 réplica $\to$ scale-up faasd $\to$ attend readiness.
+  \item \textbf{forwarding\_proxy.go} : \texttt{Notify("started")}. rawFD détecté.
+    Appel \texttt{migrateRequest()}.
+  \item \textbf{sendfd.go -- ResolveContainerIP()} :
+    \texttt{GET http://faasd:8081/system/function-ip/my-func}.
+  \item \textbf{faasd -- ip\_endpoint.go} :
+    \texttt{GetFunction()} $\to$ \texttt{GetIPAddress()} $\to$ \texttt{\{"ip":"10.62.0.5"\}}.
+  \item \textbf{sendfd.go -- MigrateRequest()} :
+    \texttt{sockPath = /var/lib/faasd/tlsmigrate/10.62.0.5.sock}.
+    \texttt{os.Pipe()} $\to$ \texttt{[pipeRead, pipeWrite]}.
+    \texttt{CreateRelaySocket(hostDir, "10.62.0.5", ...)}.
+    \texttt{SendFDs(sockPath, clientFD, pipeWrite)}.
+  \item \textbf{sendfd\_server.go (watchdog)} : \texttt{ReadMsgUnix()} $\to$
+    \texttt{[clientFD, pipeWrite]} $\to$ relay vers fonction via \texttt{10.62.0.5-fn.sock}.
+  \item \textbf{Fonction} : lit requête depuis \texttt{clientFD} $\to$ logique métier $\to$
+    écrit réponse dans \texttt{clientFD} (\textbf{réponse directe au client}) $\to$
+    écrit 8 bytes dans \texttt{pipeWrite}.
+  \item \textbf{Goroutine Gateway} : se réveille, calcule durée réelle,
+    \texttt{Notify("completed", realDuration)} $\to$ Prometheus mis à jour.
+\end{enumerate}
+
+\textbf{Cas keepalive} : à l'étape 10, si le client a envoyé une requête 2 sur la même
+connexion (func-b), la fonction envoie \texttt{clientFD} à \texttt{10.62.0.5-relay.sock}.
+La goroutine de relais (étape 8, socket relay) reprend : MSG\_PEEK $\to$ func-b $\to$
+\texttt{ResolveContainerIP} $\to$ \texttt{SendFDs} vers container func-b.
+
+% ================================================================
+\section{Tableau de préservation de l'écosystème}
+% ================================================================
+
+\begin{longtable}{p{0.22\textwidth} p{0.35\textwidth} p{0.33\textwidth}}
+\toprule
+\textbf{Composant} & \textbf{Mode vanilla} & \textbf{Mode prototype} \\
+\midrule
+\endhead
+Auth BasicAuth &
+  Middleware avant handler. 401 si refus. &
+  Identique. \texttt{mux.ServeHTTP()} déclenche le même middleware. \texttt{ConnRW}
+  écrit un vrai 401 sur TCP. \\
+\addlinespace
+Scale-from-zero &
+  \texttt{MakeScalingHandler} avant forwarding. &
+  Identique. S'exécute dans \texttt{mux.ServeHTTP()}. Container actif quand
+  \texttt{ResolveContainerIP()} est appelé. \\
+\addlinespace
+Prometheus Gateway &
+  \texttt{Notify("completed")} avec durée réelle. &
+  Identique. Goroutine de timing appelle \texttt{Notify("completed")} avec durée
+  réelle via pipe. \\
+\addlinespace
+TCP :8080 watchdog &
+  Serveur HTTP unique sur TCP :8080. &
+  \textbf{Inchangé}. \texttt{listenUntilShutdown()} démarre normalement.
+  Serveur UDS additionnel en goroutine séparée. \\
+\addlinespace
+Health/Metrics watchdog &
+  \texttt{/\_/health}, \texttt{/\_/ready}, MetricsPort. &
+  Inchangés. Gérés par le serveur TCP :8080. \\
+\addlinespace
+AlertManager &
+  Lit métriques Prometheus. &
+  Sources inchangées. \\
+\addlinespace
+Routes \texttt{/system/} &
+  Via \texttt{http.Server}. &
+  Via \texttt{ChanListener} $\to$ serveur de secours (même routeur \texttt{r}). \\
+\addlinespace
+Mode vanilla &
+  \texttt{s.ListenAndServe()}. &
+  Sans \texttt{HTTPMIGRATE\_ENABLE=1} ou \texttt{SENDFD\_ENABLE=1} :
+  code original intact. \\
+\bottomrule
+\end{longtable}
+
+% ================================================================
+\section{Ordre d'implémentation}
+% ================================================================
+
+\begin{enumerate}
+  \item \textbf{faasd : \texttt{ip\_endpoint.go} + \texttt{provider.go}} -- Valider avec
+    \texttt{curl http://faasd:8081/system/function-ip/my-func}.
+  \item \textbf{faasd : \texttt{deploy.go}} -- Vérifier que \texttt{/run/tlsmigrate/}
+    est accessible dans les containers.
+  \item \textbf{of-watchdog : \texttt{config.go} + \texttt{sendfd\_server.go} +
+    \texttt{watchdog.go}} -- Vérifier création de \texttt{/run/tlsmigrate/<ip>.sock}.
+  \item \textbf{Gateway : \texttt{httpmigrate/} (tous fichiers)} -- Tester loop +
+    sendfd en isolation (client UDS simple).
+  \item \textbf{Gateway : \texttt{main.go} + \texttt{forwarding\_proxy.go}} --
+    Branchement final, test end-to-end.
+  \item \textbf{Fonction : \texttt{timing\_fn\_worker.c}} -- Adapter + tester
+    keepalive relay.
+\end{enumerate}
+
+% ================================================================
+\section{Conclusion}
+% ================================================================
+
+Le plan décrit dans ce rapport atteint les cinq objectifs fixés :
+\begin{enumerate}
+  \item \textbf{faasd comme autorité IP unique} : toute résolution passe par
+    \texttt{GET /system/function-ip/}.
+  \item \textbf{Sockets UDS nommés par IP} : chemin dérivable sans configuration
+    supplémentaire.
+  \item \textbf{Watchdog dual-mode} : TCP :8080 inchangé + UDS sendfd additionnel.
+  \item \textbf{Keepalive géré} : socket de relais per-container créé par la Gateway.
+  \item \textbf{Écosystème préservé} : un seul flag \texttt{HTTPMIGRATE\_ENABLE=1}
+    active le prototype ; sans ce flag, le code est strictement identique à l'original.
+\end{enumerate}
+
+\end{document}

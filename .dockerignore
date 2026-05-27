@@ -1,0 +1,14 @@
+.git
+.buildx-cache
+*.sock
+*.o
+*.a
+wolfssl/
+Romero_Project_Internship/
+libtlspeek/build/
+**/node_modules/
+**/__pycache__/
+*.log
+*.csv
+*.png
+*.pdf

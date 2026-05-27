@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # prepare_proto_stack.sh — Rebuild, redeploy, enable, and smoke-test bench3 prototype.
 
-set -euo pipefail
-
+set -euox pipefail 
+PI_SUDO_PASSWORD='tchiaze2003'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLIENT_DIR="${SCRIPT_DIR}/../client"
 
@@ -23,10 +23,11 @@ scp "${SCRIPT_DIR}/pi_restore_vanilla_gw.sh" "${PI_SSH}:/tmp/pi_restore_vanilla_
 ssh "${PI_SSH}" "${password_q}bash /tmp/pi_restore_vanilla_gw.sh && rm -f /tmp/pi_restore_vanilla_gw.sh"
 
 echo "[prepare] deploying prototype worker image"
-bash "${SCRIPT_DIR}/build_push_deploy_proto_worker.sh"
+./"${SCRIPT_DIR}/build_push_deploy_proto_worker.sh"
 
 echo "[prepare] deploying and enabling prototype gateway"
-ENABLE_ON_PI=1 bash "${SCRIPT_DIR}/build_deploy_proto_gw.sh"
+ENABLE_ON_PI=1 
+./"${SCRIPT_DIR}/build_deploy_proto_gw.sh"
 
 # Wait for the proto gateway to be ready on port 9444 (test function endpoint, not /healthz)
 echo "[prepare] waiting for proto gateway to be ready on port 9444..."
