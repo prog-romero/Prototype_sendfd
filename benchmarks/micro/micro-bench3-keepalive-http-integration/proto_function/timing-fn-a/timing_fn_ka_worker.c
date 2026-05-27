@@ -479,6 +479,18 @@ int main(void)
     }
     chmod(fn_sock_path, 0777);
 
+    char name_sock_path[256];
+    snprintf(name_sock_path, sizeof(name_sock_path), "%s/%s.sock",
+             socket_dir, fn_name);
+    unlink(name_sock_path);
+    if (symlink(fn_sock_path, name_sock_path) != 0) {
+        fprintf(stderr, "[fn-worker] symlink %s -> %s failed: %s\n",
+                name_sock_path, fn_sock_path, strerror(errno));
+    } else {
+        fprintf(stderr, "[fn-worker] created symlink %s -> %s\n",
+                name_sock_path, fn_sock_path);
+    }
+
     fprintf(stderr, "[fn-worker] %s listening on %s, relay=%s\n",
             fn_name, fn_sock_path, relay_sock_path);
 
