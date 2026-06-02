@@ -1,22 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# Dockerfile for timing-fn-a (integration bench, keepalive HTTP)
+# Dockerfile for sumprod-timing-fn-b (integration bench, sum & product)
 #
-# Two binaries run inside the container:
-#   1. fwatchdog (PID 1) — our modified of-watchdog.
-#      It starts the sendfd relay goroutine (StartSendFDServer) which
-#      listens on /run/tlsmigrate/<ip>.sock and relays [clientFD, pipeWriteFD]
-#      to the C worker's /run/tlsmigrate/<ip>-fn.sock.
-#   2. timing-fn-ka-worker — the C function process started by fwatchdog
-#      via the "fprocess" env var.  It listens on <ip>-fn.sock and serves
-#      HTTP directly on the raw TCP file descriptor.
-#
-# Build context must be the repository root.  Example:
-#   docker build \
-#     -f benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/timing-fn-a/Dockerfile \
-#     -t timing-fn-a-ka-integration:latest .
 
-# ── Stage 1: build fwatchdog (modified of-watchdog with sendfd relay) ────────
+# ── Stage 1: build fwatchdog ──────────────────────────────────────────────────
 FROM golang:latest AS watchdog-build
 
 WORKDIR /go/src/github.com/openfaas/of-watchdog
@@ -37,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
  && rm -rf /var/lib/apt/lists/*
 
-COPY benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/timing-fn-a/timing_fn_ka_worker.c /src/timing_fn_ka_worker.c
+COPY benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/sumprod-timing-fn-b/timing_fn_ka_worker.c /src/timing_fn_ka_worker.c
 COPY libtlspeek/common/*.h libtlspeek/common/*.c /src/
 
 RUN install -d /out \
@@ -58,15 +45,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=watchdog-build /out/fwatchdog             /usr/bin/fwatchdog
 COPY --from=fn-build       /out/timing-fn-ka-worker   /usr/local/bin/timing-fn-ka-worker
 
-# of-watchdog settings
 ENV fprocess="/usr/local/bin/timing-fn-ka-worker"
-ENV mode=streaming
+ENV mode=http
+ENV http_upstream_url="http://127.0.0.1:8085"
 ENV sendfd_enable=1
 ENV sendfd_socket_dir=/run/tlsmigrate
 
 # Function-specific settings (read by the C worker)
-ENV HTTPMIGRATE_KA_FUNCTION_NAME=timing-fn-a
+ENV HTTPMIGRATE_KA_FUNCTION_NAME=timing-fn-b
 ENV SENDFD_SOCKET_DIR=/run/tlsmigrate
 
-# fwatchdog is PID 1; it starts the C worker as fprocess
 CMD ["/usr/bin/fwatchdog"]

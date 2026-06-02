@@ -20,7 +20,6 @@
  *   HTTPMIGRATE_KA_FUNCTION_NAME   this function's name (default "timing-fn-a")
  *   SENDFD_SOCKET_DIR              shared socket directory (default /run/tlsmigrate)
  */
- 
 #define _GNU_SOURCE
 
 #include <errno.h>

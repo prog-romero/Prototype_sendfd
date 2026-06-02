@@ -51,10 +51,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=watchdog-build /out/fwatchdog             /usr/bin/fwatchdog
 COPY --from=fn-build       /out/timing-fn-ka-worker   /usr/local/bin/timing-fn-ka-worker
 
-# of-watchdog settings — http mode starts fprocess ONCE (persistent process)
+# of-watchdog settings
 ENV fprocess="/usr/local/bin/timing-fn-ka-worker"
-ENV mode=http
-ENV http_upstream_url="http://127.0.0.1:8085"
+ENV mode=streaming
 ENV sendfd_enable=1
 ENV sendfd_socket_dir=/run/tlsmigrate
 
@@ -62,5 +61,5 @@ ENV sendfd_socket_dir=/run/tlsmigrate
 ENV HTTPMIGRATE_KA_FUNCTION_NAME=timing-fn-b
 ENV SENDFD_SOCKET_DIR=/run/tlsmigrate
 
-# fwatchdog is PID 1; it starts the C worker via HTTPFunctionRunner.Start()
+# fwatchdog is PID 1; it starts the C worker as fprocess
 CMD ["/usr/bin/fwatchdog"]
