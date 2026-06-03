@@ -24,6 +24,7 @@ REQUIRED_COLUMNS = [
     "rps",
     "transfer_kb_s",
     "pi_cpu_busy_avg_pct",
+    "pi_cpu_busy_max_pct",
     "lat_avg_ms",
     "total_requests",
     "socket_timeout_errors",
@@ -65,6 +66,7 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
         "rps",
         "transfer_kb_s",
         "pi_cpu_busy_avg_pct",
+        "pi_cpu_busy_max_pct",
         "lat_avg_ms",
         "total_requests",
         "socket_timeout_errors",
@@ -116,7 +118,7 @@ def make_plot(
     annotate_timeouts(ax, bars_b, b_tmo)
 
     ax.set_xticks(x)
-    ax.set_xticklabels(x_labels)
+    ax.set_xticklabels(x_labels, rotation=45, ha="right")
     ax.set_xlabel("rate (Target Requests/sec)", fontsize=11, labelpad=8)
     ax.set_ylabel(y_label, fontsize=11, labelpad=8)
     ax.grid(axis="y", alpha=0.2, linestyle="--")
@@ -145,6 +147,7 @@ def main() -> None:
         ("transfer_kb_s", "throughput_kb_s", "throughput (KB/s)"),
         ("rps", "rps", "requests/s"),
         ("pi_cpu_busy_avg_pct", "cpu_avg_pct", "cpu avg (%)"),
+        ("pi_cpu_busy_max_pct", "cpu_max_pct", "cpu max (%)"),
         ("lat_avg_ms", "lat_avg_ms", "latency avg (ms)"),
         ("total_requests", "total_requests", "total requests"),
     ]

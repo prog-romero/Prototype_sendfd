@@ -12,3 +12,4 @@ functions:
       sendfd_enable: "0"
       VANILLA_FN_NAME: "vanilla-fn-a"
       VANILLA_FN_PORT: "8085"
+

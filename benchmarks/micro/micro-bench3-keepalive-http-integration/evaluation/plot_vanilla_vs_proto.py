@@ -173,13 +173,13 @@ def main() -> int:
     annotate_bars(ax, vanilla_bars)
     annotate_bars(ax, proto_bars)
 
-    title = args.title or f"Vanilla vs Prototype: {args.stat.capitalize()} Latency Comparison"
-    ylabel = f"{args.stat.capitalize()} Latency (ms)"
+    title = args.title or f"Vanilla vs Prototype: {args.stat.capitalize()} time"
+    ylabel = f"{args.stat.capitalize()} time (ms)"
 
     ax.set_title(title, fontsize=15, fontweight="bold", pad=15)
     ax.set_xlabel("Payload Size (KiB)", fontsize=12, labelpad=10)
     ax.set_ylabel(ylabel, fontsize=12, labelpad=10)
-    ax.set_xticks(x)
+    ax.set_xticks(x)  
     ax.set_xticklabels(labels, rotation=45, ha="right")
     ax.grid(True, axis="y", linestyle="--", alpha=0.3)
     ax.set_axisbelow(True)

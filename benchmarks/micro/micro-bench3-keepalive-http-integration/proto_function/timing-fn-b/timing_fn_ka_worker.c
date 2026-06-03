@@ -37,6 +37,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -324,13 +325,22 @@ static void process_session(int client_fd,
                 snprintf(relay_payload.target_function,
                          sizeof(relay_payload.target_function), "%s", owner);
 
-                int relay_fd = unix_client_connect(relay_socket);
+                int relay_fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+                bool relayed = false;
                 if (relay_fd >= 0) {
-                    /* sendfd_with_state sends 1 FD only — closes client_fd */
-                    sendfd_with_state(relay_fd, client_fd, &relay_payload,
-                                      sizeof(relay_payload));
+                    struct sockaddr_un addr;
+                    memset(&addr, 0, sizeof(addr));
+                    addr.sun_family = AF_UNIX;
+                    strncpy(addr.sun_path, relay_socket, sizeof(addr.sun_path) - 1);
+                    if (connect(relay_fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+                        /* sendfd_with_state sends 1 FD only — closes client_fd */
+                        sendfd_with_state(relay_fd, client_fd, &relay_payload,
+                                          sizeof(relay_payload));
+                        relayed = true;
+                    }
                     close(relay_fd);
-                } else {
+                }
+                if (!relayed) {
                     close(client_fd);
                 }
                 /* Our session ends here; client_fd already closed. */

@@ -103,47 +103,53 @@ micro-bench3-keepalive-http-integration/
 
 ## Build
 
-### Gateway
+### Gateway Build (custom gateway image)
+
+> [!IMPORTANT]
+> The gateway build command must run with the `faas/gateway` subdirectory as the build context, rather than the repository root.
 
 ```bash
-cd benchmarks/micro/micro-bench3-keepalive-http-integration/faas/gateway
-docker build -t openfaas-gateway-ka-integration:latest .
+# Run from the repository root on your developer machine:
+docker build --no-cache \
+  -t romerosdd/openfaas-gateway-ka:latest \
+  benchmarks/micro/micro-bench3-keepalive-http-integration/faas/gateway
 ```
 
-### faasd
+### faasd Build
 
 ```bash
 cd benchmarks/micro/micro-bench3-keepalive-http-integration/faasd
 go build -o faasd ./cmd/...
 ```
 
-### of-watchdog
+### of-watchdog Build
 
 ```bash
 cd benchmarks/micro/micro-bench3-keepalive-http-integration/of-watchdog
 go build -o fwatchdog ./cmd/...
 ```
 
-### Gateway build (custom gateway image)
+
+
+### C Workers Build (from repo root)
 
 ```bash
-docker build \
-  -f benchmarks/micro/micro-bench3-keepalive-http-integration/faas/gateway/Dockerfile \
-  -t timing-gateway-ka-integration:latest .
+# Build timing-fn-a image (no-cache recommended to force C recompilation)
+docker build --no-cache \
+  -f benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/timing-fn-a/Dockerfile \
+  -t romerosdd/timing-fn-a-ka-integration:latest .
+
+# Build timing-fn-b image
+docker build --no-cache \
+  -f benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/timing-fn-b/Dockerfile \
+  -t romerosdd/timing-fn-b-ka-integration:latest .
 ```
 
-### C workers (from repo root)
+## Push images (to Docker Hub)
 
 ```bash
-# timing-fn-a
-docker build \
-  -f benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/timing-fn-a/Dockerfile \
-  -t timing-fn-a-ka-integration:latest .
-
-# timing-fn-b
-docker build \
-  -f benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/timing-fn-b/Dockerfile \
-  -t timing-fn-b-ka-integration:latest .
+docker push romerosdd/timing-fn-a-ka-integration:latest
+docker push romerosdd/timing-fn-b-ka-integration:latest
 ```
 
 ## Deploy
@@ -151,7 +157,7 @@ docker build \
 ```bash
 # Set environment variables
 export GATEWAY=http://127.0.0.1:8080
-export REGISTRY=myregistry.io/bench   # optional
+export REGISTRY=docker.io/romerosdd   # optional
 
 bash scripts/deploy.sh
 ```
@@ -161,7 +167,7 @@ Or manually with faas-cli:
 ```bash
 faas-cli deploy \
   --gateway http://127.0.0.1:8080 \
-  --image timing-fn-a-ka-integration:latest \
+  --image romerosdd/timing-fn-a-ka-integration:latest \
   --name timing-fn-a \
   --env HTTPMIGRATE_KA_FUNCTION_NAME=timing-fn-a \
   --env SENDFD_SOCKET_DIR=/run/tlsmigrate \
@@ -170,40 +176,72 @@ faas-cli deploy \
   --fprocess /usr/local/bin/timing-fn-ka-worker
 ```
 
+## Update C Workers (Rebuild, Push & Deploy)
+
+Whenever you edit the C code for the worker processes, execute the following steps to update the containers running on the Raspberry Pi:
+
+### 1) Build and push the new images on your developer machine:
+```bash
+# From the repo root:
+docker build --no-cache \
+  -f benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/timing-fn-a/Dockerfile \
+  -t romerosdd/timing-fn-a-ka-integration:latest .
+
+docker build --no-cache \
+  -f benchmarks/micro/micro-bench3-keepalive-http-integration/proto_function/timing-fn-b/Dockerfile \
+  -t romerosdd/timing-fn-b-ka-integration:latest .
+
+docker push romerosdd/timing-fn-a-ka-integration:latest
+docker push romerosdd/timing-fn-b-ka-integration:latest
+```
+
+### 2) Force pull and redeploy the images on your Raspberry Pi:
+```bash
+# Remove old cached images from containerd's namespace:
+sudo ctr -n openfaas-fn images rm docker.io/romerosdd/timing-fn-a-ka-integration:latest || true
+sudo ctr -n openfaas-fn images rm docker.io/romerosdd/timing-fn-b-ka-integration:latest || true
+
+# Pull the fresh images from Docker Hub:
+sudo ctr -n openfaas-fn image pull docker.io/romerosdd/timing-fn-a-ka-integration:latest
+sudo ctr -n openfaas-fn image pull docker.io/romerosdd/timing-fn-b-ka-integration:latest
+
+# Redeploy the functions:
+faas-cli deploy -f benchmarks/micro/micro-bench3-keepalive-http-integration/deploy/timing-fn-a.yml
+faas-cli deploy -f benchmarks/micro/micro-bench3-keepalive-http-integration/deploy/timing-fn-b.yml
+```
+
 ## Update the gateway image in faasd
 
-When you rebuild the gateway image and want `faasd` to use the new image, do the following exactly.
+Whenever you update the gateway Go code and want to deploy the changes to `faasd` on the Raspberry Pi:
 
-### 1) Stop faasd
-
+### 1) Rebuild and push the new gateway image on your developer machine
 ```bash
+# Build the image using the gateway directory as the context (forces Go recompilation)
+docker build --no-cache \
+  -t romerosdd/openfaas-gateway-ka:latest \
+  benchmarks/micro/micro-bench3-keepalive-http-integration/faas/gateway
+
+# Push the new image to Docker Hub
+docker push romerosdd/openfaas-gateway-ka:latest
+```
+
+### 2) Pull and redeploy on the Raspberry Pi
+On the Raspberry Pi, stop `faasd`, clean up references to the old container/image, pull the updated image, and restart:
+```bash
+# Stop faasd
 sudo systemctl stop faasd
-```
 
-### 2) Remove the old gateway container from faasd
-
-```bash
+# Remove the old gateway container from containerd
 sudo ctr -n openfaas container rm gateway 2>/dev/null || true
-```
 
-### 3) Remove the old gateway image from containerd
-
-```bash
+# Remove the old cached gateway image from both namespaces
 sudo ctr -n openfaas images rm docker.io/romerosdd/openfaas-gateway-ka:latest 2>/dev/null || true
-```
+sudo ctr -n openfaas-fn images rm docker.io/romerosdd/openfaas-gateway-ka:latest 2>/dev/null || true
 
-- This command may leave the image if a container still references it.
-- You must remove the container first, then remove the image.
-
-### 4) Pull the fresh gateway image into faasd's containerd namespace
-
-```bash
+# Pull the fresh image from Docker Hub
 sudo ctr -n openfaas image pull docker.io/romerosdd/openfaas-gateway-ka:latest
-```
 
-### 5) Start faasd again
-
-```bash
+# Start faasd again
 sudo systemctl start faasd
 ```
 
@@ -225,14 +263,64 @@ curl -s http://127.0.0.1:8080/function/timing-fn-a -d 'test' | python3 -m json.t
 
 ## Run the bench
 
+### 1) Smoke test connection migration manually
+You can verify connection migration using the following inline Python command:
+```python
+python3 -c '
+import http.client, json
+conn = http.client.HTTPConnection("127.0.0.1", 8080, timeout=10)
+
+print("--> Sending request 1 to /function/timing-fn-a")
+conn.request("POST", "/function/timing-fn-a", body="Payload-A", headers={"Connection": "keep-alive"})
+r1 = conn.getresponse()
+print("Response 1:", r1.status, json.loads(r1.read().decode()))
+
+print("\n--> Sending request 2 to /function/timing-fn-b (on SAME TCP connection)")
+conn.request("POST", "/function/timing-fn-b", body="Payload-B", headers={"Connection": "close"})
+r2 = conn.getresponse()
+print("Response 2:", r2.status, json.loads(r2.read().decode()))
+conn.close()
+'
+```
+
+### 2) Rerunning the Prototype Evaluation Sweep
+To run the automated sweep for the prototype mode (with zero-copy migration) for different payload sizes:
 ```bash
-python3 client/run_keepalive_sweep.py \
-  --host 127.0.0.1 \
-  --port 8080 \
-  --mode switch \
-  --start-kb 32 --end-kb 512 --step-kb 32 \
-  --requests 50 \
-  --out results_integration.csv
+# Run from the repository root on your developer machine:
+python3 benchmarks/micro/micro-bench3-keepalive-http-integration/evaluation/run_proto_evaluation.py \
+  --host 192.168.2.2
+```
+
+### 3) Rerunning the Vanilla Evaluation Sweep
+To run the evaluation sweep for standard OpenFaaS vanilla mode:
+```bash
+# Run the standard sweep (predefined payload ranges):
+python3 benchmarks/micro/micro-bench3-keepalive-http-integration/evaluation/run_vanilla_evaluation.py \
+  --host 192.168.2.2
+
+# OR run the custom sweep matching your specific range (e.g. 1 to 300 KiB, step 10, 50 requests):
+python3 benchmarks/micro/micro-bench3-keepalive-http-integration/evaluation/run_vanilla_evaluation.py \
+  --host 192.168.2.2 \
+  --start-kb 1 \
+  --end-kb 300 \
+  --step-kb 10 \
+  --requests 50
+```
+
+All sweep results are written to:
+`benchmarks/micro/micro-bench3-keepalive-http-integration/evaluation/results/`
+
+### 3) Run the custom throughput/RPS sweep
+To sweep throughput rates using `wrk2` for the prototype mode:
+```bash
+python3 benchmarks/micro/micro-bench3-keepalive-http-integration/evaluation_throughput/sweep_throughput_wrk2.py \
+  --mode proto \
+  --concurrency 100 \
+  --payload-kb 1 \
+  --duration-s 20 \
+  --timeout-s 20 \
+  --rates 50,100,150,200,250,300,350,400,450,500,550,600,650,700 \
+  --out benchmarks/micro/micro-bench3-keepalive-http-integration/evaluation_throughput/results/proto_rate_sweep_2core_32kb.csv
 ```
 
 ## Shared socket directory
