@@ -1,0 +1,14 @@
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  vanilla-fn-a:
+    image: romerosdd/sumprod-vanilla-fn-a-ka-integration:latest
+    fprocess: /usr/local/bin/vanilla-fn-worker
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      sendfd_enable: "0"
+      VANILLA_FN_NAME: "vanilla-fn-a"
+      VANILLA_FN_PORT: "8085"

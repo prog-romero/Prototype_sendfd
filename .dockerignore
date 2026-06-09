@@ -3,7 +3,6 @@
 *.sock
 *.o
 *.a
-wolfssl/
 Romero_Project_Internship/
 libtlspeek/build/
 **/node_modules/

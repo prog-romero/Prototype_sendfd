@@ -1,0 +1,57 @@
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  # ── Prototype functions (SCM_RIGHTS / sendfd path) ───────────────────────
+  timing-fn-a:
+    image: romerosdd/timing-fn-a-ka-integration:latest
+    fprocess: /usr/local/bin/timing-fn-ka-worker
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_enable: "1"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "timing-fn-a"
+
+  timing-fn-b:
+    image: romerosdd/timing-fn-b-ka-integration:latest
+    fprocess: /usr/local/bin/timing-fn-ka-worker
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_enable: "1"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "timing-fn-b"
+
+  # ── Vanilla functions (standard HTTP proxy path) ─────────────────────────
+  # The gateway must run with HTTPMIGRATE_ENABLE=0 and VANILLA_TIMING_ENABLE=1
+  # when benchmarking these functions.
+  vanilla-fn-a:
+    image: romerosdd/vanilla-fn-a-ka-integration:latest
+    fprocess: /usr/local/bin/vanilla-fn-worker
+    environment:
+      # Watchdog http mode: reverse-proxies to the C HTTP server on :8085
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      # sendfd disabled — standard proxy path only
+      sendfd_enable: "0"
+      # C worker identity
+      VANILLA_FN_NAME: "vanilla-fn-a"
+      VANILLA_FN_PORT: "8085"
+
+  vanilla-fn-b:
+    image: romerosdd/vanilla-fn-b-ka-integration:latest
+    fprocess: /usr/local/bin/vanilla-fn-worker
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      sendfd_enable: "0"
+      VANILLA_FN_NAME: "vanilla-fn-b"
+      VANILLA_FN_PORT: "8085"

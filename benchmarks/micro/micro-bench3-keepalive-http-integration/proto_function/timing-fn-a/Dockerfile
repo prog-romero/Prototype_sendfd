@@ -60,7 +60,8 @@ COPY --from=fn-build       /out/timing-fn-ka-worker   /usr/local/bin/timing-fn-k
 
 # of-watchdog settings
 ENV fprocess="/usr/local/bin/timing-fn-ka-worker"
-ENV mode=streaming
+ENV mode=http
+ENV http_upstream_url="http://127.0.0.1:8085"
 ENV sendfd_enable=1
 ENV sendfd_socket_dir=/run/tlsmigrate
 
