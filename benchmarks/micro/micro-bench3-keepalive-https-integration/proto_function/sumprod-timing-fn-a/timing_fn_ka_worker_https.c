@@ -367,7 +367,7 @@ static void handle_session(worker_session_t *s)
                 if (n <= 0) {
                     int err = wolfSSL_get_error(s->ssl, n);
                     if (err == WOLFSSL_ERROR_WANT_READ) return;
-                    if (err == WOLFSSL_ERROR_WANT_WRITE) { epoll_mod(s->fd, EPOLLIN|EPOLLOUT|EPOLLET); return; }
+                    if (err == WOLFSSL_ERROR_WANT_WRITE) { epoll_mod(s->fd, EPOLLIN|EPOLLOUT); return; }
                     session_close(s); return;
                 }
                 s->len += n;
@@ -398,7 +398,7 @@ static void handle_session(worker_session_t *s)
                     if (n <= 0) {
                         int err = wolfSSL_get_error(s->ssl, n);
                         if (err == WOLFSSL_ERROR_WANT_READ) return;
-                        if (err == WOLFSSL_ERROR_WANT_WRITE) { epoll_mod(s->fd, EPOLLIN|EPOLLOUT|EPOLLET); return; }
+                        if (err == WOLFSSL_ERROR_WANT_WRITE) { epoll_mod(s->fd, EPOLLIN|EPOLLOUT); return; }
                         session_close(s); return;
                     }
                     s->len += n; s->buf[s->len] = '\0';
@@ -410,7 +410,7 @@ static void handle_session(worker_session_t *s)
                 s->top2 = get_ns();
                 session_build_resp(s);
                 s->state = WS_WRITE_RESP;
-                epoll_mod(s->fd, EPOLLIN|EPOLLOUT|EPOLLET);
+                epoll_mod(s->fd, EPOLLIN|EPOLLOUT);
             }
         }
         
@@ -419,8 +419,8 @@ static void handle_session(worker_session_t *s)
                 int n = wolfSSL_write(s->ssl, s->resp + s->resp_off, s->resp_len - s->resp_off);
                 if (n <= 0) {
                     int err = wolfSSL_get_error(s->ssl, n);
-                    if (err == WOLFSSL_ERROR_WANT_READ) { epoll_mod(s->fd, EPOLLIN|EPOLLOUT|EPOLLET); return; }
-                    if (err == WOLFSSL_ERROR_WANT_WRITE) return;
+                    if (err == WOLFSSL_ERROR_WANT_READ) { epoll_mod(s->fd, EPOLLIN); return; }
+                    if (err == WOLFSSL_ERROR_WANT_WRITE) { epoll_mod(s->fd, EPOLLIN|EPOLLOUT); return; }
                     session_close(s); return;
                 }
                 s->resp_off += n;
@@ -441,7 +441,7 @@ static void handle_session(worker_session_t *s)
             s->state = WS_PEEK_OWNER;
             s->top1 = get_ns();
             
-            epoll_mod(s->fd, EPOLLIN|EPOLLET);
+            epoll_mod(s->fd, EPOLLIN);
         }
     }
 }
@@ -485,7 +485,7 @@ static void register_client(int client_fd, int pipe_fd, httpmigrate_ka_payload_h
     }
     
     s_sessions[client_fd] = s;
-    struct epoll_event ev = { .events = EPOLLIN | EPOLLET, .data.fd = client_fd };
+    struct epoll_event ev = { .events = EPOLLIN, .data.fd = client_fd };
     epoll_ctl(s_epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
     
     handle_session(s);

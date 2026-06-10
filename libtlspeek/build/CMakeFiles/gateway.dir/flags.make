@@ -4,7 +4,7 @@
 # compile C with /usr/bin/cc
 C_DEFINES = 
 
-C_INCLUDES = -I/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/wolfssl -I/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/lib -I/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/common -I/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/gateway
+C_INCLUDES = -I/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/lib -I/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/common -I/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/gateway
 
 C_FLAGS = -O3 -DQUIET -Wall -Wextra -O2 -g -std=gnu11
 

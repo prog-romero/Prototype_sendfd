@@ -192,6 +192,9 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
 
     ssize_t raw_len = recv(ctx->tcp_fd, raw, sizeof(raw), MSG_PEEK);
     if (raw_len <= 0) {
+        if (raw_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return 0;
+        }
         if (raw_len == 0)
             fprintf(stderr, "[tlspeek] recv(MSG_PEEK): connection closed\n");
         else
@@ -204,9 +207,7 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
 
     /* ── Sub-step 2b: Parse TLS 1.3 record header (5 bytes) ── */
     if (raw_len < TLSPEEK_HEADER_SIZE) {
-        fprintf(stderr,
-                "[tlspeek] too few bytes for TLS header: %zd\n", raw_len);
-        return -1;
+        return 0;
     }
 
     uint8_t  record_type = raw[0];
@@ -225,11 +226,7 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
     }
 
     if ((size_t)raw_len < (size_t)(TLSPEEK_HEADER_SIZE + record_len)) {
-        fprintf(stderr,
-                "[tlspeek] incomplete record in peek buffer "
-                "(got %zd, need %d)\n",
-                raw_len, TLSPEEK_HEADER_SIZE + record_len);
-        return -1;
+        return 0;
     }
 
     if (record_len <= TLSPEEK_TAG_SIZE) {

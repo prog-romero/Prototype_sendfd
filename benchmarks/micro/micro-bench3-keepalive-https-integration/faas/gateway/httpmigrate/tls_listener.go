@@ -81,6 +81,7 @@ func (c *WolfSSLGtwCtx) SerialSize() int {
 type WolfSSLGtwConn struct {
 	ptr        *C.wolfssl_gtw_conn_t
 	fd         int
+	epfd       int
 	mu         sync.Mutex
 	wg         sync.WaitGroup
 	closed     bool
@@ -95,10 +96,21 @@ func (c *WolfSSLGtwCtx) DoHandshake(tcpFD int) (*WolfSSLGtwConn, error) {
 	if ptr == nil {
 		return nil, fmt.Errorf("[tls_listener] TLS handshake failed fd=%d", tcpFD)
 	}
+	syscall.SetNonblock(tcpFD, true)
 	fd := int(C.wolfssl_gtw_conn_fd(ptr))
+
+	epfd, _ := syscall.EpollCreate1(0)
+	if epfd >= 0 {
+		var ev syscall.EpollEvent
+		ev.Fd = int32(fd)
+		ev.Events = syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR
+		syscall.EpollCtl(epfd, syscall.EPOLL_CTL_ADD, fd, &ev)
+	}
+
 	return &WolfSSLGtwConn{
 		ptr:        ptr,
 		fd:         fd,
+		epfd:       epfd,
 		localAddr:  gtwSocketAddr(fd, false),
 		remoteAddr: gtwSocketAddr(fd, true),
 	}, nil
@@ -132,7 +144,7 @@ func (conn *WolfSSLGtwConn) PeekAndExport(skipTop1 bool) (rawFD int, fnName stri
 	)
 
 	switch {
-	case rc >= 0:
+	case rc > 0:
 		// Function path — wolfSSL freed internally by C, conn handle is invalid now.
 		conn.mu.Lock()
 		conn.ptr    = nil
@@ -141,6 +153,10 @@ func (conn *WolfSSLGtwConn) PeekAndExport(skipTop1 bool) (rawFD int, fnName stri
 
 		fn := C.GoString(&cFnName[0])
 		return int(rc), fn, serialBuf[:int(cSerialSz)], uint64(cTop1), nil
+
+	case rc == 0:
+		// Need more data (EAGAIN or incomplete record).
+		return 0, "", nil, 0, nil
 
 	case rc == -1:
 		// Not a /function/ path — wolfSSL still active on conn, use for ChanListener.
@@ -157,6 +173,35 @@ func (conn *WolfSSLGtwConn) PeekAndExport(skipTop1 bool) (rawFD int, fnName stri
 }
 
 // ── net.Conn interface ───────────────────────────────────────────────────────
+
+func (c *WolfSSLGtwConn) WaitEpoll(write bool) {
+	if c.epfd < 0 || c.fd < 0 {
+		time.Sleep(1 * time.Millisecond)
+		return
+	}
+	var ev syscall.EpollEvent
+	ev.Fd = int32(c.fd)
+	if write {
+		ev.Events = syscall.EPOLLOUT | syscall.EPOLLRDHUP | syscall.EPOLLERR
+	} else {
+		ev.Events = syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR
+	}
+	syscall.EpollCtl(c.epfd, syscall.EPOLL_CTL_MOD, c.fd, &ev)
+
+	events := make([]syscall.EpollEvent, 1)
+	for {
+		n, err := syscall.EpollWait(c.epfd, events, -1)
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			break
+		}
+		if n > 0 {
+			break
+		}
+	}
+}
 
 func (c *WolfSSLGtwConn) Read(p []byte) (int, error) {
 	if len(p) == 0 {
@@ -185,10 +230,10 @@ func (c *WolfSSLGtwConn) Read(p []byte) (int, error) {
 
 		switch code {
 		case int(C.SSL_ERROR_WANT_READ):
-			waitEpoll(c.fd, false)
+			c.WaitEpoll(false)
 			continue
 		case int(C.SSL_ERROR_WANT_WRITE):
-			waitEpoll(c.fd, true)
+			c.WaitEpoll(true)
 			continue
 		case int(C.SSL_ERROR_ZERO_RETURN), int(C.SOCKET_PEER_CLOSED_E), int(C.SSL_ERROR_SYSCALL):
 			return 0, io.EOF
@@ -227,10 +272,10 @@ func (c *WolfSSLGtwConn) Write(p []byte) (int, error) {
 
 		switch code {
 		case int(C.SSL_ERROR_WANT_READ):
-			waitEpoll(c.fd, false)
+			c.WaitEpoll(false)
 			continue
 		case int(C.SSL_ERROR_WANT_WRITE):
-			waitEpoll(c.fd, true)
+			c.WaitEpoll(true)
 			continue
 		case int(C.SSL_ERROR_ZERO_RETURN), int(C.SOCKET_PEER_CLOSED_E), int(C.SSL_ERROR_SYSCALL):
 			return total, io.EOF
@@ -261,6 +306,10 @@ func (c *WolfSSLGtwConn) Close() error {
 
 	// 3. Safely free
 	c.mu.Lock()
+	if c.epfd >= 0 {
+		syscall.Close(c.epfd)
+		c.epfd = -1
+	}
 	if c.ptr != nil {
 		C.wolfssl_gtw_conn_close(c.ptr)
 		c.ptr = nil

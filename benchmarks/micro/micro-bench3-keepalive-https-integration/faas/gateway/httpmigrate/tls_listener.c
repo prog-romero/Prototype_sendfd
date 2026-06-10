@@ -253,30 +253,22 @@ wolfssl_gtw_conn_t *wolfssl_do_handshake(wolfssl_gtw_ctx_t *ctx, int tcp_fd)
 int wolfssl_gtw_conn_read(wolfssl_gtw_conn_t *conn, void *buf, int len)
 {
     if (!conn || !conn->ssl || !buf || len <= 0) return -1;
-    for (;;) {
-        int n = wolfSSL_read(conn->ssl, buf, len);
-        if (n > 0) return n;
-        int e = wolfSSL_get_error(conn->ssl, n);
-        if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) continue;
-        return n;
-    }
+    return wolfSSL_read(conn->ssl, buf, len);
 }
 
 int wolfssl_gtw_conn_write(wolfssl_gtw_conn_t *conn, const void *buf, int len)
 {
     if (!conn || !conn->ssl || !buf || len <= 0) return -1;
-    char drain[1024];
-    for (;;) {
-        int n = wolfSSL_write(conn->ssl, buf, len);
-        if (n > 0) return n;
+    
+    int n = wolfSSL_write(conn->ssl, buf, len);
+    if (n <= 0) {
         int e = wolfSSL_get_error(conn->ssl, n);
-        if (e == SSL_ERROR_WANT_WRITE) continue;
         if (e == SSL_ERROR_WANT_READ) {
+            char drain[1024];
             wolfSSL_read(conn->ssl, drain, (int)sizeof(drain));
-            continue;
         }
-        return n;
     }
+    return n;
 }
 
 int wolfssl_gtw_conn_get_error(wolfssl_gtw_conn_t *conn, int ret)
@@ -325,20 +317,18 @@ int tlsgw_peek_and_export(
     if (top1_ns_out)   *top1_ns_out   = 0;
     if (serial_sz_out) *serial_sz_out = 0;
 
-    /* 1. Wait for encrypted bytes in kernel buffer (epoll) */
-    if (wait_readable(conn->tcp_fd) < 0) {
-        wolfssl_gtw_conn_close(conn);
-        return -2;
-    }
-
+    /* Wait in Go before calling this */
     /* 2. Stamp top1 (unless SUM_PROD mode) */
     if (!skip_top1 && top1_ns_out)
         *top1_ns_out = now_ns();
 
-    /* 3. tls_read_peek: stateless decrypt via MSG_PEEK — kernel buffer unchanged */
-    uint8_t peek_buf[8192];
+    /* Wait in Go before calling this */
+    uint8_t peek_buf[4096];
     int peeked = tls_read_peek(&conn->peek_ctx, peek_buf, sizeof(peek_buf) - 1);
-    if (peeked <= 0) {
+    if (peeked == 0) {
+        return 0; /* Need more data */
+    }
+    if (peeked < 0) {
         /* peek failed — treat as non-function, leave conn for ChanListener */
         return -1;
     }

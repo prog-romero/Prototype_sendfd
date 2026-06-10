@@ -20,9 +20,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# Default target URLs on unified HTTP gateway port 8080
-DEFAULT_VANILLA_URL = "http://192.168.2.2:8080/function/vanilla-fn-a"
-DEFAULT_PROTO_URL   = "http://192.168.2.2:8080/function/timing-fn-a"
+# Default target URLs on unified HTTPS gateway port 8443
+DEFAULT_VANILLA_URL = "https://192.168.2.2:8443/function/vanilla-fn-a"
+DEFAULT_PROTO_URL   = "https://192.168.2.2:8443/function/sumprod-timing-fn-a"
 DEFAULT_PI_SSH      = "romero@192.168.2.2"
 
 _LATENCY_STATS_RE = re.compile(
@@ -350,7 +350,7 @@ def main():
         fn_a, fn_b = "vanilla-fn-a", "vanilla-fn-b"
     else:
         url = DEFAULT_PROTO_URL
-        fn_a, fn_b = "timing-fn-a", "timing-fn-b"
+        fn_a, fn_b = "sumprod-timing-fn-a", "sumprod-timing-fn-b"
 
     print(f"=== wrk2 Constant-Throughput Sweep ({args.mode.upper()}) ===")
     print(f"Target URL: {url}")

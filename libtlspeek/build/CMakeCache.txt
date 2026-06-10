@@ -195,6 +195,9 @@ WOLFSSL_INCLUDE:PATH=/usr/local/include
 //Path to a library.
 WOLFSSL_LIB:FILEPATH=/usr/local/lib/libwolfssl.so
 
+//Path to wolfSSL source tree
+WOLFSSL_ROOT:PATH=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/../wolfssl
+
 //Value Computed by CMake
 libtlspeek_BINARY_DIR:STATIC=/home/tchiaze/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/libtlspeek/build
 

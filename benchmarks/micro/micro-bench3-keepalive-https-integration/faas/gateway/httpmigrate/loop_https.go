@@ -203,10 +203,21 @@ func handleConnHTTPS(
 	}
 
 	// Step 2: Wait for data, stamp top1, tls_read_peek, parse function name.
-	rawFD, fnName, serialBytes, top1Ns, err := conn.PeekAndExport(skipTop1)
-	if err != nil {
-		log.Printf("[handleConnHTTPS] PeekAndExport fd=%d: %v\n", connFD, err)
-		return
+	var rawFD int
+	var fnName string
+	var serialBytes []byte
+	var top1Ns uint64
+	for {
+		conn.WaitEpoll(false)
+		rawFD, fnName, serialBytes, top1Ns, err = conn.PeekAndExport(skipTop1)
+		if err != nil {
+			log.Printf("[handleConnHTTPS] PeekAndExport fd=%d: %v\n", connFD, err)
+			return
+		}
+		if rawFD != 0 {
+			break
+		}
+		// rawFD == 0 means EAGAIN or incomplete record, keep waiting
 	}
 
 	if rawFD >= 0 && fnName != "" {

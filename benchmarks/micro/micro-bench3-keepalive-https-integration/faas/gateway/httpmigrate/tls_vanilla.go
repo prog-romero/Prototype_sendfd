@@ -66,7 +66,15 @@ func (ctx *WolfSSLVanillaCtx) DoHandshake(fd int) (*WolfSSLVanillaConn, error) {
 	if p == nil {
 		return nil, fmt.Errorf("[tls_vanilla] handshake failed fd=%d", fd)
 	}
-	return &WolfSSLVanillaConn{ptr: p, fd: fd}, nil
+	syscall.SetNonblock(fd, true)
+	epfd, _ := syscall.EpollCreate1(0)
+	if epfd >= 0 {
+		var ev syscall.EpollEvent
+		ev.Fd = int32(fd)
+		ev.Events = syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR
+		syscall.EpollCtl(epfd, syscall.EPOLL_CTL_ADD, fd, &ev)
+	}
+	return &WolfSSLVanillaConn{ptr: p, fd: fd, epfd: epfd}, nil
 }
 
 // ── WolfSSLVanillaConn (implements net.Conn) ──────────────────────────────────
@@ -79,38 +87,29 @@ type WolfSSLVanillaConn struct {
 	wg         sync.WaitGroup
 	ptr        *C.wolfssl_vanilla_conn_t
 	fd         int
+	epfd       int
 	closed     bool
 	localAddr  net.Addr
 	remoteAddr net.Addr
 }
 
-func waitEpoll(fd int, write bool) {
-	if fd < 0 {
-		return
-	}
-	epfd, err := syscall.EpollCreate1(0)
-	if err != nil {
+func (c *WolfSSLVanillaConn) waitEpoll(write bool) {
+	if c.epfd < 0 || c.fd < 0 {
 		time.Sleep(1 * time.Millisecond)
 		return
 	}
-	defer syscall.Close(epfd)
-
 	var ev syscall.EpollEvent
-	ev.Fd = int32(fd)
+	ev.Fd = int32(c.fd)
 	if write {
 		ev.Events = syscall.EPOLLOUT | syscall.EPOLLRDHUP | syscall.EPOLLERR
 	} else {
 		ev.Events = syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR
 	}
-
-	if err := syscall.EpollCtl(epfd, syscall.EPOLL_CTL_ADD, fd, &ev); err != nil {
-		time.Sleep(1 * time.Millisecond)
-		return
-	}
+	syscall.EpollCtl(c.epfd, syscall.EPOLL_CTL_MOD, c.fd, &ev)
 
 	events := make([]syscall.EpollEvent, 1)
 	for {
-		n, err := syscall.EpollWait(epfd, events, -1)
+		n, err := syscall.EpollWait(c.epfd, events, -1)
 		if err != nil {
 			if err == syscall.EINTR {
 				continue
@@ -150,10 +149,10 @@ func (c *WolfSSLVanillaConn) Read(p []byte) (int, error) {
 
 		switch code {
 		case int(C.SSL_ERROR_WANT_READ):
-			waitEpoll(c.fd, false)
+			c.waitEpoll(false)
 			continue
 		case int(C.SSL_ERROR_WANT_WRITE):
-			waitEpoll(c.fd, true)
+			c.waitEpoll(true)
 			continue
 		case int(C.SSL_ERROR_ZERO_RETURN), int(C.SSL_ERROR_SYSCALL):
 			return 0, io.EOF // clean or abrupt connection close
@@ -193,10 +192,10 @@ func (c *WolfSSLVanillaConn) Write(p []byte) (int, error) {
 
 		switch code {
 		case int(C.SSL_ERROR_WANT_READ):
-			waitEpoll(c.fd, false)
+			c.waitEpoll(false)
 			continue
 		case int(C.SSL_ERROR_WANT_WRITE):
-			waitEpoll(c.fd, true)
+			c.waitEpoll(true)
 			continue
 		case int(C.SSL_ERROR_ZERO_RETURN), int(C.SSL_ERROR_SYSCALL):
 			return total, io.EOF
@@ -227,6 +226,10 @@ func (c *WolfSSLVanillaConn) Close() error {
 
 	// 3. Safely free the C pointer
 	c.mu.Lock()
+	if c.epfd >= 0 {
+		syscall.Close(c.epfd)
+		c.epfd = -1
+	}
 	if c.ptr != nil {
 		C.wolfssl_vanilla_close(c.ptr)
 		c.ptr = nil

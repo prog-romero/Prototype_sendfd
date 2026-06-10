@@ -24,8 +24,8 @@ import time
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DEFAULT_VANILLA_URL = "http://192.168.2.2:8080/function/vanilla-fn-a"
-DEFAULT_PROTO_URL   = "http://192.168.2.2:8080/function/timing-fn-a"
+DEFAULT_VANILLA_URL = "https://192.168.2.2:8443/function/vanilla-fn-a"
+DEFAULT_PROTO_URL   = "https://192.168.2.2:8443/function/sumprod-timing-fn-a"
 
 # Concurrency levels to sweep: 1, 11, 21, 31, ... 201 (step of 10).
 # We cap at 201 because faasd/containers on Pi 4 saturate around 100-150.
@@ -185,7 +185,7 @@ def main():
         default_url = DEFAULT_VANILLA_URL
     elif mode_arg == "proto":
         mode = "proto"
-        fn_a, fn_b = "timing-fn-a", "timing-fn-b"
+        fn_a, fn_b = "sumprod-timing-fn-a", "sumprod-timing-fn-b"
         default_url = DEFAULT_PROTO_URL
     else:
         print(f"[error] Unsupported mode '{mode_arg}'. Use vanilla or proto.")

@@ -111,24 +111,16 @@ int wolfssl_vanilla_read(wolfssl_vanilla_conn_t *conn, void *buf, int len)
 int wolfssl_vanilla_write(wolfssl_vanilla_conn_t *conn, const void *buf, int len)
 {
     if (!conn || !conn->ssl || !buf || len <= 0) return -1;
-    /* Scratch buffer to drain post-handshake msgs (KeyUpdate, etc.) that
-     * wolfSSL may need to process before it can send application data.
-     * wolfSSL_write returns WANT_READ when such a message is pending. */
-    char drain[1024];
-    for (;;) {
-        int n = wolfSSL_write(conn->ssl, buf, len);
-        if (n > 0) return n;
+    
+    int n = wolfSSL_write(conn->ssl, buf, len);
+    if (n <= 0) {
         int e = wolfSSL_get_error(conn->ssl, n);
-        if (e == SSL_ERROR_WANT_WRITE) continue;
         if (e == SSL_ERROR_WANT_READ) {
-            /* wolfSSL needs to read a pending post-handshake message
-             * (TLS 1.3 KeyUpdate, NewSessionTicket ack, etc.) before it
-             * can write application data.  Drain it, then retry write. */
+            char drain[1024];
             wolfSSL_read(conn->ssl, drain, (int)sizeof(drain));
-            continue;
         }
-        return n; /* real error */
     }
+    return n;
 }
 
 int wolfssl_vanilla_get_error(wolfssl_vanilla_conn_t *conn, int ret)
