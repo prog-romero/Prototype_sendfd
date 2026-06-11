@@ -249,18 +249,22 @@ def _run_wrk2(
     concurrency: int,
     rate: int,
     payload_kb: int,
+    target_mode: str,
     fn_a: str,
     fn_b: str,
 ) -> Tuple[int, str]:
     env = os.environ.copy()
     env["WRK_PAYLOAD_KB"] = str(payload_kb)
-    env["WRK_TARGET_MODE"] = "alternate"
+    env["WRK_TARGET_MODE"] = target_mode
+    env["WRK_SAME_TARGET"] = fn_a
     env["WRK_FN_A"] = fn_a
     env["WRK_FN_B"] = fn_b
 
+    actual_threads = min(threads, concurrency)
+
     cmd = [
         wrk2_bin,
-        f"-t{threads}",
+        f"-t{actual_threads}",
         f"-c{concurrency}",
         f"-d{duration_s}s",
         f"-R{rate}",
@@ -297,6 +301,7 @@ def _base_row() -> Dict[str, object]:
         "monitored_value": 0,
         "rate": 0,
         "concurrency": 0,
+        "target_mode": "",
         "payload_kb": 0,
         "exit_code": 0,
         "rps": 0.0,
@@ -328,6 +333,7 @@ def main():
     parser = argparse.ArgumentParser(description="Constant-throughput rate sweep using wrk2")
     parser.add_argument("--mode", choices=["vanilla", "proto"], required=True, help="Gateway mode")
     parser.add_argument("--rates", default="50,100,150,200,250,300,350,400,450,500,550,600,650,700", help="Comma-separated rates")
+    parser.add_argument("--target-mode", choices=["alternate", "same"], default="alternate", help="Request routing mode: alternate between fns, or send all to the same fn")
     parser.add_argument("--concurrency", type=int, default=100, help="Fixed concurrency level")
     parser.add_argument("--payload-kb", type=int, default=32, help="Payload size in KB")
     parser.add_argument("--out", required=True, help="Output CSV path")
@@ -355,6 +361,7 @@ def main():
     print(f"=== wrk2 Constant-Throughput Sweep ({args.mode.upper()}) ===")
     print(f"Target URL: {url}")
     print(f"Rates      : {rates}")
+    print(f"Target Mode: {args.target_mode}")
     print(f"Concurrency: {args.concurrency}")
     print(f"Payload KB : {args.payload_kb} KB")
     print(f"wrk2 Bin   : {wrk2_bin}")
@@ -380,6 +387,7 @@ def main():
             concurrency=args.concurrency,
             rate=rate,
             payload_kb=args.payload_kb,
+            target_mode=args.target_mode,
             fn_a=fn_a,
             fn_b=fn_b
         )
@@ -400,6 +408,7 @@ def main():
         row["monitored_value"] = rate
         row["rate"] = rate
         row["concurrency"] = args.concurrency
+        row["target_mode"] = args.target_mode
         row["payload_kb"] = args.payload_kb
         row["exit_code"] = exit_code
         row["pi_cpu_busy_avg_pct"] = cpu_avg
