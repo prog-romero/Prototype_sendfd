@@ -1,13 +1,17 @@
 # syntax=docker/dockerfile:1
-# Dockerfile for timing-fn-a HTTPS (integration bench, keepalive HTTPS)
+# Dockerfile for timing-fn-b HTTPS (integration bench, keepalive HTTPS)
 #
 # Build context must be the repository root. Example:
-#   docker build \
-#     -f benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/timing-fn-a/Dockerfile \
-#     -t timing-fn-a-ka-https:latest .
+#   docker buildx build --platform linux/arm64 \
+#     -f benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/sumprod-timing-fn-b/Dockerfile \
+#     -t sumprod-timing-fn-b-ka-https:latest .
+#
+# Build stages use $BUILDPLATFORM (x86_64) so cross-compilation runs natively.
+# The runtime stage defaults to linux/arm64 (from --platform in the build command).
 
+ARG BUILDPLATFORM
 # ── Stage 1: Build wolfSSL from source ───────────────────────────────────────
-FROM golang:1.24-bookworm AS wolfssl-build
+FROM --platform=$BUILDPLATFORM golang:1.24-bookworm AS wolfssl-build
 
 RUN apt-get update && apt-get install -y \
     build-essential autoconf automake libtool \
@@ -58,7 +62,7 @@ RUN mkdir -p build && cd build && \
     ldconfig
 
 # ── Stage 3: build fwatchdog (of-watchdog with sendfd relay) ─────────────────
-FROM golang:latest AS watchdog-build
+FROM --platform=$BUILDPLATFORM golang:latest AS watchdog-build
 WORKDIR /go/src/github.com/openfaas/of-watchdog
 COPY benchmarks/micro/micro-bench3-keepalive-https-integration/of-watchdog/ .
 RUN rm -rf vendor && go mod download

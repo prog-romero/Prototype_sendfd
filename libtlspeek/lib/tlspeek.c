@@ -195,10 +195,10 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
         if (raw_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             return 0;
         }
-        if (raw_len == 0)
-            fprintf(stderr, "[tlspeek] recv(MSG_PEEK): connection closed\n");
-        else
-            perror("[tlspeek] recv(MSG_PEEK) failed");
+        // if (raw_len == 0)
+        //    fprintf(stderr, "[tlspeek] recv(MSG_PEEK): connection closed\n");
+        // else
+        //    perror("[tlspeek] recv(MSG_PEEK) failed");
         return -1;
     }
 
@@ -218,10 +218,10 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
                  record_type, raw[1], raw[2], record_len);
 
     if (record_type != 0x17) {
-        fprintf(stderr,
-                "[tlspeek] ERROR: expected Application Data (0x17), "
-                "got 0x%02X — first record may still be a handshake?\n",
-                record_type);
+        // fprintf(stderr,
+        //         "[tlspeek] ERROR: expected Application Data (0x17), "
+        //         "got 0x%02X — first record may still be a handshake?\n",
+        //         record_type);
         return -1;
     }
 

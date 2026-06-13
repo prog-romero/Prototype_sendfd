@@ -17,17 +17,23 @@ import (
 	"time"
 )
 
-// relayState tracks per-container relay sockets that the gateway has opened.
-// Key = container IP address.
+// ── Relay socket registry ─────────────────────────────────────────────────────
+
+// relayState tracks which container IPs already have a relay socket open.
+// Guarded by relayMu.  Both HTTP and HTTPS relay helpers share this map —
+// since each gateway process runs in exactly one mode (HTTP or HTTPS, never
+// both on the same port), there is no conflict.
 var (
 	relayMu    sync.Mutex
 	relayKnown = map[string]bool{}
 )
 
-// EnsureRelaySocket creates the per-container relay socket at
+// ── EnsureRelaySocket (HTTP mode) ────────────────────────────────────────────
+
+// EnsureRelaySocket creates the per-container HTTP relay socket at
 // <SocketDir>/<ip>-relay.sock if it does not already exist, then spawns
-// a goroutine to service it.  The providerURL and notifier are forwarded so
-// the relay goroutine can re-dispatch returned FDs.
+// a goroutine to service it.  The providerURL and notifier are forwarded
+// so the relay goroutine can re-dispatch returned fds.
 //
 // This function is idempotent: calling it for the same IP more than once is safe.
 func EnsureRelaySocket(ip, providerURL string, notifier CompletionNotifier) {
@@ -56,13 +62,14 @@ func EnsureRelaySocket(ip, providerURL string, notifier CompletionNotifier) {
 	go relayListenLoop(listenFD, providerURL, notifier)
 }
 
+// ── relayListenLoop (HTTP mode) ───────────────────────────────────────────────
+
 // relayListenLoop services a relay socket: it accepts connections from function
-// workers that detected a wrong-owner keepalive request and are returning the
-// FD with a payload that already has top1_rdtsc/cntfrq and target_function set.
+// workers that detected a wrong-owner keep-alive request and are returning the
+// fd with a payload that already has top1_rdtsc/cntfrq and target_function set.
+// One goroutine is spawned per accepted connection to call recvfd1WithState.
 func relayListenLoop(listenFD int, providerURL string, notifier CompletionNotifier) {
 	defer syscall.Close(listenFD)
-
-	buf := make([]byte, KAPayloadSize)
 
 	for {
 		connFD, _, err := syscall.Accept(listenFD)
@@ -77,6 +84,7 @@ func relayListenLoop(listenFD int, providerURL string, notifier CompletionNotifi
 		go func(cFD int) {
 			defer syscall.Close(cFD)
 
+			buf := make([]byte, KAPayloadSize)
 			clientFD, relayErr := recvfd1WithState(cFD, buf)
 			if relayErr != nil {
 				log.Printf("[relay] recvfd1 error: %v\n", relayErr)
@@ -97,8 +105,6 @@ func relayListenLoop(listenFD int, providerURL string, notifier CompletionNotifi
 				return
 			}
 
-			log.Printf("[relay] re-dispatching fd to fn=%s\n", targetFn)
-
 			if dispatchErr := dispatchMigrate(clientFD, targetFn, payload, providerURL, notifier); dispatchErr != nil {
 				log.Printf("[relay] dispatch failed for fn=%s: %v\n", targetFn, dispatchErr)
 				_ = syscall.Close(clientFD)
@@ -107,27 +113,26 @@ func relayListenLoop(listenFD int, providerURL string, notifier CompletionNotifi
 	}
 }
 
-// dispatchMigrate resolves the container IP for targetFn, creates a fresh OS
-// pipe for Prometheus notification, and sends [clientFD, pipeWriteFD] + payload
-// to the container's watchdog socket.  Exported so that loop.go can call it too.
-func dispatchMigrate(clientFD int, targetFn string, payload *KAPayload, providerURL string, notifier CompletionNotifier) error {
-	log.Printf("[dispatch] START fn=%s clientFD=%d providerURL=%s\n", targetFn, clientFD, providerURL)
+// ── dispatchMigrate (HTTP mode) ───────────────────────────────────────────────
 
-	// 1. Resolve container IP.
-	log.Printf("[dispatch] step1: resolving container IP for fn=%s\n", targetFn)
+// dispatchMigrate resolves the container IP for targetFn, creates a fresh OS
+// pipe for Prometheus completion notification, and sends [clientFD, pipeWriteFD]
+// + payload to the container's watchdog Unix socket via SCM_RIGHTS.
+//
+// IMPORTANT: the readCompletionPipe goroutine is started ONLY after
+// sendfd2WithState succeeds.  If dispatch fails, pipeWriteFD is closed by
+// sendfd2WithState's deferred Close without writing.  The old code started the
+// goroutine first — readFull then saw (0, nil) from syscall.Read and spun
+// forever, accumulating spinning goroutines per failed dispatch.
+func dispatchMigrate(clientFD int, targetFn string, payload *KAPayload, providerURL string, notifier CompletionNotifier) error {
 	ip, resolveErr := ResolveContainerIP(targetFn, providerURL)
 	if resolveErr != nil {
 		log.Printf("[dispatch] ERROR step1 resolve IP fn=%s: %v\n", targetFn, resolveErr)
 		return fmt.Errorf("resolve IP for %s: %w", targetFn, resolveErr)
 	}
-	log.Printf("[dispatch] step1 OK: fn=%s -> ip=%s\n", targetFn, ip)
 
-	// 2. Ensure this container has a relay socket registered.
-	log.Printf("[dispatch] step2: ensuring relay socket for ip=%s\n", ip)
 	EnsureRelaySocket(ip, providerURL, notifier)
 
-	// 3. Create a pipe for Prometheus completion notification.
-	log.Printf("[dispatch] step3: creating completion pipe\n")
 	var pipeEnds [2]int
 	if err := syscall.Pipe(pipeEnds[:]); err != nil {
 		log.Printf("[dispatch] ERROR step3 pipe: %v\n", err)
@@ -135,9 +140,25 @@ func dispatchMigrate(clientFD int, targetFn string, payload *KAPayload, provider
 	}
 	pipeReadFD := pipeEnds[0]
 	pipeWriteFD := pipeEnds[1]
-	log.Printf("[dispatch] step3 OK: pipeReadFD=%d pipeWriteFD=%d\n", pipeReadFD, pipeWriteFD)
 
-	// 4. Start goroutine to read completion notification from pipeReadFD.
+	payload.SetTarget(targetFn)
+
+	sockPath := filepath.Join(SocketDir, ip+".sock")
+	watchdogFD, err := connectUnixSocket(sockPath)
+	if err != nil {
+		log.Printf("[dispatch] ERROR step5 connect watchdog %s: %v\n", sockPath, err)
+		_ = syscall.Close(pipeReadFD)
+		_ = syscall.Close(pipeWriteFD)
+		return fmt.Errorf("connect watchdog %s: %w", sockPath, err)
+	}
+	defer syscall.Close(watchdogFD)
+
+	if err := sendfd2WithState(watchdogFD, clientFD, pipeWriteFD, payload.Marshal()); err != nil {
+		log.Printf("[dispatch] ERROR step6 sendfd2: %v\n", err)
+		_ = syscall.Close(pipeReadFD)
+		return fmt.Errorf("sendfd2 to watchdog: %w", err)
+	}
+
 	start := time.Now()
 	if notifier != nil {
 		go readCompletionPipe(pipeReadFD, targetFn, start, notifier)
@@ -145,34 +166,10 @@ func dispatchMigrate(clientFD int, targetFn string, payload *KAPayload, provider
 		go func() { syscall.Close(pipeReadFD) }()
 	}
 
-	// 5. Build/update the payload (keep top1 and cntfrq from original payload).
-	payload.SetTarget(targetFn)
-
-	// 6. Connect to watchdog's UDS and send [clientFD, pipeWriteFD] + payload.
-	sockPath := filepath.Join(SocketDir, ip+".sock")
-	log.Printf("[dispatch] step6: connecting to watchdog socket=%s\n", sockPath)
-	watchdogFD, err := connectUnixSocket(sockPath)
-	if err != nil {
-		log.Printf("[dispatch] ERROR step6 connect watchdog %s: %v\n", sockPath, err)
-		_ = syscall.Close(pipeReadFD)
-		_ = syscall.Close(pipeWriteFD)
-		return fmt.Errorf("connect watchdog %s: %w", sockPath, err)
-	}
-	defer syscall.Close(watchdogFD)
-	log.Printf("[dispatch] step6 OK: watchdogFD=%d socket=%s\n", watchdogFD, sockPath)
-
-	log.Printf("[dispatch] step7: sendfd2 clientFD=%d pipeWriteFD=%d -> watchdogFD=%d\n", clientFD, pipeWriteFD, watchdogFD)
-	if err := sendfd2WithState(watchdogFD, clientFD, pipeWriteFD, payload.Marshal()); err != nil {
-		log.Printf("[dispatch] ERROR step7 sendfd2: %v\n", err)
-		_ = syscall.Close(pipeReadFD)
-		return fmt.Errorf("sendfd2 to watchdog: %w", err)
-	}
-	log.Printf("[dispatch] step7 OK: FDs transferred to watchdog fn=%s\n", targetFn)
-	// clientFD and pipeWriteFD are now owned by the watchdog/function worker.
-
-	log.Printf("[dispatch] DONE fn=%s ip=%s\n", targetFn, ip)
 	return nil
 }
+
+// ── readCompletionPipe ────────────────────────────────────────────────────────
 
 // readCompletionPipe reads an 8-byte little-endian uint64 timestamp (nanoseconds)
 // written by the function worker after it has sent the HTTP response.
@@ -185,7 +182,7 @@ func readCompletionPipe(pipeReadFD int, fnName string, start time.Time, notifier
 	if err != nil || n < 8 {
 		return
 	}
-	_ = binary.LittleEndian.Uint64(tsBuf[:]) // function-side timestamp (unused)
+	_ = binary.LittleEndian.Uint64(tsBuf[:]) // worker-side timestamp (unused here)
 
 	elapsed := time.Since(start)
 	if notifier != nil {
@@ -193,13 +190,22 @@ func readCompletionPipe(pipeReadFD int, fnName string, start time.Time, notifier
 	}
 }
 
-// readFull reads exactly len(buf) bytes from an fd.
+// ── readFull ─────────────────────────────────────────────────────────────────
+
+// readFull reads exactly len(buf) bytes from a blocking fd (typically a pipe).
+// syscall.Read returns (0, nil) when the write-end of a pipe is closed without
+// writing — that is EOF on a pipe.  Without this check the old code would spin
+// forever at 100 % CPU per stuck goroutine.
 func readFull(fd int, buf []byte) (int, error) {
 	total := 0
 	for total < len(buf) {
 		n, err := syscall.Read(fd, buf[total:])
 		if n > 0 {
 			total += n
+		}
+		if n == 0 && err == nil {
+			// Pipe write-end closed (EOF): no more data will ever arrive.
+			return total, io.EOF
 		}
 		if err != nil {
 			return total, err
@@ -208,28 +214,45 @@ func readFull(fd int, buf []byte) (int, error) {
 	return total, nil
 }
 
+// ── IP cache ─────────────────────────────────────────────────────────────────
+
+// ipCacheEntry stores a resolved container IP together with the time it was
+// cached.  Entries expire after ipCacheTTL so that if a function container
+// restarts with a new CNI IP, the gateway picks up the new address.
+type ipCacheEntry struct {
+	ip       string
+	cachedAt time.Time
+}
+
+const ipCacheTTL = 5 * time.Minute
+
 var (
 	ipCacheMu sync.RWMutex
-	ipCache   = make(map[string]string)
+	ipCache   = make(map[string]ipCacheEntry)
 )
 
 // ResolveContainerIP queries the faasd provider for the CNI IP of a running
 // function container.  Returns the IP string (e.g. "10.62.0.5").
+//
+// Results are cached for ipCacheTTL (5 minutes).  The TTL prevents serving
+// a stale IP if a container restarts and receives a new address from the CNI
+// plugin.  Without a TTL the cache would grow unbounded and stale entries
+// would silently cause dispatch failures after container restarts.
 func ResolveContainerIP(fnName, providerURL string) (string, error) {
+	// Fast path: read from cache (RLock — concurrent reads are safe).
 	ipCacheMu.RLock()
-	ip, ok := ipCache[fnName]
+	entry, ok := ipCache[fnName]
 	ipCacheMu.RUnlock()
-	if ok && ip != "" {
-		return ip, nil
+	if ok && entry.ip != "" && time.Since(entry.cachedAt) < ipCacheTTL {
+		return entry.ip, nil
 	}
 
-	// Strip any trailing slash from providerURL to avoid double-slash URLs
-	// (e.g. "http://faasd-provider:8081/" + "/system/..." = "//system/...").
+	// Slow path: query the provider.
 	baseURL := strings.TrimRight(providerURL, "/")
 	url := baseURL + "/system/function-ip/" + fnName
 
 	log.Printf("[resolve-ip] GET %s\n", url)
-	resp, err := http.Get(url) //nolint:gosec — internal service call
+	resp, err := http.Get(url) //nolint:gosec — internal service call to faasd provider
 	if err != nil {
 		log.Printf("[resolve-ip] ERROR http.Get %s: %v\n", url, err)
 		return "", fmt.Errorf("GET %s: %w", url, err)
@@ -256,16 +279,21 @@ func ResolveContainerIP(fnName, providerURL string) (string, error) {
 		return "", fmt.Errorf("empty IP in response from provider for: %s", fnName)
 	}
 
+	// Store with a timestamp so the TTL check above can expire it later.
 	ipCacheMu.Lock()
-	ipCache[fnName] = result.IP
+	ipCache[fnName] = ipCacheEntry{ip: result.IP, cachedAt: time.Now()}
 	ipCacheMu.Unlock()
 
 	log.Printf("[resolve-ip] OK fn=%s -> ip=%s\n", fnName, result.IP)
 	return result.IP, nil
 }
 
+// ── Unix socket helpers ───────────────────────────────────────────────────────
+
 // bindUnixSocket creates a SOCK_SEQPACKET Unix domain socket, binds it to
-// path, and calls listen(2).  Returns the listening fd.
+// path, and calls listen(2) with the given backlog.  Returns the listening fd.
+// SOCK_SEQPACKET provides reliable, ordered, connection-oriented datagrams —
+// ideal for sending exactly one payload + SCM_RIGHTS per sendmsg call.
 func bindUnixSocket(path string, backlog int) (int, error) {
 	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_SEQPACKET, 0)
 	if err != nil {
@@ -285,6 +313,8 @@ func bindUnixSocket(path string, backlog int) (int, error) {
 }
 
 // connectUnixSocket connects a SOCK_SEQPACKET Unix domain socket to path.
+// Returns the connected fd or an error if the socket does not exist or the
+// watchdog is not listening yet.
 func connectUnixSocket(path string) (int, error) {
 	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_SEQPACKET, 0)
 	if err != nil {
@@ -298,6 +328,8 @@ func connectUnixSocket(path string) (int, error) {
 	return fd, nil
 }
 
-// CompletionNotifier is a callback invoked when a function completes a request.
-// Used to notify Prometheus via the gateway's standard HTTPNotifier chain.
+// ── CompletionNotifier ────────────────────────────────────────────────────────
+
+// CompletionNotifier is a callback invoked when a function request completes.
+// Used to record Prometheus metrics via the gateway's standard HTTPNotifier chain.
 type CompletionNotifier func(functionName string, duration time.Duration)

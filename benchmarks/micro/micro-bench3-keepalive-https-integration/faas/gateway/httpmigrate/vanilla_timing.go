@@ -128,7 +128,6 @@ func observeVanillaConn(conn net.Conn) {
 	// POLLIN fired: data is in kernel buffer. Stamp top1 immediately.
 	top1 := getMonotonicNs()
 	storeVanillaTop1(remoteAddr, top1)
-	log.Printf("[vanilla-timing] top1 stamped addr=%s top1_ns=%d\n", remoteAddr, top1)
 }
 
 // storeVanillaTop1 writes to both vanillaTop1Map and vanillaInsertTimes.
@@ -176,8 +175,6 @@ func VanillaTimingMiddleware(next http.Handler) http.Handler {
 			vanillaInsertMu.Lock()
 			delete(vanillaInsertTimes, r.RemoteAddr)
 			vanillaInsertMu.Unlock()
-			log.Printf("[vanilla-timing] injected X-Top1-Rdtsc=%d addr=%s path=%s\n",
-				top1, r.RemoteAddr, r.URL.Path)
 		}
 		next.ServeHTTP(w, r)
 	})

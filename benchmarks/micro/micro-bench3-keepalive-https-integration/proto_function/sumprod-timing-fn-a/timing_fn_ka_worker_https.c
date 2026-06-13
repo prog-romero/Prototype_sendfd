@@ -335,10 +335,9 @@ static void handle_session(worker_session_t *s)
             int pn = tls_read_peek(&peek_ctx, peek_buf, sizeof(peek_buf)-1);
             tlspeek_free(&peek_ctx);
             if (pn < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) return;
                 session_close(s); return;
             }
-            if (pn == 0) { session_close(s); return; }
+            if (pn == 0) { return; } // Need more data (prevent close)
             peek_buf[pn] = '\0';
             
             if (!memchr(peek_buf, '\n', pn)) return; 
@@ -352,10 +351,39 @@ static void handle_session(worker_session_t *s)
             }
             
             s->state = WS_READ_REQ;
+            epoll_mod(s->fd, EPOLLIN); // Switch back to Level-Triggered
             s->len = 0; s->hdr_end = -1; s->body_in = 0; s->body_target = 0; s->hdr_sz = 0;
         }
         
         if (s->state == WS_READ_REQ) {
+            /* Replay data pre-buffered by the gateway (wolfSSL pipelining fix).
+             * When wolfSSL_accept() consumed the first HTTP request from the TCP
+             * socket during the TLS handshake, the gateway stored it in
+             * serial.http_request.  wolfSSL_read would return WANT_READ waiting
+             * for data that never arrives on the socket.  Pre-fill s->buf here
+             * so the header-search loop picks it up without blocking. */
+            if (s->first_request && s->len == 0 && s->payload.serial.request_len > 0) {
+                int pre = s->payload.serial.request_len;
+                if (s->cap < (size_t)pre + 1) {
+                    size_t nc = s->cap ? s->cap : 16384;
+                    while (nc < (size_t)pre + 1) nc *= 2;
+                    unsigned char *nb = realloc(s->buf, nc);
+                    if (nb) { s->buf = nb; s->cap = nc; }
+                }
+                if (s->cap > (size_t)pre) {
+                    memcpy(s->buf, s->payload.serial.http_request, (size_t)pre);
+                    s->len = (size_t)pre;
+                    s->buf[s->len] = '\0';
+                    s->payload.serial.request_len = 0; /* consume once */
+                    ssize_t e4 = find_subseq(s->buf, s->len, "\r\n\r\n");
+                    if (e4 >= 0) { s->hdr_end = e4; s->hdr_sep = 4; }
+                    else {
+                        ssize_t e2 = find_subseq(s->buf, s->len, "\n\n");
+                        if (e2 >= 0) { s->hdr_end = e2; s->hdr_sep = 2; }
+                    }
+                }
+            }
+
             while (s->hdr_end < 0) {
                 if (s->cap < s->len + 4097) {
                     size_t nc = s->cap ? s->cap * 2 : 16384;
@@ -437,11 +465,21 @@ static void handle_session(worker_session_t *s)
             export_serial(s->ssl, &s->payload.serial);
             s->req_no++;
             s->first_request = false;
-            s->len = 0; s->hdr_end = -1; s->body_in = 0; s->body_target = 0; s->hdr_sz = 0;
-            s->state = WS_PEEK_OWNER;
-            s->top1 = get_ns();
             
-            epoll_mod(s->fd, EPOLLIN);
+            size_t req_sz = s->hdr_sz + s->body_target;
+            if (s->len > req_sz) {
+                size_t left = s->len - req_sz;
+                memmove(s->buf, s->buf + req_sz, left);
+                s->len = left;
+                s->state = WS_READ_REQ;
+            } else {
+                s->len = 0;
+                s->state = WS_PEEK_OWNER;
+                epoll_mod(s->fd, EPOLLIN | EPOLLET); // Edge-Triggered to prevent MSG_PEEK spin
+            }
+            
+            s->hdr_end = -1; s->body_in = 0; s->body_target = 0; s->hdr_sz = 0;
+            s->top1 = get_ns();
         }
     }
 }
@@ -485,7 +523,7 @@ static void register_client(int client_fd, int pipe_fd, httpmigrate_ka_payload_h
     }
     
     s_sessions[client_fd] = s;
-    struct epoll_event ev = { .events = EPOLLIN, .data.fd = client_fd };
+    struct epoll_event ev = { .events = EPOLLIN | EPOLLET, .data.fd = client_fd };
     epoll_ctl(s_epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
     
     handle_session(s);

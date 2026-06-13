@@ -146,26 +146,21 @@ func handleConn(connFD int, chanLis *ChanListener, providerURL string, notifier 
 	}
 
 	fnName := parseFunctionName(peekBuf[:n])
-	log.Printf("[loop] accepted connFD=%d parsed fnName=%q (peeked %d bytes)\n", connFD, fnName, n)
 
 	if fnName != "" {
 		// ── Sendfd / migrate path ─────────────────────────────────────────
-		log.Printf("[loop] MIGRATE path: fn=%s connFD=%d\n", fnName, connFD)
 		payload := NewPayload(top1Ns, fnName)
 
 		if err := dispatchMigrate(connFD, fnName, payload, providerURL, notifier); err != nil {
 			log.Printf("[loop] dispatch FAILED fn=%s connFD=%d: %v\n", fnName, connFD, err)
 			// connFD was NOT closed by dispatchMigrate on error — close it here.
 			_ = syscall.Close(connFD)
-		} else {
-			log.Printf("[loop] dispatch OK fn=%s connFD=%d — FD transferred\n", fnName, connFD)
 		}
 		// On success connFD is owned by the watchdog/worker (closed inside sendfd2WithState).
 		return
 	}
 
 	// ── Vanilla HTTP path: wrap fd as net.Conn and push to ChanListener ───
-	log.Printf("[loop] VANILLA HTTP path: connFD=%d\n", connFD)
 	conn, wrapErr := wrapRawFD(connFD, peekBuf[:n])
 	if wrapErr != nil {
 		log.Printf("[httpmigrate] wrapRawFD: %v\n", wrapErr)

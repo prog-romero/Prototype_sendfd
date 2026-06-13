@@ -1,0 +1,3015 @@
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/tls_vanilla.c =====
+/*
+ * tls_vanilla.c — Vanilla HTTPS gateway: pure wolfSSL, no libtlspeek.
+ *
+ * The ONLY wolfSSL operations here are:
+ *   - wolfSSL_CTX_new / wolfSSL_new : context + session creation
+ *   - wolfSSL_accept                : TLS 1.3 server handshake
+ *   - wolfSSL_read / wolfSSL_write  : decrypt incoming / encrypt outgoing data
+ *   - wolfSSL_free / wolfSSL_CTX_free : cleanup
+ *
+ * No keylog callback. No secret callback. No libtlspeek dependency.
+ */
+
+/* wolfSSL public API — no special defines needed for vanilla mode */
+#include "tls_vanilla.h"
+
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+
+#include <stdlib.h>
+#include <unistd.h>
+
+/* ── Internal structs ──────────────────────────────────────────────────── */
+
+struct wolfssl_vanilla_ctx {
+    WOLFSSL_CTX *wctx;
+};
+
+struct wolfssl_vanilla_conn {
+    int      tcp_fd;
+    WOLFSSL *ssl;
+};
+
+/* ── Context ───────────────────────────────────────────────────────────── */
+
+wolfssl_vanilla_ctx_t *wolfssl_vanilla_ctx_new(const char *cert_file,
+                                               const char *key_file)
+{
+    if (!cert_file || !key_file) return NULL;
+
+    wolfSSL_Init();
+
+    wolfssl_vanilla_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) return NULL;
+
+    ctx->wctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+    if (!ctx->wctx) { free(ctx); return NULL; }
+
+    /* Restrict to TLS 1.3 only (same as prototype path) */
+    wolfSSL_CTX_SetMinVersion(ctx->wctx, WOLFSSL_TLSV1_3);
+    wolfSSL_CTX_set_max_proto_version(ctx->wctx, WOLFSSL_TLSV1_3);
+
+    if (wolfSSL_CTX_use_certificate_file(ctx->wctx, cert_file,
+                                          SSL_FILETYPE_PEM) != SSL_SUCCESS ||
+        wolfSSL_CTX_use_PrivateKey_file(ctx->wctx, key_file,
+                                         SSL_FILETYPE_PEM) != SSL_SUCCESS) {
+        wolfSSL_CTX_free(ctx->wctx);
+        free(ctx);
+        return NULL;
+    }
+    return ctx;
+}
+
+void wolfssl_vanilla_ctx_free(wolfssl_vanilla_ctx_t *ctx)
+{
+    if (!ctx) return;
+    if (ctx->wctx) wolfSSL_CTX_free(ctx->wctx);
+    free(ctx);
+    wolfSSL_Cleanup();
+}
+
+/* ── Handshake ─────────────────────────────────────────────────────────── */
+
+wolfssl_vanilla_conn_t *wolfssl_vanilla_handshake(wolfssl_vanilla_ctx_t *ctx,
+                                                   int tcp_fd)
+{
+    if (!ctx || !ctx->wctx || tcp_fd < 0) return NULL;
+
+    wolfssl_vanilla_conn_t *conn = calloc(1, sizeof(*conn));
+    if (!conn) { close(tcp_fd); return NULL; }
+
+    conn->tcp_fd = tcp_fd;
+    conn->ssl    = wolfSSL_new(ctx->wctx);
+    if (!conn->ssl) { free(conn); close(tcp_fd); return NULL; }
+
+    wolfSSL_set_fd(conn->ssl, tcp_fd);
+
+    /* Blocking TLS 1.3 handshake — no callbacks, no key capture */
+    if (wolfSSL_accept(conn->ssl) != SSL_SUCCESS) {
+        wolfSSL_free(conn->ssl);
+        free(conn);
+        close(tcp_fd);
+        return NULL;
+    }
+    return conn;
+}
+
+/* ── Read / Write / Error / Close ──────────────────────────────────────── */
+
+int wolfssl_vanilla_read(wolfssl_vanilla_conn_t *conn, void *buf, int len)
+{
+    if (!conn || !conn->ssl || !buf || len <= 0) return -1;
+    return wolfSSL_read(conn->ssl, buf, len);
+}
+
+int wolfssl_vanilla_write(wolfssl_vanilla_conn_t *conn, const void *buf, int len)
+{
+    if (!conn || !conn->ssl || !buf || len <= 0) return -1;
+    
+    int n = wolfSSL_write(conn->ssl, buf, len);
+    if (n <= 0) {
+        int e = wolfSSL_get_error(conn->ssl, n);
+        if (e == SSL_ERROR_WANT_READ) {
+            char drain[1024];
+            wolfSSL_read(conn->ssl, drain, (int)sizeof(drain));
+        }
+    }
+    return n;
+}
+
+int wolfssl_vanilla_get_error(wolfssl_vanilla_conn_t *conn, int ret)
+{
+    if (!conn || !conn->ssl) return -1;
+    return wolfSSL_get_error(conn->ssl, ret);
+}
+
+void wolfssl_vanilla_close(wolfssl_vanilla_conn_t *conn)
+{
+    if (!conn) return;
+    if (conn->ssl) {
+        wolfSSL_set_quiet_shutdown(conn->ssl, 1);
+        wolfSSL_free(conn->ssl);
+    }
+    if (conn->tcp_fd >= 0) close(conn->tcp_fd);
+    free(conn);
+}
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/tls_vanilla.go =====
+//go:build linux && cgo
+
+/*
+ * tls_vanilla.go — Go CGo wrapper for vanilla HTTPS (wolfSSL only).
+ *
+ * Implements net.Conn using wolfssl_vanilla_conn_t from tls_vanilla.c.
+ * NO libtlspeek. NO keylog callback. NO TLS session export.
+ *
+ * Used exclusively by RunVanillaHTTPS in loop_https.go.
+ */
+package httpmigrate
+
+/*
+#cgo CFLAGS:  -I/usr/local/include
+#cgo LDFLAGS: -L/usr/local/lib -lwolfssl -lpthread
+
+#include <stdlib.h>
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+#include "tls_vanilla.h"
+*/
+import "C"
+import (
+	"fmt"
+	"io"
+	"net"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+)
+
+// ── WolfSSLVanillaCtx ────────────────────────────────────────────────────────
+
+// WolfSSLVanillaCtx is a shared TLS 1.3 server context (one per gateway process).
+type WolfSSLVanillaCtx struct {
+	ptr *C.wolfssl_vanilla_ctx_t
+}
+
+// NewWolfSSLVanillaCtx creates a vanilla TLS context from PEM cert/key files.
+func NewWolfSSLVanillaCtx(certFile, keyFile string) (*WolfSSLVanillaCtx, error) {
+	ccert := C.CString(certFile)
+	ckey := C.CString(keyFile)
+	defer C.free(unsafe.Pointer(ccert))
+	defer C.free(unsafe.Pointer(ckey))
+
+	p := C.wolfssl_vanilla_ctx_new(ccert, ckey)
+	if p == nil {
+		return nil, fmt.Errorf("[tls_vanilla] wolfssl_vanilla_ctx_new failed (cert=%s key=%s)", certFile, keyFile)
+	}
+	return &WolfSSLVanillaCtx{ptr: p}, nil
+}
+
+// Free releases the wolfSSL context.
+func (ctx *WolfSSLVanillaCtx) Free() {
+	if ctx.ptr != nil {
+		C.wolfssl_vanilla_ctx_free(ctx.ptr)
+		ctx.ptr = nil
+	}
+}
+
+// DoHandshake performs the TLS 1.3 server handshake on a raw TCP fd.
+// Returns a WolfSSLVanillaConn ready for Read/Write.
+func (ctx *WolfSSLVanillaCtx) DoHandshake(fd int) (*WolfSSLVanillaConn, error) {
+	p := C.wolfssl_vanilla_handshake(ctx.ptr, C.int(fd))
+	if p == nil {
+		return nil, fmt.Errorf("[tls_vanilla] handshake failed fd=%d", fd)
+	}
+	syscall.SetNonblock(fd, true)
+	epfd, _ := syscall.EpollCreate1(0)
+	if epfd >= 0 {
+		var ev syscall.EpollEvent
+		ev.Fd = int32(fd)
+		ev.Events = syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR
+		syscall.EpollCtl(epfd, syscall.EPOLL_CTL_ADD, fd, &ev)
+	}
+	return &WolfSSLVanillaConn{ptr: p, fd: fd, epfd: epfd}, nil
+}
+
+// ── WolfSSLVanillaConn (implements net.Conn) ──────────────────────────────────
+
+// WolfSSLVanillaConn wraps a wolfSSL connection as a net.Conn.
+// Read  → wolfssl_vanilla_read  → wolfSSL_read  (returns decrypted plaintext)
+// Write → wolfssl_vanilla_write → wolfSSL_write (sends encrypted ciphertext)
+type WolfSSLVanillaConn struct {
+	mu         sync.Mutex
+	wg         sync.WaitGroup
+	ptr        *C.wolfssl_vanilla_conn_t
+	fd         int
+	epfd       int
+	closed     bool
+	localAddr  net.Addr
+	remoteAddr net.Addr
+}
+
+func (c *WolfSSLVanillaConn) waitEpoll(write bool) {
+	if c.epfd < 0 || c.fd < 0 {
+		time.Sleep(1 * time.Millisecond)
+		return
+	}
+	var ev syscall.EpollEvent
+	ev.Fd = int32(c.fd)
+	if write {
+		ev.Events = syscall.EPOLLOUT | syscall.EPOLLRDHUP | syscall.EPOLLERR
+	} else {
+		ev.Events = syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR
+	}
+	syscall.EpollCtl(c.epfd, syscall.EPOLL_CTL_MOD, c.fd, &ev)
+
+	events := make([]syscall.EpollEvent, 1)
+	for {
+		n, err := syscall.EpollWait(c.epfd, events, -1)
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			break
+		}
+		if n > 0 {
+			break
+		}
+	}
+}
+
+func (c *WolfSSLVanillaConn) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	for {
+		c.mu.Lock()
+		if c.closed || c.ptr == nil {
+			c.mu.Unlock()
+			return 0, net.ErrClosed
+		}
+		ptr := c.ptr
+		c.wg.Add(1)
+		c.mu.Unlock()
+
+		n := C.wolfssl_vanilla_read(ptr, unsafe.Pointer(&p[0]), C.int(len(p)))
+		
+		c.mu.Lock()
+		code := int(C.wolfssl_vanilla_get_error(ptr, n))
+		c.wg.Done()
+		c.mu.Unlock()
+
+		if n > 0 {
+			return int(n), nil
+		}
+
+		switch code {
+		case int(C.SSL_ERROR_WANT_READ):
+			c.waitEpoll(false)
+			continue
+		case int(C.SSL_ERROR_WANT_WRITE):
+			c.waitEpoll(true)
+			continue
+		case int(C.SSL_ERROR_ZERO_RETURN), int(C.SSL_ERROR_SYSCALL):
+			return 0, io.EOF // clean or abrupt connection close
+		default:
+			return 0, fmt.Errorf("wolfssl_vanilla_read error code=%d", code)
+		}
+	}
+}
+
+func (c *WolfSSLVanillaConn) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	total := 0
+	for total < len(p) {
+		c.mu.Lock()
+		if c.closed || c.ptr == nil {
+			c.mu.Unlock()
+			return total, net.ErrClosed
+		}
+		ptr := c.ptr
+		c.wg.Add(1)
+		c.mu.Unlock()
+
+		n := C.wolfssl_vanilla_write(ptr,
+			unsafe.Pointer(&p[total]), C.int(len(p)-total))
+		
+		c.mu.Lock()
+		code := int(C.wolfssl_vanilla_get_error(ptr, n))
+		c.wg.Done()
+		c.mu.Unlock()
+
+		if n > 0 {
+			total += int(n)
+			continue
+		}
+
+		switch code {
+		case int(C.SSL_ERROR_WANT_READ):
+			c.waitEpoll(false)
+			continue
+		case int(C.SSL_ERROR_WANT_WRITE):
+			c.waitEpoll(true)
+			continue
+		case int(C.SSL_ERROR_ZERO_RETURN), int(C.SSL_ERROR_SYSCALL):
+			return total, io.EOF
+		default:
+			return total, fmt.Errorf("wolfssl_vanilla_write error code=%d", code)
+		}
+	}
+	return total, nil
+}
+
+func (c *WolfSSLVanillaConn) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	fd := c.fd
+	c.mu.Unlock()
+
+	// 1. Wake up any blocked C.wolfssl_vanilla_read/write calls
+	if fd >= 0 {
+		_ = syscall.Shutdown(fd, syscall.SHUT_RDWR)
+	}
+
+	// 2. Wait for all C calls to exit to prevent use-after-free
+	c.wg.Wait()
+
+	// 3. Safely free the C pointer
+	c.mu.Lock()
+	if c.epfd >= 0 {
+		syscall.Close(c.epfd)
+		c.epfd = -1
+	}
+	if c.ptr != nil {
+		C.wolfssl_vanilla_close(c.ptr)
+		c.ptr = nil
+	}
+	c.fd = -1
+	c.mu.Unlock()
+
+	return nil
+}
+
+func (c *WolfSSLVanillaConn) LocalAddr() net.Addr {
+	if c.localAddr != nil {
+		return c.localAddr
+	}
+	return &net.TCPAddr{}
+}
+
+func (c *WolfSSLVanillaConn) RemoteAddr() net.Addr {
+	if c.remoteAddr != nil {
+		return c.remoteAddr
+	}
+	return &net.TCPAddr{}
+}
+
+func (c *WolfSSLVanillaConn) SetDeadline(t time.Time) error      { return nil }
+func (c *WolfSSLVanillaConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *WolfSSLVanillaConn) SetWriteDeadline(t time.Time) error { return nil }
+
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/sendfd.go =====
+//go:build linux
+
+package httpmigrate
+
+import (
+	"fmt"
+	"syscall"
+)
+
+// sendfd2WithState sends 2 FDs via SCM_RIGHTS + payload via iov.
+// After a successful sendmsg the caller's fd1 and fd2 are closed.
+func sendfd2WithState(unixSock, fd1, fd2 int, payload []byte) error {
+	defer syscall.Close(fd1)
+	defer syscall.Close(fd2)
+	rights := syscall.UnixRights(fd1, fd2)
+	if err := syscall.Sendmsg(unixSock, payload, rights, nil, 0); err != nil {
+		return fmt.Errorf("sendmsg: %w", err)
+	}
+	return nil
+}
+
+
+// recvfd1WithState receives exactly 1 FD via SCM_RIGHTS + payload via iov.
+func recvfd1WithState(unixSock int, payloadBuf []byte) (fd int, err error) {
+	oob := make([]byte, syscall.CmsgSpace(4)) // CMSG_SPACE(sizeof(int))
+	n, _, _, _, recvErr := syscall.Recvmsg(unixSock, payloadBuf, oob, 0)
+	if recvErr != nil {
+		return -1, fmt.Errorf("recvmsg: %w", recvErr)
+	}
+	if n == 0 {
+		return -1, fmt.Errorf("recvmsg: peer closed connection")
+	}
+
+	scms, parseErr := syscall.ParseSocketControlMessage(oob)
+	if parseErr != nil {
+		return -1, fmt.Errorf("ParseSocketControlMessage: %w", parseErr)
+	}
+	for _, scm := range scms {
+		fds, rightsErr := syscall.ParseUnixRights(&scm)
+		if rightsErr != nil {
+			continue
+		}
+		if len(fds) >= 1 {
+			// Close any extra FDs if sent
+			for i := 1; i < len(fds); i++ {
+				syscall.Close(fds[i])
+			}
+			return fds[0], nil
+		}
+	}
+	return -1, fmt.Errorf("recvmsg: expected 1 FD in control message")
+}
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/conn_rw.go =====
+package httpmigrate
+
+import (
+	"net"
+	"time"
+)
+
+// ConnRW wraps a net.Conn and prepends already-peeked bytes to the Read
+// stream.  This allows the HTTP server to see the full request line even
+// though those bytes were already consumed by MSG_PEEK in RunLoop.
+type ConnRW struct {
+	net.Conn
+	peeked []byte
+	offset int
+}
+
+// NewConnRW creates a ConnRW that will replay peeked before delegating
+// further reads to inner.
+func NewConnRW(inner net.Conn, peeked []byte) *ConnRW {
+	b := make([]byte, len(peeked))
+	copy(b, peeked)
+	return &ConnRW{Conn: inner, peeked: b}
+}
+
+// Read first drains the peeked bytes, then falls through to the underlying
+// net.Conn.Read.  Once the peeked buffer is exhausted the slice is released.
+func (c *ConnRW) Read(b []byte) (int, error) {
+	if c.offset < len(c.peeked) {
+		n := copy(b, c.peeked[c.offset:])
+		c.offset += n
+		if c.offset >= len(c.peeked) {
+			c.peeked = nil // allow GC
+		}
+		return n, nil
+	}
+	return c.Conn.Read(b)
+}
+
+// Write delegates directly to the underlying connection.
+func (c *ConnRW) Write(b []byte) (int, error) { return c.Conn.Write(b) }
+
+// Close delegates directly.
+func (c *ConnRW) Close() error { return c.Conn.Close() }
+
+// LocalAddr delegates directly.
+func (c *ConnRW) LocalAddr() net.Addr { return c.Conn.LocalAddr() }
+
+// RemoteAddr delegates directly.
+func (c *ConnRW) RemoteAddr() net.Addr { return c.Conn.RemoteAddr() }
+
+// SetDeadline delegates directly.
+func (c *ConnRW) SetDeadline(t time.Time) error { return c.Conn.SetDeadline(t) }
+
+// SetReadDeadline delegates directly.
+func (c *ConnRW) SetReadDeadline(t time.Time) error { return c.Conn.SetReadDeadline(t) }
+
+// SetWriteDeadline delegates directly.
+func (c *ConnRW) SetWriteDeadline(t time.Time) error { return c.Conn.SetWriteDeadline(t) }
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/tls_listener.go =====
+//go:build linux && cgo
+
+/*
+ * tls_listener.go — Go CGo wrapper for the wolfSSL gateway bridge.
+ *
+ * WolfSSLGtwCtx  — shared wolfSSL context (one per gateway).
+ * WolfSSLGtwConn — net.Conn wrapper for connections on the ChanListener path
+ *                  (/system/*, /ui/*, etc. — non-function HTTPS connections).
+ *
+ * The epoll-driven accept/handshake/peek loop is in loop_https.go (runEpollLoop).
+ * This file provides only:
+ *   - Context creation/destruction.
+ *   - The WolfSSLGtwConn net.Conn implementation (Read/Write/Close).
+ *   - SerialSize() for buffer allocation.
+ */
+package httpmigrate
+
+/*
+#cgo CFLAGS:  -I/usr/local/include -DHAVE_SECRET_CALLBACK -DWOLFSSL_KEYLOG_EXPORT
+#cgo LDFLAGS: -L/usr/local/lib -lwolfssl -ltlspeek -lpthread
+
+#include <stdlib.h>
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+#include "tls_listener.h"
+*/
+import "C"
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+)
+
+// ── WolfSSLGtwCtx ────────────────────────────────────────────────────────────
+
+// WolfSSLGtwCtx holds the shared wolfSSL context used for all HTTPS connections.
+type WolfSSLGtwCtx struct {
+	ptr *C.wolfssl_gtw_ctx_t
+}
+
+// NewWolfSSLGtwCtx creates a wolfSSL context loading the given certificate and key.
+func NewWolfSSLGtwCtx(certFile, keyFile string) (*WolfSSLGtwCtx, error) {
+	cCert := C.CString(certFile)
+	defer C.free(unsafe.Pointer(cCert))
+	cKey := C.CString(keyFile)
+	defer C.free(unsafe.Pointer(cKey))
+
+	ptr := C.wolfssl_gtw_ctx_new(cCert, cKey)
+	if ptr == nil {
+		return nil, fmt.Errorf("[tls_listener] wolfssl_gtw_ctx_new failed (cert=%s key=%s)",
+			certFile, keyFile)
+	}
+	return &WolfSSLGtwCtx{ptr: ptr}, nil
+}
+
+// Free releases the wolfSSL context.
+func (c *WolfSSLGtwCtx) Free() {
+	if c == nil || c.ptr == nil {
+		return
+	}
+	C.wolfssl_gtw_ctx_free(c.ptr)
+	c.ptr = nil
+}
+
+// SerialSize returns the byte size of a serialised TLS session state.
+func (c *WolfSSLGtwCtx) SerialSize() int {
+	return int(C.TLSGW_SERIAL_SIZE)
+}
+
+// ── WolfSSLGtwConn (net.Conn for ChanListener path) ──────────────────────────
+
+// WolfSSLGtwConn is a per-connection handle for the ChanListener path.
+// It is created by wrapGtwConn() in loop_https.go after the epoll loop
+// completes the handshake and determines the connection is NOT a /function/ path.
+type WolfSSLGtwConn struct {
+	ptr        *C.wolfssl_gtw_conn_t
+	fd         int
+	epfd       int
+	mu         sync.Mutex
+	wg         sync.WaitGroup
+	closed     bool
+	localAddr  net.Addr
+	remoteAddr net.Addr
+}
+
+// waitEpoll suspends the calling goroutine until the fd is ready for read or write.
+// Only used by the ChanListener path (non-function HTTPS connections).
+func (c *WolfSSLGtwConn) waitEpoll(write bool) {
+	if c.epfd < 0 || c.fd < 0 {
+		time.Sleep(1 * time.Millisecond)
+		return
+	}
+	var ev syscall.EpollEvent
+	ev.Fd = int32(c.fd)
+	if write {
+		ev.Events = syscall.EPOLLOUT | syscall.EPOLLRDHUP | syscall.EPOLLERR
+	} else {
+		ev.Events = syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR
+	}
+	_ = syscall.EpollCtl(c.epfd, syscall.EPOLL_CTL_MOD, c.fd, &ev)
+
+	evs := make([]syscall.EpollEvent, 1)
+	for {
+		n, err := syscall.EpollWait(c.epfd, evs, -1)
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			break
+		}
+		if n > 0 {
+			break
+		}
+	}
+}
+
+func (c *WolfSSLGtwConn) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	for {
+		c.mu.Lock()
+		if c.closed || c.ptr == nil {
+			c.mu.Unlock()
+			return 0, net.ErrClosed
+		}
+		ptr := c.ptr
+		c.wg.Add(1)
+		c.mu.Unlock()
+
+		n := C.wolfssl_gtw_conn_read(ptr, unsafe.Pointer(&p[0]), C.int(len(p)))
+
+		c.mu.Lock()
+		code := int(C.wolfssl_gtw_conn_get_error(ptr, n))
+		c.wg.Done()
+		c.mu.Unlock()
+
+		if n > 0 {
+			return int(n), nil
+		}
+
+		switch code {
+		case int(C.SSL_ERROR_WANT_READ):
+			c.waitEpoll(false)
+			continue
+		case int(C.SSL_ERROR_WANT_WRITE):
+			c.waitEpoll(true)
+			continue
+		case int(C.SSL_ERROR_ZERO_RETURN), int(C.SOCKET_PEER_CLOSED_E), int(C.SSL_ERROR_SYSCALL):
+			return 0, io.EOF
+		default:
+			return 0, fmt.Errorf("wolfSSL_read error code=%d", code)
+		}
+	}
+}
+
+func (c *WolfSSLGtwConn) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	total := 0
+	for total < len(p) {
+		c.mu.Lock()
+		if c.closed || c.ptr == nil {
+			c.mu.Unlock()
+			return total, net.ErrClosed
+		}
+		ptr := c.ptr
+		c.wg.Add(1)
+		c.mu.Unlock()
+
+		n := C.wolfssl_gtw_conn_write(ptr, unsafe.Pointer(&p[total]), C.int(len(p)-total))
+
+		c.mu.Lock()
+		code := int(C.wolfssl_gtw_conn_get_error(ptr, n))
+		c.wg.Done()
+		c.mu.Unlock()
+
+		if n > 0 {
+			total += int(n)
+			continue
+		}
+
+		switch code {
+		case int(C.SSL_ERROR_WANT_READ):
+			c.waitEpoll(false)
+			continue
+		case int(C.SSL_ERROR_WANT_WRITE):
+			c.waitEpoll(true)
+			continue
+		case int(C.SSL_ERROR_ZERO_RETURN), int(C.SOCKET_PEER_CLOSED_E), int(C.SSL_ERROR_SYSCALL):
+			return total, io.EOF
+		default:
+			return total, fmt.Errorf("wolfSSL_write error code=%d", code)
+		}
+	}
+	return total, nil
+}
+
+func (c *WolfSSLGtwConn) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	fd := c.fd
+	c.mu.Unlock()
+
+	if fd >= 0 {
+		_ = syscall.Shutdown(fd, syscall.SHUT_RDWR)
+	}
+
+	c.wg.Wait()
+
+	c.mu.Lock()
+	if c.epfd >= 0 {
+		syscall.Close(c.epfd)
+		c.epfd = -1
+	}
+	if c.ptr != nil {
+		C.wolfssl_gtw_conn_close(c.ptr)
+		c.ptr = nil
+	}
+	c.fd = -1
+	c.mu.Unlock()
+
+	return nil
+}
+
+func (c *WolfSSLGtwConn) LocalAddr() net.Addr {
+	if c.localAddr == nil {
+		return &net.TCPAddr{}
+	}
+	return c.localAddr
+}
+
+func (c *WolfSSLGtwConn) RemoteAddr() net.Addr {
+	if c.remoteAddr == nil {
+		return &net.TCPAddr{}
+	}
+	return c.remoteAddr
+}
+
+func (c *WolfSSLGtwConn) SetDeadline(t time.Time) error {
+	if err := c.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return c.SetWriteDeadline(t)
+}
+
+func (c *WolfSSLGtwConn) SetReadDeadline(t time.Time) error {
+	return c.setSocketDeadline(syscall.SO_RCVTIMEO, t)
+}
+
+func (c *WolfSSLGtwConn) SetWriteDeadline(t time.Time) error {
+	return c.setSocketDeadline(syscall.SO_SNDTIMEO, t)
+}
+
+func (c *WolfSSLGtwConn) setSocketDeadline(opt int, t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.fd < 0 {
+		return net.ErrClosed
+	}
+	tv := syscall.NsecToTimeval(0)
+	if !t.IsZero() {
+		timeout := time.Until(t)
+		if timeout < 0 {
+			timeout = 0
+		}
+		tv = syscall.NsecToTimeval(timeout.Nanoseconds())
+	}
+	return syscall.SetsockoptTimeval(c.fd, syscall.SOL_SOCKET, opt, &tv)
+}
+
+func (c *WolfSSLGtwConn) RawFD() int { return c.fd }
+
+func (c *WolfSSLGtwConn) Pending() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.ptr == nil {
+		return 0
+	}
+	return int(C.wolfssl_gtw_conn_pending(c.ptr))
+}
+
+// ── Address helpers ───────────────────────────────────────────────────────────
+
+func gtwSocketAddr(fd int, peer bool) net.Addr {
+	if fd < 0 {
+		return &net.TCPAddr{}
+	}
+	var (
+		sa  syscall.Sockaddr
+		err error
+	)
+	if peer {
+		sa, err = syscall.Getpeername(fd)
+	} else {
+		sa, err = syscall.Getsockname(fd)
+	}
+	if err != nil {
+		return &net.TCPAddr{}
+	}
+	switch a := sa.(type) {
+	case *syscall.SockaddrInet4:
+		ip := make(net.IP, net.IPv4len)
+		copy(ip, a.Addr[:])
+		return &net.TCPAddr{IP: ip, Port: a.Port}
+	case *syscall.SockaddrInet6:
+		ip := make(net.IP, net.IPv6len)
+		copy(ip, a.Addr[:])
+		return &net.TCPAddr{IP: ip, Port: a.Port}
+	}
+	return &net.TCPAddr{}
+}
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/chan_listener.go =====
+package httpmigrate
+
+import (
+	"fmt"
+	"net"
+)
+
+// ChanListener is a net.Listener that receives connections through a Go channel.
+// It is used by RunLoop to inject raw TCP connections that do NOT take the
+// sendfd migrate path into the standard http.Server handler chain.
+type ChanListener struct {
+	ch     chan net.Conn
+	addr   net.Addr
+	closed chan struct{}
+}
+
+// NewChanListener creates a ChanListener with the given address (used only
+// for reporting via Addr()).  buf is the channel buffer size.
+func NewChanListener(addr net.Addr, buf int) *ChanListener {
+	return &ChanListener{
+		ch:     make(chan net.Conn, buf),
+		addr:   addr,
+		closed: make(chan struct{}),
+	}
+}
+
+// Push delivers a connection to the listener so that http.Server.Serve() picks
+// it up via Accept().  Returns an error if the listener has already been closed.
+func (l *ChanListener) Push(conn net.Conn) error {
+	select {
+	case l.ch <- conn:
+		return nil
+	case <-l.closed:
+		_ = conn.Close()
+		return fmt.Errorf("ChanListener: listener is closed")
+	}
+}
+
+// Accept implements net.Listener.
+func (l *ChanListener) Accept() (net.Conn, error) {
+	select {
+	case conn, ok := <-l.ch:
+		if !ok {
+			return nil, fmt.Errorf("ChanListener: channel closed")
+		}
+		return conn, nil
+	case <-l.closed:
+		return nil, fmt.Errorf("ChanListener: closed")
+	}
+}
+
+// Close implements net.Listener.
+func (l *ChanListener) Close() error {
+	select {
+	case <-l.closed:
+		// already closed
+	default:
+		close(l.closed)
+	}
+	return nil
+}
+
+// Addr implements net.Listener.
+func (l *ChanListener) Addr() net.Addr {
+	return l.addr
+}
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/tls_listener.c =====
+/*
+ * tls_listener.c — wolfSSL gateway bridge: non-blocking, epoll-driven.
+ *
+ * KEY DESIGN (mirrors bench2gw.c):
+ *   - Every conn is set non-blocking immediately after accept().
+ *   - wolfSSL_accept() is driven incrementally: one step per epoll event.
+ *   - tlsgw_peek_and_export_nb() never blocks: returns 0 (EAGAIN) if the TLS
+ *     record is not yet fully arrived in the kernel socket buffer.
+ *   - No per-connection threads or goroutines are created.
+ *   - The Go side runs ONE shared epoll loop that handles ALL state transitions.
+ *
+ * This is the same architecture as bench2gw/bench2gw.c which demonstrated
+ * zero CPU spike when clients disconnect.
+ */
+
+/* _GNU_SOURCE must come FIRST to expose accept4(), SOCK_NONBLOCK, SOCK_CLOEXEC */
+#define _GNU_SOURCE
+
+#ifndef HAVE_SECRET_CALLBACK
+#define HAVE_SECRET_CALLBACK
+#endif
+#ifndef WOLFSSL_KEYLOG_EXPORT
+#define WOLFSSL_KEYLOG_EXPORT
+#endif
+
+
+#include "tls_listener.h"
+
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
+#include <tlspeek/tlspeek.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+
+/* ── TLSGW_SERIAL_SIZE ───────────────────────────────────────────────────── */
+const int TLSGW_SERIAL_SIZE = (int)sizeof(tlspeek_serial_t);
+
+/* ── Internal structs ────────────────────────────────────────────────────── */
+
+struct wolfssl_gtw_ctx {
+    WOLFSSL_CTX *wctx;
+};
+
+struct wolfssl_gtw_conn {
+    int                       tcp_fd;
+    WOLFSSL                  *ssl;
+    tlspeek_ctx_t             peek_ctx;
+    wolfssl_gtw_conn_state_t  state;
+    int                       want_events; /* 1=EPOLLIN, 2=EPOLLOUT */
+};
+
+/* ── Helpers ─────────────────────────────────────────────────────────────── */
+
+static uint64_t now_ns(void)
+{
+    struct timespec ts;
+#ifdef CLOCK_MONOTONIC_RAW
+    if (clock_gettime(CLOCK_MONOTONIC_RAW, &ts) == 0)
+        return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+#endif
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+static int set_nonblocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+/* Check if at least one complete TLS record is in the kernel buffer.
+ * Uses FIONREAD + MSG_PEEK of the 5-byte TLS header.
+ * Returns: 1=ready, 0=not yet, -1=error/eof */
+static int tls_record_ready(int fd)
+{
+    unsigned char hdr[5];
+    ssize_t n;
+    do {
+        n = recv(fd, hdr, sizeof(hdr), MSG_PEEK | MSG_DONTWAIT);
+    } while (n < 0 && errno == EINTR);
+
+    if (n == 0) return -1;        /* peer closed */
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        return -1;
+    }
+    if ((size_t)n < sizeof(hdr)) return 0;  /* partial header */
+
+    uint16_t record_len = (uint16_t)((hdr[3] << 8) | hdr[4]);
+    /* Sanity check */
+    if (record_len > 16384 + 256) return -1;
+
+    int avail = 0;
+    if (ioctl(fd, FIONREAD, &avail) != 0) return 0;
+    return ((size_t)avail >= sizeof(hdr) + (size_t)record_len) ? 1 : 0;
+}
+
+/* Parse "/function/<name>" from the first line of a plaintext HTTP request. */
+static int parse_fn_name(const unsigned char *buf, size_t len,
+                          char *out, size_t out_sz)
+{
+    if (!buf || !len || !out || !out_sz) return 0;
+
+    size_t eol = 0;
+    while (eol < len && buf[eol] != '\n') eol++;
+
+    const unsigned char *sp1 = memchr(buf, ' ', eol);
+    if (!sp1) return 0;
+
+    const unsigned char *path = sp1 + 1;
+    static const char prefix[] = "/function/";
+    size_t plen = eol - (size_t)(path - buf);
+    const unsigned char *sp2 = memchr(path, ' ', plen);
+    if (!sp2) return 0;
+
+    size_t rlen = (size_t)(sp2 - path);
+    if (rlen <= sizeof(prefix) - 1 ||
+        memcmp(path, prefix, sizeof(prefix) - 1) != 0)
+        return 0;
+
+    const unsigned char *name = path + sizeof(prefix) - 1;
+    size_t nlen = rlen - (sizeof(prefix) - 1);
+    for (size_t i = 0; i < nlen; i++) {
+        if (name[i] == '/' || name[i] == '?' || name[i] == ' ') {
+            nlen = i;
+            break;
+        }
+    }
+    if (!nlen || nlen + 1 > out_sz) return 0;
+    memcpy(out, name, nlen);
+    out[nlen] = '\0';
+    return 1;
+}
+
+/* Set cipher suite in tlspeek_serial_t from wolfSSL cipher string. */
+static void set_serial_cipher(tlspeek_serial_t *s, const char *name)
+{
+    if (!s) return;
+    if (!name)                    { s->cipher_suite = TLSPEEK_AES_256_GCM; return; }
+    if (strstr(name, "CHACHA20"))   s->cipher_suite = TLSPEEK_CHACHA20_POLY;
+    else if (strstr(name, "AES-128")) s->cipher_suite = TLSPEEK_AES_128_GCM;
+    else                              s->cipher_suite = TLSPEEK_AES_256_GCM;
+}
+
+/* ── Public API ──────────────────────────────────────────────────────────── */
+
+wolfssl_gtw_ctx_t *wolfssl_gtw_ctx_new(const char *cert_file,
+                                        const char *key_file)
+{
+    if (!cert_file || !key_file) return NULL;
+
+    wolfSSL_Init();
+
+    wolfssl_gtw_ctx_t *ctx = calloc(1, sizeof(*ctx));
+    if (!ctx) return NULL;
+
+    ctx->wctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+    if (!ctx->wctx) { free(ctx); return NULL; }
+
+    wolfSSL_CTX_SetMinVersion(ctx->wctx, WOLFSSL_TLSV1_3);
+    wolfSSL_CTX_set_max_proto_version(ctx->wctx, WOLFSSL_TLSV1_3);
+
+    if (wolfSSL_CTX_use_certificate_file(ctx->wctx, cert_file,
+                                          SSL_FILETYPE_PEM) != SSL_SUCCESS ||
+        wolfSSL_CTX_use_PrivateKey_file(ctx->wctx, key_file,
+                                         SSL_FILETYPE_PEM) != SSL_SUCCESS) {
+        wolfSSL_CTX_free(ctx->wctx);
+        free(ctx);
+        return NULL;
+    }
+    return ctx;
+}
+
+void wolfssl_gtw_ctx_free(wolfssl_gtw_ctx_t *ctx)
+{
+    if (!ctx) return;
+    if (ctx->wctx) wolfSSL_CTX_free(ctx->wctx);
+    free(ctx);
+    wolfSSL_Cleanup();
+}
+
+/* ── Accept + start non-blocking handshake ───────────────────────────────── */
+
+wolfssl_gtw_conn_t *wolfssl_accept_start(wolfssl_gtw_ctx_t *ctx, int listen_fd)
+{
+    if (!ctx || !ctx->wctx || listen_fd < 0) { errno = EINVAL; return NULL; }
+
+    /* accept4 with SOCK_NONBLOCK sets O_NONBLOCK atomically */
+    int client_fd = accept4(listen_fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
+    if (client_fd < 0) return NULL;  /* errno = EAGAIN if no conn pending */
+
+    wolfssl_gtw_conn_t *conn = calloc(1, sizeof(*conn));
+    if (!conn) { close(client_fd); errno = ENOMEM; return NULL; }
+
+    conn->tcp_fd      = client_fd;
+    conn->state       = WOLFSSL_GTW_CONN_HANDSHAKE;
+    conn->want_events = 1; /* Start waiting for EPOLLIN */
+
+    conn->ssl = wolfSSL_new(ctx->wctx);
+    if (!conn->ssl) { free(conn); close(client_fd); errno = ENOMEM; return NULL; }
+
+    wolfSSL_set_fd(conn->ssl, client_fd);
+    wolfSSL_set_using_nonblock(conn->ssl, 1);
+
+    /* Prepare peek context and install keylog callback */
+    memset(&conn->peek_ctx, 0, sizeof(conn->peek_ctx));
+    conn->peek_ctx.tcp_fd     = client_fd;
+    conn->peek_ctx.ssl        = conn->ssl;
+    conn->peek_ctx.keys_ready = 1;
+
+    wolfSSL_set_ex_data(conn->ssl, 0, &conn->peek_ctx);
+    wolfSSL_set_tls13_secret_cb(conn->ssl, tlspeek_keylog_cb, &conn->peek_ctx);
+
+    return conn;
+}
+
+int wolfssl_conn_fd(const wolfssl_gtw_conn_t *conn)
+{
+    return conn ? conn->tcp_fd : -1;
+}
+
+int wolfssl_conn_want_events(const wolfssl_gtw_conn_t *conn)
+{
+    return conn ? conn->want_events : 1;
+}
+
+wolfssl_gtw_conn_state_t wolfssl_conn_state(const wolfssl_gtw_conn_t *conn)
+{
+    return conn ? conn->state : WOLFSSL_GTW_CONN_DONE;
+}
+
+/* ── Drive one step of the non-blocking TLS handshake ───────────────────── */
+
+int wolfssl_handshake_step(wolfssl_gtw_conn_t *conn)
+{
+    if (!conn || !conn->ssl) return -1;
+
+    int rc = wolfSSL_accept(conn->ssl);
+    if (rc == SSL_SUCCESS) {
+        /* Handshake done — set cipher suite in peek_ctx */
+        const char *cname = wolfSSL_get_cipher_name(conn->ssl);
+        if (cname) {
+            if (strstr(cname, "CHACHA20"))
+                conn->peek_ctx.cipher_suite = TLSPEEK_CHACHA20_POLY;
+            else if (strstr(cname, "AES-128"))
+                conn->peek_ctx.cipher_suite = TLSPEEK_AES_128_GCM;
+            else
+                conn->peek_ctx.cipher_suite = TLSPEEK_AES_256_GCM;
+        }
+        conn->state       = WOLFSSL_GTW_CONN_PEEK;
+        conn->want_events = 1; /* Now wait for EPOLLIN (first request data) */
+        return 1;
+    }
+
+    int err = wolfSSL_get_error(conn->ssl, rc);
+    if (err == WOLFSSL_ERROR_WANT_READ) {
+        conn->want_events = 1;
+        return 0;
+    }
+    if (err == WOLFSSL_ERROR_WANT_WRITE) {
+        conn->want_events = 2;
+        return 0;
+    }
+
+    /* Fatal handshake error */
+    return -1;
+}
+
+/* ── Non-blocking peek + export ─────────────────────────────────────────── */
+
+int tlsgw_peek_and_export_nb(
+    wolfssl_gtw_conn_t *conn,
+    char               *fn_name_out,
+    size_t              fn_name_sz,
+    uint64_t           *top1_ns_out,
+    void               *serial_buf,
+    int                *serial_sz_out,
+    int                 skip_top1)
+{
+    if (!conn || !fn_name_out || fn_name_sz == 0) return -2;
+
+    fn_name_out[0] = '\0';
+    if (top1_ns_out)   *top1_ns_out   = 0;
+    if (serial_sz_out) *serial_sz_out = 0;
+
+    /* Check if at least one complete TLS record is in the kernel buffer.
+     * This is the same check as bench2gw's tls_record_ready(). */
+    int ready = tls_record_ready(conn->tcp_fd);
+    if (ready == 0) {
+        conn->want_events = 1;  /* Need more data — tell Go to wait for EPOLLIN */
+        return 0;               /* EAGAIN — not ready yet */
+    }
+    if (ready < 0) {
+        /* Connection closed or error */
+        wolfssl_conn_free(conn);
+        return -2;
+    }
+
+    /* Stamp top1 (first byte received timestamp) */
+    if (!skip_top1 && top1_ns_out)
+        *top1_ns_out = now_ns();
+
+    /* Non-blocking TLS peek (MSG_PEEK equivalent via libtlspeek) */
+    uint8_t peek_buf[4096];
+    int peeked = tls_read_peek(&conn->peek_ctx, peek_buf, sizeof(peek_buf) - 1);
+    if (peeked == 0) {
+        conn->want_events = 1;
+        return 0;  /* EAGAIN */
+    }
+    if (peeked < 0) {
+        wolfssl_conn_free(conn);
+        return -2;  /* Fatal error */
+    }
+    peek_buf[peeked] = '\0';
+
+    /* Parse function name */
+    if (!parse_fn_name(peek_buf, (size_t)peeked, fn_name_out, fn_name_sz)) {
+        /* Not a /function/ path — leave wolfSSL active for ChanListener */
+        return -1;
+    }
+
+    /* Function path — export full TLS session state */
+    tlspeek_serial_t *serial = (tlspeek_serial_t *)serial_buf;
+    if (!serial) {
+        wolfssl_conn_free(conn);
+        return -2;
+    }
+
+    memset(serial, 0, sizeof(*serial));
+    serial->magic = TLSPEEK_MAGIC;
+    set_serial_cipher(serial, wolfSSL_get_cipher_name(conn->ssl));
+
+    unsigned int blob_sz = TLSPEEK_MAX_EXPORT_SZ;
+    int rc = wolfSSL_tls_export(conn->ssl, serial->tls_blob, &blob_sz);
+    if (rc <= 0) {
+        wolfssl_conn_free(conn);
+        return -2;
+    }
+    serial->blob_sz = blob_sz;
+
+    memcpy(serial->client_write_key,
+           conn->peek_ctx.client_write_key,
+           sizeof(serial->client_write_key));
+    memcpy(serial->client_write_iv,
+           conn->peek_ctx.client_write_iv,
+           sizeof(serial->client_write_iv));
+    serial->read_seq_num = conn->peek_ctx.read_seq_num;
+
+    if (serial_sz_out) *serial_sz_out = (int)sizeof(tlspeek_serial_t);
+
+    /* Detach wolfSSL from tcp_fd — returns the raw fd */
+    int raw_fd = conn->tcp_fd;
+    wolfSSL_set_quiet_shutdown(conn->ssl, 1);
+    wolfSSL_set_fd(conn->ssl, -1);
+    wolfSSL_free(conn->ssl);
+    conn->ssl    = NULL;
+    conn->tcp_fd = -1;
+    tlspeek_free(&conn->peek_ctx);
+    conn->state = WOLFSSL_GTW_CONN_DONE;
+    free(conn);
+
+    return raw_fd;  /* raw TCP fd ready for sendfd */
+}
+
+/* ── Conn management ─────────────────────────────────────────────────────── */
+
+void wolfssl_conn_free(wolfssl_gtw_conn_t *conn)
+{
+    if (!conn) return;
+    if (conn->ssl) {
+        wolfSSL_set_quiet_shutdown(conn->ssl, 1);
+        wolfSSL_free(conn->ssl);
+    }
+    if (conn->tcp_fd >= 0) close(conn->tcp_fd);
+    tlspeek_free(&conn->peek_ctx);
+    free(conn);
+}
+
+int wolfssl_conn_take_raw_fd(wolfssl_gtw_conn_t *conn)
+{
+    if (!conn) return -1;
+    int fd = conn->tcp_fd;
+    conn->tcp_fd = -1;
+    return fd;
+}
+
+/* ── Vanilla net.Conn helpers (for ChanListener path) ───────────────────── */
+
+int wolfssl_gtw_conn_read(wolfssl_gtw_conn_t *conn, void *buf, int len)
+{
+    if (!conn || !conn->ssl || !buf || len <= 0) return -1;
+    return wolfSSL_read(conn->ssl, buf, len);
+}
+
+int wolfssl_gtw_conn_write(wolfssl_gtw_conn_t *conn, const void *buf, int len)
+{
+    if (!conn || !conn->ssl || !buf || len <= 0) return -1;
+    int n = wolfSSL_write(conn->ssl, buf, len);
+    if (n <= 0) {
+        int e = wolfSSL_get_error(conn->ssl, n);
+        if (e == SSL_ERROR_WANT_READ) {
+            char drain[1024];
+            wolfSSL_read(conn->ssl, drain, (int)sizeof(drain));
+        }
+    }
+    return n;
+}
+
+int wolfssl_gtw_conn_get_error(wolfssl_gtw_conn_t *conn, int ret)
+{
+    if (!conn || !conn->ssl) return -1;
+    return wolfSSL_get_error(conn->ssl, ret);
+}
+
+int wolfssl_gtw_conn_fd(const wolfssl_gtw_conn_t *conn)
+{
+    return conn ? conn->tcp_fd : -1;
+}
+
+int wolfssl_gtw_conn_pending(const wolfssl_gtw_conn_t *conn)
+{
+    if (!conn || !conn->ssl) return 0;
+    return wolfSSL_pending(conn->ssl);
+}
+
+void wolfssl_gtw_conn_close(wolfssl_gtw_conn_t *conn)
+{
+    if (!conn) return;
+    if (conn->ssl) {
+        wolfSSL_set_quiet_shutdown(conn->ssl, 1);
+        wolfSSL_free(conn->ssl);
+    }
+    if (conn->tcp_fd >= 0) close(conn->tcp_fd);
+    tlspeek_free(&conn->peek_ctx);
+    free(conn);
+}
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/loop_https.go =====
+//go:build linux && cgo
+
+// loop_https.go — HTTPS accept loops for vanilla and prototype modes.
+//
+// ── ARCHITECTURE (epoll-driven, zero per-connection goroutines) ──────────────
+//
+// RunLoopHTTPS (prototype mode):
+//   - Single goroutine runs ONE epoll loop (same pattern as bench2gw/server.go).
+//   - listenFD    → accept() → wolfssl_accept_start() → add clientFD to epoll
+//   - clientFD    → wolfssl_handshake_step() until done → tlsgw_peek_and_export_nb()
+//                → if /function/*: sendfd (goroutine for IP resolve + dispatch)
+//                → if other path:  push WolfSSLGtwConn to ChanListener
+//   - relayFD     → accept() → recv relay FDs from wrong-owner workers
+//
+// RunVanillaHTTPS (vanilla mode):
+//   - Same epoll accept loop, but after handshake pushes to ChanListener directly.
+//
+// KEY PROPERTIES:
+//   - Zero goroutines are created per connection (no goroutine leak).
+//   - Single EpollWait(-1) blocks indefinitely when idle → CPU = 0% when no clients.
+//   - All socket events (TCP listen, per-client handshake/peek, relay UDS) are
+//     multiplexed on ONE shared epoll fd.
+//   - Goroutines are only spawned for the sendfd dispatch (off critical path).
+//   - Relay listen socket is also managed in the same epoll loop.
+
+package httpmigrate
+
+/*
+#include "tls_listener.h"
+#include <stdlib.h>
+*/
+import "C"
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"syscall"
+	"time"
+	"unsafe"
+)
+
+
+// ── RunVanillaHTTPS ──────────────────────────────────────────────────────────
+
+// RunVanillaHTTPS starts an HTTPS listener on tlsPort using wolfSSL.
+// Uses a single epoll loop — no goroutine per connection.
+func RunVanillaHTTPS(
+	tlsPort int,
+	certFile, keyFile string,
+	handler http.Handler,
+	skipTop1 bool,
+) error {
+	gtwCtx, err := NewWolfSSLGtwCtx(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("[vanilla-https] wolfSSL init: %w", err)
+	}
+	defer gtwCtx.Free()
+
+	listenFD, err := rawTCPListen(tlsPort)
+	if err != nil {
+		return fmt.Errorf("[vanilla-https] listen :%d: %w", tlsPort, err)
+	}
+	defer syscall.Close(listenFD)
+
+	addr := &net.TCPAddr{Port: tlsPort}
+	chanLis := NewChanListener(addr, 512)
+
+	var srvHandler http.Handler
+	if skipTop1 {
+		srvHandler = handler
+	} else {
+		srvHandler = VanillaTimingMiddleware(handler)
+	}
+
+	s := &http.Server{
+		Handler:        srvHandler,
+		ReadTimeout:    60 * time.Second,
+		WriteTimeout:   60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+	if !skipTop1 {
+		s.ConnState = StartVanillaTimingObserver()
+	}
+
+	go func() {
+		if err := s.Serve(chanLis); err != nil && err != http.ErrServerClosed {
+			log.Printf("[vanilla-https] HTTP server error: %v\n", err)
+		}
+	}()
+
+	log.Printf("[vanilla-https] RunVanillaHTTPS listening on :%d (SUM_PROD=%v)\n",
+		tlsPort, skipTop1)
+
+	return runEpollLoop(gtwCtx, listenFD, -1, "", chanLis, "", nil, skipTop1, true)
+}
+
+// ── RunLoopHTTPS ─────────────────────────────────────────────────────────────
+
+// RunLoopHTTPS is the HTTPS prototype mode listener.
+// Workflow per connection (all in one epoll goroutine):
+//  1. accept4() → non-blocking fd
+//  2. wolfssl_accept_start() → epoll EPOLLIN
+//  3. wolfssl_handshake_step() per epoll event until complete
+//  4. tlsgw_peek_and_export_nb() → EAGAIN loops via epoll, no spin
+//  5a. /function/<name> → goroutine for sendfd dispatch (non-blocking path)
+//  5b. other path       → WolfSSLGtwConn pushed to ChanListener
+func RunLoopHTTPS(
+	tlsPort int,
+	certFile, keyFile string,
+	handler http.Handler,
+	providerURL string,
+	notifier CompletionNotifier,
+	skipTop1 bool,
+) error {
+	if err := os.MkdirAll(SocketDir, 0o777); err != nil {
+		log.Printf("[httpmigrate-https] warning: mkdir %s: %v\n", SocketDir, err)
+	}
+
+	gtwCtx, err := NewWolfSSLGtwCtx(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("[httpmigrate-https] wolfSSL init: %w", err)
+	}
+	defer gtwCtx.Free()
+
+	listenFD, err := rawTCPListen(tlsPort)
+	if err != nil {
+		return fmt.Errorf("[httpmigrate-https] listen :%d: %w", tlsPort, err)
+	}
+	defer syscall.Close(listenFD)
+
+	// Relay socket path for this gateway instance (all containers share one relay sock per IP,
+	// created lazily by EnsureRelaySocketHTTPS — the relay loop is inside runEpollLoop below).
+	addr := &net.TCPAddr{Port: tlsPort}
+	chanLis := NewChanListener(addr, 512)
+
+	s := &http.Server{
+		Handler:        VanillaTimingMiddleware(handler),
+		ConnState:      StartVanillaTimingObserver(),
+		ReadTimeout:    60 * time.Second,
+		WriteTimeout:   60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+	go func() {
+		if err := s.Serve(chanLis); err != nil && err != http.ErrServerClosed {
+			log.Printf("[httpmigrate-https] HTTP server error: %v\n", err)
+		}
+	}()
+
+	log.Printf("[httpmigrate-https] RunLoopHTTPS listening on :%d\n", tlsPort)
+
+	return runEpollLoop(gtwCtx, listenFD, -1, "", chanLis, providerURL, notifier, skipTop1, false)
+}
+
+// ── runEpollLoop — single epoll-driven event loop ───────────────────────────
+//
+// Drives handshake state machine + peek/export for ALL connections on ONE goroutine.
+// This is the core of the fix: mirrors bench2gw/server.go exactly.
+func runEpollLoop(
+	gtwCtx     *WolfSSLGtwCtx,
+	listenFD   int,
+	relayFD    int, // -1 if no relay
+	_          string,
+	chanLis    *ChanListener,
+	providerURL string,
+	notifier   CompletionNotifier,
+	skipTop1   bool,
+	vanillaMode bool,
+) error {
+	epollFD, err := syscall.EpollCreate1(0)
+	if err != nil {
+		return fmt.Errorf("epoll create: %w", err)
+	}
+	defer syscall.Close(epollFD)
+
+	// Add listen socket to epoll.
+	if err := syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_ADD, listenFD,
+		&syscall.EpollEvent{Events: syscall.EPOLLIN, Fd: int32(listenFD)}); err != nil {
+		return fmt.Errorf("epoll add listen fd: %w", err)
+	}
+
+	// pending maps client fd → wolfssl_gtw_conn_t*
+	pending := make(map[int]*C.wolfssl_gtw_conn_t)
+	// relayConns maps relay conn fd → partial recv state
+	relayConns := make(map[int]*httpsRelayConn)
+
+	// Helper: remove and free a pending connection
+	closePending := func(fd int) {
+		if conn, ok := pending[fd]; ok {
+			_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
+			C.wolfssl_conn_free(conn)
+			delete(pending, fd)
+		}
+	}
+
+	// Helper: close a relay conn
+	closeRelayConn := func(fd int) {
+		if rc, ok := relayConns[fd]; ok {
+			_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
+			rc.close()
+			delete(relayConns, fd)
+		}
+	}
+
+	// Helper: epoll events wanted by a pending conn
+	connEvents := func(conn *C.wolfssl_gtw_conn_t) uint32 {
+		evs := uint32(syscall.EPOLLRDHUP | syscall.EPOLLERR)
+		if C.wolfssl_conn_want_events(conn) == 2 {
+			evs |= syscall.EPOLLOUT
+		} else {
+			evs |= syscall.EPOLLIN
+		}
+		return evs
+	}
+
+	events := make([]syscall.EpollEvent, 128)
+	peekBuf := make([]byte, gtwCtx.SerialSize())
+
+	for {
+		n, err := syscall.EpollWait(epollFD, events, -1)
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			return fmt.Errorf("epoll wait: %w", err)
+		}
+
+		for i := 0; i < n; i++ {
+			fd := int(events[i].Fd)
+			evFlags := events[i].Events
+
+			// ── Listen socket: accept new connections ────────────────────────
+			if fd == listenFD {
+				for {
+					conn := C.wolfssl_accept_start(gtwCtx.ptr, C.int(listenFD))
+					if conn == nil {
+						break // EAGAIN — no more pending connections
+					}
+					clientFD := int(C.wolfssl_conn_fd(conn))
+					if clientFD < 0 {
+						C.wolfssl_conn_free(conn)
+						continue
+					}
+					if err := syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_ADD, clientFD,
+						&syscall.EpollEvent{Events: connEvents(conn), Fd: int32(clientFD)}); err != nil {
+						C.wolfssl_conn_free(conn)
+						log.Printf("[epoll] EpollCtl ADD client fd=%d failed: %v\n", clientFD, err)
+						continue
+					}
+					pending[clientFD] = conn
+				}
+				continue
+			}
+
+			// ── Relay listen socket: accept relay connections ─────────────────
+			if fd == relayFD {
+				for {
+					connFD, _, aerr := syscall.Accept4(relayFD, syscall.SOCK_CLOEXEC|syscall.SOCK_NONBLOCK)
+					if aerr != nil {
+						break
+					}
+					rc := newHTTPSRelayConn(connFD, gtwCtx.SerialSize())
+					if err := syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_ADD, connFD,
+						&syscall.EpollEvent{Events: syscall.EPOLLIN | syscall.EPOLLRDHUP, Fd: int32(connFD)}); err != nil {
+						rc.close()
+						continue
+					}
+					relayConns[connFD] = rc
+				}
+				continue
+			}
+
+			// ── Relay data connection ─────────────────────────────────────────
+			if rc, ok := relayConns[fd]; ok {
+				if evFlags&(syscall.EPOLLERR|syscall.EPOLLHUP|syscall.EPOLLRDHUP) != 0 {
+					closeRelayConn(fd)
+					continue
+				}
+				if evFlags&syscall.EPOLLIN != 0 {
+					done, rcErr := rc.recv()
+					if rcErr != nil {
+						closeRelayConn(fd)
+						continue
+					}
+					if !done {
+						continue
+					}
+					clientFD := rc.clientFD
+					serialBytes := rc.payload[KAPayloadSize:]
+					basePay := UnmarshalPayload(rc.payload[:KAPayloadSize])
+					rc.clientFD = -1 // detach so close() doesn't close it
+					closeRelayConn(fd)
+
+					if basePay == nil {
+						_ = syscall.Close(clientFD)
+						continue
+					}
+					targetFn := basePay.Target()
+					if targetFn == "" {
+						_ = syscall.Close(clientFD)
+						continue
+					}
+					serial := make([]byte, len(serialBytes))
+					copy(serial, serialBytes)
+					httpsPayload := &KAPayloadHTTPS{Base: *basePay, Serial: serial}
+					go func(cfd int, fn string, pl *KAPayloadHTTPS) {
+						if err := dispatchMigrateHTTPS(cfd, fn, pl, providerURL, notifier); err != nil {
+							log.Printf("[relay-https-epoll] dispatch failed fn=%s: %v\n", fn, err)
+							_ = syscall.Close(cfd)
+						}
+					}(clientFD, targetFn, httpsPayload)
+				}
+				continue
+			}
+
+			// ── Client connection: handshake or peek ─────────────────────────
+			conn := pending[fd]
+			if conn == nil {
+				_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
+				_ = syscall.Close(fd)
+				continue
+			}
+
+			if evFlags&(syscall.EPOLLERR|syscall.EPOLLHUP|syscall.EPOLLRDHUP) != 0 {
+				closePending(fd)
+				continue
+			}
+
+			state := C.wolfssl_conn_state(conn)
+
+			// ── Drive handshake ──────────────────────────────────────────────
+			if state == C.WOLFSSL_GTW_CONN_HANDSHAKE {
+				rc := C.wolfssl_handshake_step(conn)
+				if rc == 0 {
+					// In-progress: update epoll interest
+					_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_MOD, fd,
+						&syscall.EpollEvent{Events: connEvents(conn), Fd: int32(fd)})
+					continue
+				}
+				if rc < 0 {
+					// Fatal handshake error
+					closePending(fd)
+					continue
+				}
+				// Handshake done (rc == 1) — conn is now in PEEK state.
+				// Re-arm for EPOLLIN. We MUST use EPOLLET (Edge-Triggered) for PEEK 
+				// so we don't spin 100% CPU waiting for partial TLS records to complete.
+				_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_MOD, fd,
+					&syscall.EpollEvent{Events: syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR | syscall.EPOLLET, Fd: int32(fd)})
+
+				if vanillaMode {
+					// Vanilla: handshake complete → push to ChanListener immediately.
+					// wrapGtwConn takes ownership of conn (the wolfSSL* + fd).
+					// WolfSSLGtwConn.Close() will call wolfssl_gtw_conn_close(ptr) to free it.
+					// Do NOT call wolfssl_conn_free here — that would free ssl while gtwConn still uses it.
+					_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
+					delete(pending, fd)
+					rawFD := int(C.wolfssl_conn_take_raw_fd(conn))
+					gtwConn := wrapGtwConn(conn, rawFD)
+					if pushErr := chanLis.Push(gtwConn); pushErr != nil {
+						_ = gtwConn.Close()
+					}
+					continue
+				}
+				// Prototype mode: fall through to PEEK immediately to process any data
+				// that arrived in the same packet as the TLS Finished message!
+				state = C.WOLFSSL_GTW_CONN_PEEK
+			}
+
+			// ── Drive peek + export (prototype mode) ─────────────────────────
+			if state == C.WOLFSSL_GTW_CONN_PEEK {
+				var cFnName [128]C.char
+				var cTop1 C.uint64_t
+				var cSerialSz C.int
+				cSkip := C.int(0)
+				if skipTop1 {
+					cSkip = 1
+				}
+
+				rc := C.tlsgw_peek_and_export_nb(
+					conn,
+					&cFnName[0],
+					128,
+					&cTop1,
+					unsafe.Pointer(&peekBuf[0]),
+					&cSerialSz,
+					cSkip,
+				)
+
+				switch {
+				case rc == 0:
+					// EAGAIN — more data needed. With EPOLLET, we just wait for the next edge.
+					// No need to EpollCtl MOD.
+
+				case rc > 0:
+					// /function/<name> path — wolfSSL detached, raw fd returned
+					_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
+					delete(pending, fd)
+					// NOTE: conn was freed inside tlsgw_peek_and_export_nb when rc>0
+					rawFD := int(rc)
+					fnName := C.GoString(&cFnName[0])
+					var top1Val uint64
+					if !skipTop1 {
+						top1Val = uint64(cTop1)
+					}
+					serial := make([]byte, int(cSerialSz))
+					copy(serial, peekBuf[:int(cSerialSz)])
+					payload := NewPayloadHTTPS(top1Val, fnName, serial)
+					go func(rfd int, fn string, pl *KAPayloadHTTPS) {
+						if err := dispatchMigrateHTTPS(rfd, fn, pl, providerURL, notifier); err != nil {
+							log.Printf("[epoll-https] dispatch FAILED fn=%s: %v\n", fn, err)
+							_ = syscall.Close(rfd)
+						}
+					}(rawFD, fnName, payload)
+
+				case rc == -1:
+					// Not a /function/ path — push wolfSSL conn to ChanListener
+					_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
+					delete(pending, fd)
+					rawFD := int(C.wolfssl_conn_take_raw_fd(conn))
+					gtwConn := wrapGtwConn(conn, rawFD)
+					if pushErr := chanLis.Push(gtwConn); pushErr != nil {
+						_ = gtwConn.Close()
+					}
+
+				default: // rc <= -2: fatal error — conn already freed
+					_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
+					delete(pending, fd)
+					// Do NOT call wolfssl_conn_free — conn was freed inside C
+				}
+			}
+		}
+	}
+}
+
+// ── httpsRelayConn — relay receive state ─────────────────────────────────────
+// Tracks partial receive from a worker relay connection.
+// payload = KAPayloadSize bytes (base) + serialSize bytes (TLS state)
+type httpsRelayConn struct {
+	fd         int
+	clientFD   int
+	payload    []byte
+	off        int
+}
+
+func newHTTPSRelayConn(fd, serialSize int) *httpsRelayConn {
+	return &httpsRelayConn{
+		fd:       fd,
+		clientFD: -1,
+		payload:  make([]byte, KAPayloadSize+serialSize),
+	}
+}
+
+func (r *httpsRelayConn) close() {
+	if r.fd >= 0 {
+		_ = syscall.Close(r.fd)
+		r.fd = -1
+	}
+	if r.clientFD >= 0 {
+		_ = syscall.Close(r.clientFD)
+		r.clientFD = -1
+	}
+}
+
+func (r *httpsRelayConn) recv() (bool, error) {
+	oob := make([]byte, syscall.CmsgSpace(4))
+	n, oobn, _, _, err := syscall.Recvmsg(r.fd, r.payload[r.off:], oob, syscall.MSG_DONTWAIT)
+	if err != nil {
+		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
+			return false, nil
+		}
+		return false, err
+	}
+	if n == 0 {
+		return false, fmt.Errorf("relay peer closed")
+	}
+	if oobn > 0 {
+		scms, parseErr := syscall.ParseSocketControlMessage(oob[:oobn])
+		if parseErr == nil {
+			for _, scm := range scms {
+				fds, rightsErr := syscall.ParseUnixRights(&scm)
+				if rightsErr != nil {
+					continue
+				}
+				for _, fd := range fds {
+					if r.clientFD >= 0 {
+						_ = syscall.Close(fd)
+					} else {
+						r.clientFD = fd
+					}
+				}
+			}
+		}
+	}
+	r.off += n
+	if r.off < len(r.payload) {
+		return false, nil
+	}
+	if r.clientFD < 0 {
+		return false, fmt.Errorf("relay payload complete but no FD received")
+	}
+	return true, nil
+}
+
+// ── wrapGtwConn ──────────────────────────────────────────────────────────────
+// Converts a *C.wolfssl_gtw_conn_t (after handshake done) into a WolfSSLGtwConn
+// Go struct that implements net.Conn, WITHOUT creating a new per-conn epoll fd.
+// The conn is set non-blocking and wrapped with a shared epoll for Read/Write.
+func wrapGtwConn(cconn *C.wolfssl_gtw_conn_t, fd int) *WolfSSLGtwConn {
+	// Set non-blocking for the ChanListener path
+	syscall.SetNonblock(fd, true)
+
+	// Create a small per-conn epoll ONLY for the ChanListener Read/Write path.
+	// These connections are long-lived HTTP sessions for /system/* etc. (low count).
+	epfd, _ := syscall.EpollCreate1(0)
+	if epfd >= 0 {
+		var epev syscall.EpollEvent
+		epev.Fd = int32(fd)
+		epev.Events = syscall.EPOLLIN | syscall.EPOLLRDHUP | syscall.EPOLLERR
+		_ = syscall.EpollCtl(epfd, syscall.EPOLL_CTL_ADD, fd, &epev)
+	}
+	return &WolfSSLGtwConn{
+		ptr:        cconn,
+		fd:         fd,
+		epfd:       epfd,
+		localAddr:  gtwSocketAddr(fd, false),
+		remoteAddr: gtwSocketAddr(fd, true),
+	}
+}
+
+// ── EnsureRelaySocketHTTPS (per-container relay) ─────────────────────────────
+// Creates the relay socket and starts a relay goroutine for a given container IP.
+// Called lazily from dispatchMigrateHTTPS.
+func EnsureRelaySocketHTTPS(ip string, serialSize int, providerURL string, notifier CompletionNotifier) {
+	relayMu.Lock()
+	if relayKnown[ip] {
+		relayMu.Unlock()
+		return
+	}
+	relayKnown[ip] = true
+	relayMu.Unlock()
+
+	sockPath := filepath.Join(SocketDir, ip+"-relay.sock")
+	_ = os.Remove(sockPath)
+
+	listenFD, err := bindUnixSocket(sockPath, 512)
+	if err != nil {
+		log.Printf("[relay-https] failed to create relay socket %s: %v\n", sockPath, err)
+		relayMu.Lock()
+		delete(relayKnown, ip)
+		relayMu.Unlock()
+		return
+	}
+	_ = os.Chmod(sockPath, 0o777)
+
+	log.Printf("[relay-https] relay socket ready: %s\n", sockPath)
+	// Start the relay as a blocking loop goroutine (same as HTTP mode)
+	go relayListenLoopHTTPS(listenFD, serialSize, providerURL, notifier)
+}
+
+// ── rawTCPListen ─────────────────────────────────────────────────────────────
+func rawTCPListen(port int) (int, error) {
+	fd, err := syscall.Socket(syscall.AF_INET6, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		fd, err = syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+		if err != nil {
+			return -1, fmt.Errorf("socket: %w", err)
+		}
+		_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		var sa4 syscall.SockaddrInet4
+		sa4.Port = port
+		if err := syscall.Bind(fd, &sa4); err != nil {
+			_ = syscall.Close(fd)
+			return -1, fmt.Errorf("bind IPv4 :%d: %w", port, err)
+		}
+	} else {
+		_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		_ = syscall.SetsockoptInt(fd, syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, 0)
+		var sa6 syscall.SockaddrInet6
+		sa6.Port = port
+		if err := syscall.Bind(fd, &sa6); err != nil {
+			_ = syscall.Close(fd)
+			return -1, fmt.Errorf("bind IPv6 :%d: %w", port, err)
+		}
+	}
+	if err := syscall.Listen(fd, 4096); err != nil {
+		_ = syscall.Close(fd)
+		return -1, fmt.Errorf("listen :%d: %w", port, err)
+	}
+	// ── CRITICAL: the listen fd MUST be non-blocking so that the accept4()
+	// drain loop inside wolfssl_accept_start() returns EAGAIN (errno=EAGAIN)
+	// when no more connections are pending, instead of blocking forever.
+	// Note: SOCK_NONBLOCK in accept4() only affects the *client* socket.
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		_ = syscall.Close(fd)
+		return -1, fmt.Errorf("setnonblock listen :%d: %w", port, err)
+	}
+	return fd, nil
+}
+
+
+
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/payload_https.go =====
+//go:build linux && cgo
+
+// payload_https.go — HTTPS payload: extends KAPayload with the TLS serial state.
+//
+// Wire layout sent via sendfd2WithState (same sendmsg path as HTTP):
+//
+//   [0  .. 159] : KAPayload (160 bytes) — timing + target function name
+//   [160 .. N ] : raw tlspeek_serial_t bytes — TLS session state for worker
+//
+// The worker reads this as: httpmigrate_ka_payload_https_t
+// (base 160-byte header, then the serial blob)
+
+package httpmigrate
+
+import (
+	"fmt"
+	"log"
+	"path/filepath"
+	"syscall"
+	"time"
+)
+
+const (
+	// KAPayloadHTTPSMagic identifies an HTTPS migration payload.
+	KAPayloadHTTPSMagic uint32 = 0x484D4B53 // 'HMKS'
+
+	// KAPayloadHTTPSVersion is the struct version for HTTPS payloads.
+	KAPayloadHTTPSVersion uint32 = 1
+)
+
+// KAPayloadHTTPS is the Go representation of the HTTPS wire payload.
+// It embeds KAPayload (160 bytes of timing data) followed by
+// the raw serialised TLS session state (tlspeek_serial_t, ~24 KB).
+type KAPayloadHTTPS struct {
+	Base   KAPayload // timing info + target function name
+	Serial []byte    // raw tlspeek_serial_t bytes from C
+}
+
+// Marshal serialises the HTTPS payload into a byte slice for sendmsg.
+// Layout: KAPayload.Marshal() (160 bytes) || serial bytes.
+func (p *KAPayloadHTTPS) Marshal() []byte {
+	base := p.Base.Marshal() // 160 bytes
+	out  := make([]byte, len(base)+len(p.Serial))
+	copy(out, base)
+	copy(out[len(base):], p.Serial)
+	return out
+}
+
+// NewPayloadHTTPS builds a KAPayloadHTTPS stamped with the given nanosecond top1,
+// target function name, and the serialised TLS session bytes from C.
+//
+// top1Ns     : timestamp (nanoseconds) from getMonotonicNs(); 0 in SUM_PROD mode.
+// targetFn   : function name (e.g. "timing-fn-a").
+// serialBytes: raw tlspeek_serial_t bytes returned by PeekAndExport().
+func NewPayloadHTTPS(top1Ns uint64, targetFn string, serialBytes []byte) *KAPayloadHTTPS {
+	p := &KAPayloadHTTPS{
+		Base: KAPayload{
+			Magic:   KAPayloadHTTPSMagic,
+			Version: KAPayloadHTTPSVersion,
+			Cntfrq:  KACntfrq,
+		},
+		Serial: serialBytes,
+	}
+	if top1Ns > 0 {
+		p.Base.Top1Rdtsc = top1Ns
+		p.Base.Top1Set   = 1
+	}
+	p.Base.SetTarget(targetFn)
+	return p
+}
+
+// ── dispatchMigrateHTTPS ─────────────────────────────────────────────────────
+
+// dispatchMigrateHTTPS is the HTTPS equivalent of dispatchMigrate in relay_server.go.
+// Sends (rawFD + payload) to the of-watchdog socket for targetFn.
+// The pipe (Unix pipe — one-way communication channel between two FDs) mechanism
+// for Prometheus completion notification is identical to HTTP mode.
+func dispatchMigrateHTTPS(
+	rawFD int,
+	targetFn string,
+	payload *KAPayloadHTTPS,
+	providerURL string,
+	notifier CompletionNotifier,
+) error {
+	// 1. Resolve container IP — same helper as HTTP mode.
+	ip, err := ResolveContainerIP(targetFn, providerURL)
+	if err != nil {
+		return fmt.Errorf("resolve IP for %s: %w", targetFn, err)
+	}
+
+	// 2. Ensure relay socket for this container is registered.
+	EnsureRelaySocketHTTPS(ip, len(payload.Serial), providerURL, notifier)
+
+	// 3. Create a completion pipe (pipe — kernel mechanism where writing to pipeW
+	//    is readable from pipeR, used to signal request completion to gateway).
+	var pipeEnds [2]int
+	if err := syscall.Pipe(pipeEnds[:]); err != nil {
+		return fmt.Errorf("pipe: %w", err)
+	}
+	pipeReadFD  := pipeEnds[0]
+	pipeWriteFD := pipeEnds[1]
+
+	// 4. Monitor pipe in background — fires Prometheus notification when worker closes it.
+	start := time.Now()
+	if notifier != nil {
+		go readCompletionPipe(pipeReadFD, targetFn, start, notifier)
+	} else {
+		go func() { syscall.Close(pipeReadFD) }()
+	}
+
+	// 5. Connect to of-watchdog's Unix domain socket and send FDs + payload.
+	sockPath := filepath.Join(SocketDir, ip+".sock")
+	watchdogFD, err := connectUnixSocket(sockPath)
+	if err != nil {
+		_ = syscall.Close(pipeReadFD)
+		_ = syscall.Close(pipeWriteFD)
+		return fmt.Errorf("connect watchdog %s: %w", sockPath, err)
+	}
+	defer syscall.Close(watchdogFD)
+
+	// 6. sendfd2WithState: sends [rawFD, pipeWriteFD] via SCM_RIGHTS (Unix mechanism
+	//    to transfer open file descriptors between processes) + payloadBytes as data.
+	payloadBytes := payload.Marshal()
+	if err := sendfd2WithState(watchdogFD, rawFD, pipeWriteFD, payloadBytes); err != nil {
+		_ = syscall.Close(pipeReadFD)
+		return fmt.Errorf("sendfd2 to watchdog: %w", err)
+	}
+	return nil
+}
+
+// relayListenLoopHTTPS is started in a goroutine by RunLoopHTTPS.
+// Workers return wrong-owner keep-alive connections here with the updated TLS serial.
+// The relay re-dispatches to the correct container using dispatchMigrateHTTPS.
+//
+// Note: the relay socket path is per-container IP, created by EnsureRelaySocket.
+// This function is the HTTPS-aware version — it handles the larger payload buffer.
+func relayListenLoopHTTPS(listenFD int, serialSize int, providerURL string, notifier CompletionNotifier) {
+	defer syscall.Close(listenFD)
+
+	// Buffer size for the full HTTPS payload: 160 bytes (KAPayload base) + serial.
+	bufSize := KAPayloadSize + serialSize
+
+	for {
+		connFD, _, err := syscall.Accept(listenFD)
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			log.Printf("[relay-https] accept error: %v\n", err)
+			return
+		}
+
+		go func(cFD int) {
+			defer syscall.Close(cFD)
+
+			// Allocate a dedicated buffer per connection to prevent data races
+			buf := make([]byte, bufSize)
+			clientFD, relayErr := recvfd1WithState(cFD, buf)
+			if relayErr != nil {
+				log.Printf("[relay-https] recvfd1 error: %v\n", relayErr)
+				return
+			}
+
+			// First 160 bytes are the KAPayload base.
+			basePay := UnmarshalPayload(buf[:KAPayloadSize])
+			if basePay == nil || (basePay.Magic != KAPayloadHTTPSMagic && basePay.Magic != KAMagic) {
+				log.Printf("[relay-https] bad magic\n")
+				_ = syscall.Close(clientFD)
+				return
+			}
+
+			targetFn := basePay.Target()
+			if targetFn == "" {
+				log.Printf("[relay-https] empty target function\n")
+				_ = syscall.Close(clientFD)
+				return
+			}
+
+			// Rebuild payload with serial bytes from relay buffer.
+			serial := make([]byte, serialSize)
+			if len(buf) >= KAPayloadSize+serialSize {
+				copy(serial, buf[KAPayloadSize:KAPayloadSize+serialSize])
+			}
+
+			httpsPayload := &KAPayloadHTTPS{Base: *basePay, Serial: serial}
+
+			if err := dispatchMigrateHTTPS(clientFD, targetFn, httpsPayload,
+				providerURL, notifier); err != nil {
+				log.Printf("[relay-https] dispatch failed fn=%s: %v\n", targetFn, err)
+			}
+			_ = syscall.Close(clientFD)
+		}(connFD)
+	}
+}
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/loop.go =====
+//go:build linux
+
+// Package httpmigrate — loop.go
+//
+// RunLoop replaces s.ListenAndServe() in main.go when HTTPMIGRATE_ENABLE=1.
+// It owns the raw TCP socket on tcpPort and routes each accepted connection:
+//
+//   - /function/<name> requests  →  sendfd migration path (function worker
+//     takes full ownership of the TCP connection).
+//   - Everything else             →  vanilla HTTP path via ChanListener,
+//     served by the http.Server with the gorilla/mux router.
+
+package httpmigrate
+
+import (
+	"bytes"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"syscall"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+// RunLoop opens a raw TCP socket on tcpPort, accepts connections, and
+// routes them to either the sendfd path or the vanilla HTTP path.
+//
+// handler is typically the gorilla/mux router from main.go.
+// providerURL is the URL of the faasd provider (e.g. "http://faasd:8081").
+// notifier is called for Prometheus metrics when a function completes.
+//
+// RunLoop blocks indefinitely.
+
+// getMonotonicNs returns monotonic nanoseconds using CLOCK_MONOTONIC_RAW.
+// If CLOCK_MONOTONIC_RAW is unavailable, it falls back to CLOCK_MONOTONIC so
+// gateway and function worker timestamps remain comparable.
+func getMonotonicNs() uint64 {
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC_RAW, &ts); err != nil {
+		log.Printf("[httpmigrate] CLOCK_MONOTONIC_RAW unavailable: %v, falling back to CLOCK_MONOTONIC\n", err)
+		if err2 := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err2 != nil {
+			log.Printf("[httpmigrate] CLOCK_MONOTONIC unavailable: %v\n", err2)
+			return uint64(time.Now().UnixNano())
+		}
+	}
+	return uint64(ts.Sec)*1_000_000_000 + uint64(ts.Nsec)
+}
+
+// RunLoop opens a raw TCP socket on tcpPort, accepts connections, and
+// routes them to either the sendfd path or the vanilla HTTP path.
+//
+// handler is typically the gorilla/mux router from main.go.
+// providerURL is the URL of the faasd provider (e.g. "http://faasd:8081").
+// notifier is called for Prometheus metrics when a function completes.
+//
+// RunLoop blocks indefinitely.
+func RunLoop(tcpPort int, handler http.Handler, providerURL string, notifier CompletionNotifier) error {
+	// Ensure the shared socket directory exists on the host (bind-mounted
+	// into containers at /run/tlsmigrate).
+	if err := os.MkdirAll(SocketDir, 0o777); err != nil {
+		log.Printf("[httpmigrate] warning: mkdir %s: %v\n", SocketDir, err)
+	}
+
+	// ── Raw TCP listener ──────────────────────────────────────────────────
+	listenFD, err := syscall.Socket(syscall.AF_INET6, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		// Fallback to IPv4-only if IPv6 is not available.
+		listenFD, err = syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+		if err != nil {
+			return fmt.Errorf("socket: %w", err)
+		}
+		_ = syscall.SetsockoptInt(listenFD, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		var sa4 syscall.SockaddrInet4
+		sa4.Port = tcpPort
+		if err := syscall.Bind(listenFD, &sa4); err != nil {
+			_ = syscall.Close(listenFD)
+			return fmt.Errorf("bind :%d: %w", tcpPort, err)
+		}
+	} else {
+		_ = syscall.SetsockoptInt(listenFD, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		// Disable IPV6_V6ONLY so the socket also accepts IPv4 (dual-stack).
+		_ = syscall.SetsockoptInt(listenFD, syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, 0)
+		var sa6 syscall.SockaddrInet6
+		sa6.Port = tcpPort
+		if err := syscall.Bind(listenFD, &sa6); err != nil {
+			_ = syscall.Close(listenFD)
+			return fmt.Errorf("bind :%d (IPv6): %w", tcpPort, err)
+		}
+	}
+
+	if err := syscall.Listen(listenFD, 4096); err != nil {
+		_ = syscall.Close(listenFD)
+		return fmt.Errorf("listen :%d: %w", tcpPort, err)
+	}
+	defer syscall.Close(listenFD)
+
+	// ── ChanListener feeds the standard HTTP server ────────────────────────
+	addr := &net.TCPAddr{Port: tcpPort}
+	chanLis := NewChanListener(addr, 512)
+
+	s := &http.Server{
+		Handler:        VanillaTimingMiddleware(handler),
+		ConnState:      StartVanillaTimingObserver(),
+		ReadTimeout:    60 * time.Second,
+		WriteTimeout:   60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+	go func() {
+		if err := s.Serve(chanLis); err != nil && err != http.ErrServerClosed {
+			log.Printf("[httpmigrate] HTTP server error: %v\n", err)
+		}
+	}()
+
+	log.Printf("[httpmigrate] RunLoop listening on :%d  (migrate path active)\n", tcpPort)
+
+	// ── Accept loop ───────────────────────────────────────────────────────
+	for {
+		connFD, _, acceptErr := syscall.Accept(listenFD)
+		if acceptErr != nil {
+			if acceptErr == syscall.EINTR {
+				continue
+			}
+			return fmt.Errorf("accept: %w", acceptErr)
+		}
+		go handleConn(connFD, chanLis, providerURL, notifier)
+	}
+}
+
+// handleConn is spawned for each accepted raw fd.  It stamps top1_rdtsc
+// BEFORE the MSG_PEEK call (matching the convention in the existing bench
+// and the function worker's keepalive loop).
+func handleConn(connFD int, chanLis *ChanListener, providerURL string, notifier CompletionNotifier) {
+	// ── Stamp top1 just before peeking ────────────────────────────────────
+	top1Ns := getMonotonicNs()
+
+	// ── MSG_PEEK to read the request line without consuming it ────────────
+	var peekBuf [4096]byte
+	n, _, peekErr := syscall.Recvfrom(connFD, peekBuf[:], syscall.MSG_PEEK)
+	if peekErr != nil || n <= 0 {
+		_ = syscall.Close(connFD)
+		return
+	}
+
+	fnName := parseFunctionName(peekBuf[:n])
+
+	if fnName != "" {
+		// ── Sendfd / migrate path ─────────────────────────────────────────
+		payload := NewPayload(top1Ns, fnName)
+
+		if err := dispatchMigrate(connFD, fnName, payload, providerURL, notifier); err != nil {
+			log.Printf("[loop] dispatch FAILED fn=%s connFD=%d: %v\n", fnName, connFD, err)
+			// connFD was NOT closed by dispatchMigrate on error — close it here.
+			_ = syscall.Close(connFD)
+		}
+		// On success connFD is owned by the watchdog/worker (closed inside sendfd2WithState).
+		return
+	}
+
+	// ── Vanilla HTTP path: wrap fd as net.Conn and push to ChanListener ───
+	conn, wrapErr := wrapRawFD(connFD, peekBuf[:n])
+	if wrapErr != nil {
+		log.Printf("[httpmigrate] wrapRawFD: %v\n", wrapErr)
+		_ = syscall.Close(connFD)
+		return
+	}
+	if pushErr := chanLis.Push(conn); pushErr != nil {
+		_ = conn.Close()
+	}
+}
+
+// parseFunctionName extracts the function name from a peeked HTTP request line.
+// It returns the name (e.g. "timing-fn-a") if the path starts with /function/,
+// and an empty string for all other paths.
+func parseFunctionName(peeked []byte) string {
+	// Find the first line terminator.
+	lineEnd := bytes.IndexByte(peeked, '\n')
+	if lineEnd < 0 {
+		lineEnd = len(peeked)
+	}
+	line := bytes.TrimSpace(peeked[:lineEnd])
+
+	// "METHOD /path HTTP/1.x"
+	parts := bytes.SplitN(line, []byte(" "), 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	path := string(parts[1])
+
+	const prefix = "/function/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	name := strings.TrimPrefix(path, prefix)
+	if idx := strings.IndexAny(name, "/? "); idx != -1 {
+		name = name[:idx]
+	}
+	return name
+}
+
+// wrapRawFD converts a raw syscall fd into a net.Conn and prepends the already-
+// peeked bytes so that the HTTP server can parse the full request.
+func wrapRawFD(fd int, peeked []byte) (net.Conn, error) {
+	f := os.NewFile(uintptr(fd), "tcp-migrate-conn")
+	if f == nil {
+		return nil, fmt.Errorf("os.NewFile returned nil for fd=%d", fd)
+	}
+	inner, err := net.FileConn(f)
+	_ = f.Close() // FileConn dup'd the fd; we no longer need the os.File wrapper.
+	if err != nil {
+		return nil, fmt.Errorf("net.FileConn: %w", err)
+	}
+	return NewConnRW(inner, peeked), nil
+}
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/vanilla_timing.go =====
+//go:build linux
+
+// Package httpmigrate — vanilla_timing.go
+//
+// Non-intrusive top1 timestamp capture for the vanilla (standard HTTP proxy)
+// OpenFaaS path.
+//
+// Two pieces:
+//
+//  1. StartVanillaTimingObserver() — returns a ConnState hook for http.Server.
+//     For every new connection, spawns a goroutine that calls unix.Poll(POLLIN)
+//     without reading any data.  Stamps top1 = CLOCK_MONOTONIC_RAW the instant
+//     the kernel reports bytes available, then stores it in vanillaTop1Map.
+//
+//  2. VanillaTimingMiddleware() — http.Handler middleware.
+//     Reads top1 from vanillaTop1Map (LoadAndDelete) and injects it as the
+//     request header  "X-Top1-Rdtsc: <ns>".  The OpenFaaS reverse proxy and
+//     the watchdog http-mode proxy forward all headers transparently, so the
+//     header reaches the vanilla function server with no other change.
+//
+// The OpenFaaS workflow (accept → parse → proxy → scale → auth) is untouched.
+
+package httpmigrate
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"strconv"
+	"sync"
+	"syscall"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+// vanillaTop1Map: remoteAddr (string) → top1 (uint64 nanoseconds).
+// Written by observeVanillaConn, consumed by VanillaTimingMiddleware.
+var vanillaTop1Map sync.Map
+
+// vanillaInsert tracks insertion timestamps for stale-entry cleanup.
+var (
+	vanillaInsertMu    sync.Mutex
+	vanillaInsertTimes = make(map[string]time.Time)
+)
+
+// StartVanillaTimingObserver returns a ConnState callback to assign to
+// http.Server.ConnState.  Call once at gateway startup:
+//
+//	s.ConnState = httpmigrate.StartVanillaTimingObserver()
+func StartVanillaTimingObserver() func(net.Conn, http.ConnState) {
+	// Background goroutine: sweep stale entries every 30 s.
+	go func() {
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			vanillaInsertMu.Lock()
+			now := time.Now()
+			for addr, insertedAt := range vanillaInsertTimes {
+				if now.Sub(insertedAt) > 60*time.Second {
+					vanillaTop1Map.Delete(addr)
+					delete(vanillaInsertTimes, addr)
+					log.Printf("[vanilla-timing] swept stale entry for %s\n", addr)
+				}
+			}
+			vanillaInsertMu.Unlock()
+		}
+	}()
+
+	return func(conn net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			// Stamp top1 SYNCHRONOUSLY — no goroutine.
+			// StateNew fires before the handler goroutine calls the middleware,
+			// so the map entry is guaranteed to exist when the handler runs.
+			// Data has already arrived in the kernel buffer by the time StateNew
+			// fires (client connected + sent headers in one RTT), so accuracy
+			// is within a few microseconds.
+			top1 := getMonotonicNs()
+			storeVanillaTop1(conn.RemoteAddr().String(), top1)
+
+		case http.StateIdle:
+			// Stamp top1 SYNCHRONOUSLY — no goroutine.
+			//
+			// A goroutine+Poll approach here races against the handler goroutine:
+			//   1. If the goroutine stores AFTER the handler ran → top1 = 0
+			//   2. The stale entry is then consumed by the NEXT request →
+			//      wrong delta_ns (e.g. 195 ms instead of 35 ms).
+			//
+			// Stamping synchronously in StateIdle means top1 is captured
+			// just as the previous response finishes sending (slightly before
+			// the next request bytes arrive). The systematic offset is small
+			// (≈ client RTT ≈ 1-2 ms) vs measured latencies of 25-200 ms,
+			// and it is CONSISTENT across all keep-alive requests, making
+			// the vanilla vs prototype comparison valid.
+			top1 := getMonotonicNs()
+			storeVanillaTop1(conn.RemoteAddr().String(), top1)
+		}
+	}
+}
+
+// observeVanillaConn polls the connection fd for POLLIN readiness using
+// golang.org/x/sys/unix.Poll (not syscall.Poll, which is not available
+// on all Linux architectures in the standard library).
+// Stamps top1 and stores it in vanillaTop1Map when data arrives.
+func observeVanillaConn(conn net.Conn) {
+	remoteAddr := conn.RemoteAddr().String()
+
+	fd, ok := getRawFD(conn)
+	if !ok {
+		// Cannot extract fd: use current time as fallback.
+		top1 := getMonotonicNs()
+		storeVanillaTop1(remoteAddr, top1)
+		return
+	}
+
+	// unix.Poll(fd, POLLIN, 5000ms) — waits for kernel to report data ready.
+	// Does NOT call read() — zero bytes consumed.
+	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+	n, err := unix.Poll(fds, 5000)
+	if err != nil || n <= 0 {
+		top1 := getMonotonicNs()
+		storeVanillaTop1(remoteAddr, top1)
+		return
+	}
+
+	// POLLIN fired: data is in kernel buffer. Stamp top1 immediately.
+	top1 := getMonotonicNs()
+	storeVanillaTop1(remoteAddr, top1)
+	log.Printf("[vanilla-timing] top1 stamped addr=%s top1_ns=%d\n", remoteAddr, top1)
+}
+
+// storeVanillaTop1 writes to both vanillaTop1Map and vanillaInsertTimes.
+func storeVanillaTop1(remoteAddr string, top1 uint64) {
+	vanillaTop1Map.Store(remoteAddr, top1)
+	vanillaInsertMu.Lock()
+	vanillaInsertTimes[remoteAddr] = time.Now()
+	vanillaInsertMu.Unlock()
+}
+
+// getRawFD extracts the underlying OS fd from a net.Conn.
+// Works for *net.TCPConn and any type implementing syscall.Conn.
+func getRawFD(conn net.Conn) (uintptr, bool) {
+	type syscallConnIface interface {
+		SyscallConn() (syscall.RawConn, error)
+	}
+	sc, ok := conn.(syscallConnIface)
+	if !ok {
+		return 0, false
+	}
+	rawConn, err := sc.SyscallConn()
+	if err != nil {
+		return 0, false
+	}
+	var fd uintptr
+	if ctrlErr := rawConn.Control(func(f uintptr) { fd = f }); ctrlErr != nil {
+		return 0, false
+	}
+	return fd, fd != 0
+}
+
+// VanillaTimingMiddleware wraps an http.Handler.
+// For every request it injects the pre-stamped top1 as "X-Top1-Rdtsc" (ns).
+// The entry is consumed (LoadAndDelete) so the map never grows unboundedly.
+//
+// Usage in main.go (vanilla path only):
+//
+//	s.Handler = httpmigrate.VanillaTimingMiddleware(r)
+func VanillaTimingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if val, loaded := vanillaTop1Map.LoadAndDelete(r.RemoteAddr); loaded {
+			top1 := val.(uint64)
+			r.Header.Set("X-Top1-Rdtsc", strconv.FormatUint(top1, 10))
+			// Also clean up insertion-time tracking.
+			vanillaInsertMu.Lock()
+			delete(vanillaInsertTimes, r.RemoteAddr)
+			vanillaInsertMu.Unlock()
+			log.Printf("[vanilla-timing] injected X-Top1-Rdtsc=%d addr=%s path=%s\n",
+				top1, r.RemoteAddr, r.URL.Path)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// formatTop1 is a small helper used in tests and logging.
+func formatTop1(ns uint64) string {
+	return fmt.Sprintf("%d", ns)
+}
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/relay_server.go =====
+//go:build linux
+
+package httpmigrate
+
+import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+)
+
+// relayState tracks per-container relay sockets that the gateway has opened.
+// Key = container IP address.
+var (
+	relayMu    sync.Mutex
+	relayKnown = map[string]bool{}
+)
+
+// EnsureRelaySocket creates the per-container relay socket at
+// <SocketDir>/<ip>-relay.sock if it does not already exist, then spawns
+// a goroutine to service it.  The providerURL and notifier are forwarded so
+// the relay goroutine can re-dispatch returned FDs.
+//
+// This function is idempotent: calling it for the same IP more than once is safe.
+func EnsureRelaySocket(ip, providerURL string, notifier CompletionNotifier) {
+	relayMu.Lock()
+	if relayKnown[ip] {
+		relayMu.Unlock()
+		return
+	}
+	relayKnown[ip] = true
+	relayMu.Unlock()
+
+	sockPath := filepath.Join(SocketDir, ip+"-relay.sock")
+	_ = os.Remove(sockPath)
+
+	listenFD, err := bindUnixSocket(sockPath, 512)
+	if err != nil {
+		log.Printf("[relay] failed to create relay socket %s: %v\n", sockPath, err)
+		relayMu.Lock()
+		delete(relayKnown, ip)
+		relayMu.Unlock()
+		return
+	}
+	_ = os.Chmod(sockPath, 0o777)
+
+	log.Printf("[relay] relay socket ready: %s\n", sockPath)
+	go relayListenLoop(listenFD, providerURL, notifier)
+}
+
+// relayListenLoop services a relay socket: it accepts connections from function
+// workers that detected a wrong-owner keepalive request and are returning the
+// FD with a payload that already has top1_rdtsc/cntfrq and target_function set.
+func relayListenLoop(listenFD int, providerURL string, notifier CompletionNotifier) {
+	defer syscall.Close(listenFD)
+
+	for {
+		connFD, _, err := syscall.Accept(listenFD)
+		if err != nil {
+			if err == syscall.EINTR {
+				continue
+			}
+			log.Printf("[relay] accept error: %v\n", err)
+			return
+		}
+
+		go func(cFD int) {
+			defer syscall.Close(cFD)
+
+			// Allocate dedicated buffer per connection to prevent data races
+			buf := make([]byte, KAPayloadSize)
+			clientFD, relayErr := recvfd1WithState(cFD, buf)
+			if relayErr != nil {
+				log.Printf("[relay] recvfd1 error: %v\n", relayErr)
+				return
+			}
+
+			payload := UnmarshalPayload(buf)
+			if payload == nil || payload.Magic != KAMagic {
+				log.Printf("[relay] bad magic or short payload\n")
+				_ = syscall.Close(clientFD)
+				return
+			}
+
+			targetFn := payload.Target()
+			if targetFn == "" {
+				log.Printf("[relay] empty target function in relay payload\n")
+				_ = syscall.Close(clientFD)
+				return
+			}
+
+			if dispatchErr := dispatchMigrate(clientFD, targetFn, payload, providerURL, notifier); dispatchErr != nil {
+				log.Printf("[relay] dispatch failed for fn=%s: %v\n", targetFn, dispatchErr)
+				_ = syscall.Close(clientFD)
+			}
+		}(connFD)
+	}
+}
+
+// dispatchMigrate resolves the container IP for targetFn, creates a fresh OS
+// pipe for Prometheus notification, and sends [clientFD, pipeWriteFD] + payload
+// to the container's watchdog socket.  Exported so that loop.go can call it too.
+func dispatchMigrate(clientFD int, targetFn string, payload *KAPayload, providerURL string, notifier CompletionNotifier) error {
+	// 1. Resolve container IP.
+	ip, resolveErr := ResolveContainerIP(targetFn, providerURL)
+	if resolveErr != nil {
+		log.Printf("[dispatch] ERROR step1 resolve IP fn=%s: %v\n", targetFn, resolveErr)
+		return fmt.Errorf("resolve IP for %s: %w", targetFn, resolveErr)
+	}
+
+	// 2. Ensure this container has a relay socket registered.
+	EnsureRelaySocket(ip, providerURL, notifier)
+
+	// 3. Create a pipe for Prometheus completion notification.
+	var pipeEnds [2]int
+	if err := syscall.Pipe(pipeEnds[:]); err != nil {
+		log.Printf("[dispatch] ERROR step3 pipe: %v\n", err)
+		return fmt.Errorf("os.Pipe: %w", err)
+	}
+	pipeReadFD := pipeEnds[0]
+	pipeWriteFD := pipeEnds[1]
+
+	// 4. Start goroutine to read completion notification from pipeReadFD.
+	start := time.Now()
+	if notifier != nil {
+		go readCompletionPipe(pipeReadFD, targetFn, start, notifier)
+	} else {
+		go func() { syscall.Close(pipeReadFD) }()
+	}
+
+	// 5. Build/update the payload (keep top1 and cntfrq from original payload).
+	payload.SetTarget(targetFn)
+
+	// 6. Connect to watchdog's UDS and send [clientFD, pipeWriteFD] + payload.
+	sockPath := filepath.Join(SocketDir, ip+".sock")
+	watchdogFD, err := connectUnixSocket(sockPath)
+	if err != nil {
+		log.Printf("[dispatch] ERROR step6 connect watchdog %s: %v\n", sockPath, err)
+		_ = syscall.Close(pipeReadFD)
+		_ = syscall.Close(pipeWriteFD)
+		return fmt.Errorf("connect watchdog %s: %w", sockPath, err)
+	}
+	defer syscall.Close(watchdogFD)
+
+	if err := sendfd2WithState(watchdogFD, clientFD, pipeWriteFD, payload.Marshal()); err != nil {
+		log.Printf("[dispatch] ERROR step7 sendfd2: %v\n", err)
+		_ = syscall.Close(pipeReadFD)
+		return fmt.Errorf("sendfd2 to watchdog: %w", err)
+	}
+	// clientFD and pipeWriteFD are now owned by the watchdog/function worker.
+
+	return nil
+}
+
+// readCompletionPipe reads an 8-byte little-endian uint64 timestamp (nanoseconds)
+// written by the function worker after it has sent the HTTP response.
+// It then calls notifier with the elapsed duration for Prometheus.
+func readCompletionPipe(pipeReadFD int, fnName string, start time.Time, notifier CompletionNotifier) {
+	defer syscall.Close(pipeReadFD)
+
+	var tsBuf [8]byte
+	n, err := readFull(pipeReadFD, tsBuf[:])
+	if err != nil || n < 8 {
+		return
+	}
+	_ = binary.LittleEndian.Uint64(tsBuf[:]) // function-side timestamp (unused)
+
+	elapsed := time.Since(start)
+	if notifier != nil {
+		notifier(fnName, elapsed)
+	}
+}
+
+// readFull reads exactly len(buf) bytes from an fd.
+func readFull(fd int, buf []byte) (int, error) {
+	total := 0
+	for total < len(buf) {
+		n, err := syscall.Read(fd, buf[total:])
+		if n > 0 {
+			total += n
+		}
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+var (
+	ipCacheMu sync.RWMutex
+	ipCache   = make(map[string]string)
+)
+
+// ResolveContainerIP queries the faasd provider for the CNI IP of a running
+// function container.  Returns the IP string (e.g. "10.62.0.5").
+func ResolveContainerIP(fnName, providerURL string) (string, error) {
+	ipCacheMu.RLock()
+	ip, ok := ipCache[fnName]
+	ipCacheMu.RUnlock()
+	if ok && ip != "" {
+		return ip, nil
+	}
+
+	// Strip any trailing slash from providerURL to avoid double-slash URLs
+	// (e.g. "http://faasd-provider:8081/" + "/system/..." = "//system/...").
+	baseURL := strings.TrimRight(providerURL, "/")
+	url := baseURL + "/system/function-ip/" + fnName
+
+	log.Printf("[resolve-ip] GET %s\n", url)
+	resp, err := http.Get(url) //nolint:gosec — internal service call
+	if err != nil {
+		log.Printf("[resolve-ip] ERROR http.Get %s: %v\n", url, err)
+		return "", fmt.Errorf("GET %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	log.Printf("[resolve-ip] response status=%d url=%s\n", resp.StatusCode, url)
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[resolve-ip] ERROR non-200 status=%d body=%s\n", resp.StatusCode, string(body))
+		return "", fmt.Errorf("GET %s: status %d: %s", url, resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		IP string `json:"ip"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Printf("[resolve-ip] ERROR decode response: %v\n", err)
+		return "", fmt.Errorf("decode IP response: %w", err)
+	}
+	if result.IP == "" {
+		log.Printf("[resolve-ip] ERROR empty IP in response for fn=%s\n", fnName)
+		return "", fmt.Errorf("empty IP in response from provider for: %s", fnName)
+	}
+
+	ipCacheMu.Lock()
+	ipCache[fnName] = result.IP
+	ipCacheMu.Unlock()
+
+	log.Printf("[resolve-ip] OK fn=%s -> ip=%s\n", fnName, result.IP)
+	return result.IP, nil
+}
+
+// bindUnixSocket creates a SOCK_SEQPACKET Unix domain socket, binds it to
+// path, and calls listen(2).  Returns the listening fd.
+func bindUnixSocket(path string, backlog int) (int, error) {
+	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_SEQPACKET, 0)
+	if err != nil {
+		return -1, fmt.Errorf("socket: %w", err)
+	}
+	_ = os.Remove(path)
+	addr := &syscall.SockaddrUnix{Name: path}
+	if err := syscall.Bind(fd, addr); err != nil {
+		_ = syscall.Close(fd)
+		return -1, fmt.Errorf("bind %s: %w", path, err)
+	}
+	if err := syscall.Listen(fd, backlog); err != nil {
+		_ = syscall.Close(fd)
+		return -1, fmt.Errorf("listen %s: %w", path, err)
+	}
+	return fd, nil
+}
+
+// connectUnixSocket connects a SOCK_SEQPACKET Unix domain socket to path.
+func connectUnixSocket(path string) (int, error) {
+	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_SEQPACKET, 0)
+	if err != nil {
+		return -1, fmt.Errorf("socket: %w", err)
+	}
+	addr := &syscall.SockaddrUnix{Name: path}
+	if err := syscall.Connect(fd, addr); err != nil {
+		_ = syscall.Close(fd)
+		return -1, fmt.Errorf("connect %s: %w", path, err)
+	}
+	return fd, nil
+}
+
+// CompletionNotifier is a callback invoked when a function completes a request.
+// Used to notify Prometheus via the gateway's standard HTTPNotifier chain.
+type CompletionNotifier func(functionName string, duration time.Duration)
+
+
+
+===== FILE: micro/micro-bench3-keepalive-https-integration/faas/gateway/httpmigrate/payload.go =====
+// Package httpmigrate implements the SCM_RIGHTS keepalive HTTP migration path
+// for the OpenFaaS gateway integration benchmark.
+//
+// Protocol:
+//   - Gateway stamps top1_rdtsc (nanoseconds, CLOCK_MONOTONIC_RAW) just before
+//     MSG_PEEK on the accepted TCP connection.
+//   - Gateway sends [clientFD, pipeWriteFD] via SCM_RIGHTS + httpmigrate_ka_payload_t
+//     as regular iov data, in a single sendmsg() call, to the watchdog's UDS.
+//   - Watchdog relays the same two FDs + payload to the function's UDS.
+//   - Function worker reads top1 from payload, stamps top2 after consuming the
+//     full HTTP body, computes delta_ns, writes the JSON response, then writes
+//     8 bytes into pipeWriteFD for the gateway's Prometheus notifier.
+//   - Relay: function worker peeks the next request, detects a wrong owner,
+//     stamps a fresh top1, sets target_function, and sends [clientFD] + payload
+//     to <own-ip>-relay.sock.  The gateway relay creates a new pipe and
+//     re-dispatches to the new target container.
+//
+// Timing convention (compatible with micro-bench3-keepalive-http CSV format):
+//   - top1_rdtsc and top2_rdtsc are nanoseconds (CLOCK_MONOTONIC_RAW / UnixNano).
+//   - cntfrq is always 1_000_000_000 so that delta_ns = top2 − top1.
+//   - This avoids a CGo dependency in the gateway (CGO_ENABLED=0 compatible).
+
+package httpmigrate
+
+import (
+	"encoding/binary"
+)
+
+const (
+	// KAMagic is the magic number that identifies a valid httpmigrate keepalive payload.
+	KAMagic uint32 = 0x484D4B41 // 'HMKA'
+
+	// KAVersion is the struct version.
+	KAVersion uint32 = 2
+
+	// KACntfrq is the fixed "frequency" used when top1/top2 are in nanoseconds.
+	KACntfrq uint64 = 1_000_000_000
+
+	// KAPayloadSize is the exact wire size of KAPayload.
+	KAPayloadSize = 160
+
+	// targetFunctionLen is the size of the target_function field.
+	targetFunctionLen = 128
+
+	// SocketDir is the default directory for all migration UDS sockets.
+	SocketDir = "/run/tlsmigrate"
+)
+
+// KAPayload is the Go representation of httpmigrate_ka_payload_t (C struct).
+//
+// Layout (little-endian, matches the C struct exactly on amd64/arm64):
+//
+//	offset  0 : uint32  magic
+//	offset  4 : uint32  version
+//	offset  8 : uint64  top1_rdtsc   (nanoseconds in this integration)
+//	offset 16 : uint64  cntfrq       (always 1_000_000_000)
+//	offset 24 : uint8   top1_set
+//	offset 25 : [7]byte _pad
+//	offset 32 : [128]byte target_function (null-terminated C string)
+//	total  160 bytes
+type KAPayload struct {
+	Magic          uint32
+	Version        uint32
+	Top1Rdtsc      uint64
+	Cntfrq         uint64
+	Top1Set        uint8
+	Pad            [7]uint8
+	TargetFunction [targetFunctionLen]byte
+}
+
+// Marshal serialises p into a 160-byte little-endian wire buffer.
+func (p *KAPayload) Marshal() []byte {
+	buf := make([]byte, KAPayloadSize)
+	binary.LittleEndian.PutUint32(buf[0:4], p.Magic)
+	binary.LittleEndian.PutUint32(buf[4:8], p.Version)
+	binary.LittleEndian.PutUint64(buf[8:16], p.Top1Rdtsc)
+	binary.LittleEndian.PutUint64(buf[16:24], p.Cntfrq)
+	buf[24] = p.Top1Set
+	copy(buf[25:32], p.Pad[:])
+	copy(buf[32:160], p.TargetFunction[:])
+	return buf
+}
+
+// UnmarshalPayload deserialises a 160-byte little-endian buffer into a KAPayload.
+func UnmarshalPayload(data []byte) *KAPayload {
+	if len(data) < KAPayloadSize {
+		return nil
+	}
+	p := &KAPayload{}
+	p.Magic = binary.LittleEndian.Uint32(data[0:4])
+	p.Version = binary.LittleEndian.Uint32(data[4:8])
+	p.Top1Rdtsc = binary.LittleEndian.Uint64(data[8:16])
+	p.Cntfrq = binary.LittleEndian.Uint64(data[16:24])
+	p.Top1Set = data[24]
+	copy(p.Pad[:], data[25:32])
+	copy(p.TargetFunction[:], data[32:160])
+	return p
+}
+
+// SetTarget writes a null-terminated function name into TargetFunction.
+func (p *KAPayload) SetTarget(name string) {
+	for i := range p.TargetFunction {
+		p.TargetFunction[i] = 0
+	}
+	n := copy(p.TargetFunction[:], name)
+	if n < targetFunctionLen {
+		p.TargetFunction[n] = 0
+	}
+}
+
+// Target returns the null-terminated function name as a Go string.
+func (p *KAPayload) Target() string {
+	end := 0
+	for end < targetFunctionLen && p.TargetFunction[end] != 0 {
+		end++
+	}
+	return string(p.TargetFunction[:end])
+}
+
+// NewPayload builds a fresh KAPayload stamped with the given nanosecond top1.
+func NewPayload(top1Ns uint64, targetFn string) *KAPayload {
+	p := &KAPayload{
+		Magic:     KAMagic,
+		Version:   KAVersion,
+		Top1Rdtsc: top1Ns,
+		Cntfrq:    KACntfrq,
+		Top1Set:   1,
+	}
+	p.SetTarget(targetFn)
+	return p
+}
+
+
+

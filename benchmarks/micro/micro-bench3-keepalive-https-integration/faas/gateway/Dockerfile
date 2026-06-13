@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ── Stage 1: Build wolfSSL from source ───────────────────────────────────────
 # We build wolfSSL with the specific flags required by libtlspeek:
 #   --enable-tls13            : TLS 1.3 support
@@ -5,8 +6,15 @@
 #   --enable-opensslextra     : OpenSSL-compatible API (wolfSSL_GetClientWriteKey etc.)
 #   --enable-session-export   : wolfSSL_tls_export / wolfSSL_tls_import
 # Cross-compiled (built for ARM64 target platform).
+#
+# PLATFORM NOTE: build stages use $BUILDPLATFORM (your x86_64 machine) so the
+# cross-compilation toolchain runs natively.  The runtime stage is TARGETPLATFORM
+# (linux/arm64) so the ARM64 gateway binary can find its dynamic linker.
+# Build command: docker buildx build --platform linux/arm64 ...
 
-FROM golang:1.24-bookworm AS wolfssl-build
+# $BUILDPLATFORM is automatically set by Docker Buildx to the builder's native arch.
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM golang:1.24-bookworm AS wolfssl-build
 
 RUN apt-get update && apt-get install -y \
     build-essential autoconf automake libtool \
@@ -57,7 +65,7 @@ RUN mkdir -p build && cd build && \
     ldconfig
 
 # ── Stage 3: Build gateway with CGo ──────────────────────────────────────────
-FROM golang:1.24-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.24-bookworm AS build
 
 ENV GO111MODULE=on
 ENV CGO_ENABLED=1

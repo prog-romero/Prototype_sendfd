@@ -554,13 +554,23 @@ static int session_advance(worker_session_t *s)
 
             s->req_no++;
             s->first_request = false;
-            s->len = 0;
+            
+            size_t req_sz = s->hdr_sz + s->body_target;
+            if (s->len > req_sz) {
+                size_t left = s->len - req_sz;
+                memmove(s->buf, s->buf + req_sz, left);
+                s->len = left;
+                s->state = WS_READ_HEADERS;
+            } else {
+                s->len = 0;
+                s->state = WS_PEEK_OWNER;
+                if (epoll_mod_fd(s->fd, EPOLLIN | EPOLLET) != 0) return -1;
+            }
+            
             s->hdr_sz = 0;
             s->body_in = 0;
             s->body_target = 0;
-            s->state = WS_PEEK_OWNER;
 
-            if (epoll_mod_fd(s->fd, EPOLLIN | EPOLLET) != 0) return -1;
             continue; // Immediately check for pipelined requests
         }
         }

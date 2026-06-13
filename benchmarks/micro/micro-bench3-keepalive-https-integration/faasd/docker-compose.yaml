@@ -38,6 +38,20 @@ services:
     ports:
        - "127.0.0.1:9090:9090"
 
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    volumes:
+      - type: bind
+        source: ./grafana
+        target: /var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+
   gateway:
     image: docker.io/romerosdd/openfaas-gateway-ka:latest
     environment:

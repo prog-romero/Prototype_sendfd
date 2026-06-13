@@ -99,13 +99,7 @@ wolfssl_vanilla_conn_t *wolfssl_vanilla_handshake(wolfssl_vanilla_ctx_t *ctx,
 int wolfssl_vanilla_read(wolfssl_vanilla_conn_t *conn, void *buf, int len)
 {
     if (!conn || !conn->ssl || !buf || len <= 0) return -1;
-    for (;;) {
-        int n = wolfSSL_read(conn->ssl, buf, len);
-        if (n > 0) return n;
-        int e = wolfSSL_get_error(conn->ssl, n);
-        if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) continue;
-        return n; /* 0 = clean close, <0 = error */
-    }
+    return wolfSSL_read(conn->ssl, buf, len);
 }
 
 int wolfssl_vanilla_write(wolfssl_vanilla_conn_t *conn, const void *buf, int len)
