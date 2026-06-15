@@ -5,16 +5,16 @@
 // ── ARCHITECTURE (epoll-driven, zero per-connection goroutines) ──────────────
 //
 // RunLoopHTTPS (prototype mode, HTTPMIGRATE_ENABLE=1 + HTTPS_ENABLE=1):
-//   - Single goroutine runs ONE shared epoll loop.
+//   - numEpollWorkers (4) goroutines, each with its own epoll fd and listen fd.
+//   - SO_REUSEPORT on all listen fds → kernel distributes connections evenly.
 //   - listenFD    → accept() → wolfssl_accept_start() → add clientFD to epoll
 //   - clientFD    → wolfssl_handshake_step() per event until done
 //                → tlsgw_peek_and_export_nb():
 //                    rc > 0  (/function/<name>): goroutine dispatches sendfd
 //                    rc == -1 (other path): push WolfSSLGtwConn to ChanListener
-//   - relayFD     → accept relay FDs from wrong-owner workers, re-dispatch
 //
 // RunVanillaHTTPS (vanilla mode, HTTPMIGRATE_ENABLE=0 + HTTPS_ENABLE=1):
-//   - Same shared epoll loop.
+//   - Same 4-goroutine SO_REUSEPORT architecture.
 //   - After handshake, conn is pushed to ChanListener immediately (no peek).
 //   - wolfssl_accept_start_plain() is used: NO tlspeek keylog callback,
 //     NO libtlspeek involvement at any point in the connection lifetime.
@@ -22,7 +22,7 @@
 // KEY PROPERTIES:
 //   - Zero goroutines created per connection → no goroutine leak.
 //   - EpollWait(-1) blocks when idle → 0 % CPU with no clients connected.
-//   - All fd types (listen, per-client, relay UDS) share ONE epoll fd.
+//   - Per-worker epoll: each worker owns its own fd set → no lock contention.
 //   - Goroutines are spawned only for sendfd dispatch (off the critical path).
 //   - events buffer is 256 entries so we batch more events per EpollWait call,
 //     reducing syscall overhead at high connection rates.
@@ -42,6 +42,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -50,9 +51,10 @@ import (
 // ── RunVanillaHTTPS ──────────────────────────────────────────────────────────
 
 // RunVanillaHTTPS starts an HTTPS listener on tlsPort using wolfSSL.
-// Connections are accepted via a single shared epoll loop (no goroutine per
-// connection).  After the TLS handshake, each connection is pushed to a
-// ChanListener so the standard http.Server can serve it.
+// numEpollWorkers goroutines each bind the same port via SO_REUSEPORT; the
+// kernel load-balances connections across them (no single-goroutine bottleneck).
+// After the TLS handshake, each connection is pushed to a ChanListener so the
+// standard http.Server can serve it.
 //
 // In this mode libtlspeek is NEVER used:
 //   - wolfssl_accept_start_plain() accepts without installing the keylog callback.
@@ -69,12 +71,6 @@ func RunVanillaHTTPS(
 		return fmt.Errorf("[vanilla-https] wolfSSL init: %w", err)
 	}
 	defer gtwCtx.Free()
-
-	listenFD, err := rawTCPListen(tlsPort)
-	if err != nil {
-		return fmt.Errorf("[vanilla-https] listen :%d: %w", tlsPort, err)
-	}
-	defer syscall.Close(listenFD)
 
 	addr := &net.TCPAddr{Port: tlsPort}
 	// Buffer of 512: enough to absorb a burst of 512 connections being pushed
@@ -105,16 +101,43 @@ func RunVanillaHTTPS(
 		}
 	}()
 
-	log.Printf("[vanilla-https] RunVanillaHTTPS listening on :%d (SUM_PROD=%v)\n",
-		tlsPort, skipTop1)
+	// Open numEpollWorkers listen fds on the same port (SO_REUSEPORT).
+	listenFDs := make([]int, numEpollWorkers)
+	for i := range listenFDs {
+		lfd, lerr := rawTCPListen(tlsPort)
+		if lerr != nil {
+			for j := 0; j < i; j++ {
+				_ = syscall.Close(listenFDs[j])
+			}
+			return fmt.Errorf("[vanilla-https] listen :%d (worker %d): %w", tlsPort, i, lerr)
+		}
+		listenFDs[i] = lfd
+	}
 
-	return runEpollLoop(gtwCtx, listenFD, -1, "", chanLis, "", nil, skipTop1, true)
+	log.Printf("[vanilla-https] RunVanillaHTTPS listening on :%d (%d workers, SUM_PROD=%v)\n",
+		tlsPort, numEpollWorkers, skipTop1)
+
+	var wg sync.WaitGroup
+	for _, lfd := range listenFDs {
+		wg.Add(1)
+		go func(lfd int) {
+			defer wg.Done()
+			defer syscall.Close(lfd)
+			if err := runEpollLoop(gtwCtx, lfd, -1, "", chanLis, "", nil, skipTop1, true); err != nil {
+				log.Printf("[vanilla-https] epoll loop error: %v\n", err)
+			}
+		}(lfd)
+	}
+	wg.Wait()
+	return nil
 }
 
 // ── RunLoopHTTPS ─────────────────────────────────────────────────────────────
 
 // RunLoopHTTPS is the HTTPS prototype mode listener.
-// Workflow per connection (all driven by a single shared goroutine):
+// numEpollWorkers goroutines each bind the same port via SO_REUSEPORT; the
+// kernel load-balances connections across them (no single-goroutine bottleneck).
+// Workflow per connection:
 //  1. accept4() → non-blocking fd
 //  2. wolfssl_accept_start() → epoll EPOLLIN
 //  3. wolfssl_handshake_step() per epoll event until complete
@@ -139,12 +162,6 @@ func RunLoopHTTPS(
 	}
 	defer gtwCtx.Free()
 
-	listenFD, err := rawTCPListen(tlsPort)
-	if err != nil {
-		return fmt.Errorf("[httpmigrate-https] listen :%d: %w", tlsPort, err)
-	}
-	defer syscall.Close(listenFD)
-
 	addr := &net.TCPAddr{Port: tlsPort}
 	chanLis := NewChanListener(addr, 512)
 
@@ -164,9 +181,35 @@ func RunLoopHTTPS(
 		}
 	}()
 
-	log.Printf("[httpmigrate-https] RunLoopHTTPS listening on :%d\n", tlsPort)
+	// Open numEpollWorkers listen fds on the same port (SO_REUSEPORT).
+	listenFDs := make([]int, numEpollWorkers)
+	for i := range listenFDs {
+		lfd, lerr := rawTCPListen(tlsPort)
+		if lerr != nil {
+			for j := 0; j < i; j++ {
+				_ = syscall.Close(listenFDs[j])
+			}
+			return fmt.Errorf("[httpmigrate-https] listen :%d (worker %d): %w", tlsPort, i, lerr)
+		}
+		listenFDs[i] = lfd
+	}
 
-	return runEpollLoop(gtwCtx, listenFD, -1, "", chanLis, providerURL, notifier, skipTop1, false)
+	log.Printf("[httpmigrate-https] RunLoopHTTPS listening on :%d (%d workers)\n",
+		tlsPort, numEpollWorkers)
+
+	var wg sync.WaitGroup
+	for _, lfd := range listenFDs {
+		wg.Add(1)
+		go func(lfd int) {
+			defer wg.Done()
+			defer syscall.Close(lfd)
+			if err := runEpollLoop(gtwCtx, lfd, -1, "", chanLis, providerURL, notifier, skipTop1, false); err != nil {
+				log.Printf("[httpmigrate-https] epoll loop error: %v\n", err)
+			}
+		}(lfd)
+	}
+	wg.Wait()
+	return nil
 }
 
 // ── runEpollLoop — single shared epoll-driven event loop ─────────────────────
@@ -658,9 +701,19 @@ func EnsureRelaySocketHTTPS(ip string, serialSize int, providerURL string, notif
 
 // ── rawTCPListen ─────────────────────────────────────────────────────────────
 
+// numEpollWorkers is the number of independent goroutines (each with its own
+// epoll fd and listen fd) that accept and process TLS connections.
+// SO_REUSEPORT lets all workers bind the same port; the kernel distributes
+// new connections across the workers so no single goroutine is the bottleneck.
+const numEpollWorkers = 4
+
 // rawTCPListen creates a non-blocking TCP listen socket on port.
 // Tries IPv6 dual-stack first (IPV6_V6ONLY=0 accepts both IPv4 and IPv6),
 // falls back to IPv4-only if IPv6 is unavailable.
+//
+// SO_REUSEPORT is set so that multiple goroutines can each bind the same port.
+// The kernel load-balances incoming connections across all bound sockets,
+// removing the single-goroutine accept bottleneck at high connection rates.
 //
 // CRITICAL: the listen fd MUST be non-blocking so that the accept4() drain
 // loop inside wolfssl_accept_start / wolfssl_accept_start_plain returns EAGAIN
@@ -677,6 +730,7 @@ func rawTCPListen(port int) (int, error) {
 			return -1, fmt.Errorf("socket: %w", err)
 		}
 		_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEPORT, 1)
 		var sa4 syscall.SockaddrInet4
 		sa4.Port = port
 		if err := syscall.Bind(fd, &sa4); err != nil {
@@ -685,6 +739,7 @@ func rawTCPListen(port int) (int, error) {
 		}
 	} else {
 		_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		_ = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEPORT, 1)
 		// IPV6_V6ONLY=0: the IPv6 socket also accepts IPv4-mapped addresses,
 		// giving a single socket that handles both protocol families.
 		_ = syscall.SetsockoptInt(fd, syscall.IPPROTO_IPV6, syscall.IPV6_V6ONLY, 0)

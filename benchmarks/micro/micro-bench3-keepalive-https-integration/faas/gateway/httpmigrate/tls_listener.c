@@ -74,8 +74,10 @@ struct wolfssl_gtw_conn {
      * We drain wolfSSL's internal buffer into pending_buf here for replay:
      *   /function/ path      → stored in serial->http_request for the worker.
      *   non-function path    → served by wolfssl_gtw_conn_read() (ChanListener).
-     * In vanilla mode pending_buf is also used for the same ChanListener replay. */
-    char                      pending_buf[4096];
+     * In vanilla mode pending_buf is also used for the same ChanListener replay.
+     * Size matches TLSPEEK_MAX_REQUEST_SZ so pipelined bodies are never truncated
+     * before being copied into serial->http_request. */
+    char                      pending_buf[8192];
     int                       pending_len;
     int                       pending_off;
 };
@@ -394,7 +396,10 @@ int tlsgw_peek_and_export_nb(
      */
     const uint8_t *plaintext;
     int            plaintext_len;
-    uint8_t        peek_buf[4096];
+    /* 256 bytes is enough to parse the HTTP request line (e.g.
+     * "POST /function/timing-fn-ka-worker HTTP/1.1\r\n" ≈ 50 bytes).
+     * tls_read_peek uses MSG_PEEK — data stays in the socket for the worker. */
+    uint8_t        peek_buf[256];
     int            from_pending = 0;   /* 1 = data from wolfSSL internal buffer */
 
     if (conn->pending_len > conn->pending_off) {
