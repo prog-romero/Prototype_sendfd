@@ -532,6 +532,7 @@ func runEpollLoop(
 					}
 
 				default: // rc <= -2: fatal error — conn already freed inside C
+					log.Printf("[epoll-https] peek/export FAILED fd=%d rc=%d — dropping connection\n", fd, int(rc))
 					_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
 					delete(pending, fd)
 					// Do NOT call wolfssl_conn_free — conn was freed inside C.

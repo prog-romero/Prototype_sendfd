@@ -135,7 +135,11 @@ static void set_cipher(tlspeek_serial_t *s, const char *n)
     if (!s) return;
     if (!n) { s->cipher_suite=TLSPEEK_AES_256_GCM; return; }
     if (strstr(n,"CHACHA20")) s->cipher_suite=TLSPEEK_CHACHA20_POLY;
-    else if (strstr(n,"AES-128")) s->cipher_suite=TLSPEEK_AES_128_GCM;
+    /* wolfSSL reports "TLS13-AES128-GCM-SHA256" (no hyphen before 128). Match
+     * both spellings so an AES-128 session is never mis-tagged as AES-256, which
+     * would make tls_read_peek use a 32-byte key on a 16-byte session
+     * (AES_GCM_AUTH_E). */
+    else if (strstr(n,"AES128") || strstr(n,"AES-128")) s->cipher_suite=TLSPEEK_AES_128_GCM;
     else s->cipher_suite=TLSPEEK_AES_256_GCM;
 }
 

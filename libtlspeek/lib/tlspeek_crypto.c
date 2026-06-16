@@ -53,7 +53,7 @@ void tls13_compute_nonce(
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 int aead_aes_gcm_decrypt(
-    const uint8_t *key,
+    const uint8_t *key, size_t key_len,
     const uint8_t *nonce,
     const uint8_t *aad,        size_t aad_len,
     const uint8_t *ciphertext, size_t ct_len,
@@ -63,8 +63,11 @@ int aead_aes_gcm_decrypt(
     Aes aes;
     int ret;
 
-    /* wc_AesGcmSetKey initialises the AES context with the key */
-    ret = wc_AesGcmSetKey(&aes, key, 32 /* AES-256 */);
+    /* wc_AesGcmSetKey initialises the AES context with the key.
+     * key_len must match the negotiated cipher: 16 for AES-128-GCM,
+     * 32 for AES-256-GCM.  Passing 32 bytes when only 16 are real
+     * (the rest zero) would use a different key schedule and fail auth. */
+    ret = wc_AesGcmSetKey(&aes, key, (word32)key_len);
     if (ret != 0) {
         fprintf(stderr, "[crypto] wc_AesGcmSetKey failed: %d\n", ret);
         return -1;

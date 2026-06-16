@@ -29,7 +29,8 @@ _LATENCY_STATS_RE = re.compile(
     r"Latency\s+"
     r"(?P<avg>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<avg_u>us|ms|s)\s+"
     r"(?P<stdev>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<stdev_u>us|ms|s)\s+"
-    r"(?P<max>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<max_u>us|ms|s)"
+    r"(?P<max>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<max_u>us|ms|s)",
+    re.IGNORECASE,  # wrk2 sometimes outputs "NaN" (capital) — match regardless of case
 )
 _PERCENTILE_RE = re.compile(
     r"(?P<pct>[0-9]+(?:\.[0-9]+)?)%\s+(?P<val>[0-9]+\.?[0-9]*)\s*(?P<unit>us|ms|s)"
@@ -120,6 +121,13 @@ def _parse_wrk2_output(text: str) -> Dict[str, float | int | str]:
         lat_avg_ms = _to_ms(_parse_float_or_zero(m.group("avg")), m.group("avg_u"))
         lat_stdev_ms = _to_ms(_parse_float_or_zero(m.group("stdev")), m.group("stdev_u"))
         lat_max_ms = _to_ms(_parse_float_or_zero(m.group("max")), m.group("max_u"))
+    else:
+        # Regex did not match the Latency stats line — print raw output so the
+        # user can see what wrk2 actually produced and diagnose the format.
+        print("  [WARN] wrk2 latency line not found — raw output:")
+        for line in text.splitlines():
+            print(f"    | {line}")
+        print("  [WARN] end of raw output")
 
     percentiles: Dict[str, float] = {}
     for pm in _PERCENTILE_RE.finditer(text):

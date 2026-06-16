@@ -170,14 +170,16 @@ static int parse_fn_name(const unsigned char *buf, size_t len,
     return 1;
 }
 
-/* Map a wolfSSL cipher name to the tlspeek cipher enum. */
+/* Map a wolfSSL cipher name to the tlspeek cipher enum.
+ * wolfSSL returns "TLS13-AES128-GCM-SHA256", "TLS13-AES256-GCM-SHA384",
+ * "TLS13-CHACHA20-POLY1305-SHA256" — note "AES128" without a hyphen. */
 static void set_serial_cipher(tlspeek_serial_t *s, const char *name)
 {
     if (!s) return;
-    if (!name)                       { s->cipher_suite = TLSPEEK_AES_256_GCM; return; }
-    if (strstr(name, "CHACHA20"))      s->cipher_suite = TLSPEEK_CHACHA20_POLY;
-    else if (strstr(name, "AES-128")) s->cipher_suite = TLSPEEK_AES_128_GCM;
-    else                              s->cipher_suite = TLSPEEK_AES_256_GCM;
+    if (!name)                                             { s->cipher_suite = TLSPEEK_AES_256_GCM; return; }
+    if (strstr(name, "CHACHA20"))                            s->cipher_suite = TLSPEEK_CHACHA20_POLY;
+    else if (strstr(name, "AES128") || strstr(name, "AES-128")) s->cipher_suite = TLSPEEK_AES_128_GCM;
+    else                                                     s->cipher_suite = TLSPEEK_AES_256_GCM;
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -334,9 +336,13 @@ int wolfssl_handshake_step(wolfssl_gtw_conn_t *conn)
          * set_serial_cipher() can fill it into the TLS export blob later. */
         const char *cname = wolfSSL_get_cipher_name(conn->ssl);
         if (cname) {
+            /* wolfSSL cipher name format: "TLS13-AES128-GCM-SHA256"
+             *                              "TLS13-AES256-GCM-SHA384"
+             *                              "TLS13-CHACHA20-POLY1305-SHA256"
+             * Note: "AES128" (no hyphen before 128), so check for "AES128", NOT "AES-128". */
             if (strstr(cname, "CHACHA20"))
                 conn->peek_ctx.cipher_suite = TLSPEEK_CHACHA20_POLY;
-            else if (strstr(cname, "AES-128"))
+            else if (strstr(cname, "AES128") || strstr(cname, "AES-128"))
                 conn->peek_ctx.cipher_suite = TLSPEEK_AES_128_GCM;
             else
                 conn->peek_ctx.cipher_suite = TLSPEEK_AES_256_GCM;
@@ -420,6 +426,8 @@ int tlsgw_peek_and_export_nb(
                 conn->want_events = (e == WOLFSSL_ERROR_WANT_WRITE) ? 2 : 1;
                 return 0;
             }
+            fprintf(stderr, "[tlsgw] Path B: wolfSSL_read failed (err=%d) fd=%d\n",
+                    e, conn->tcp_fd);
             wolfssl_conn_free(conn);
             return -2;
         }
@@ -438,6 +446,7 @@ int tlsgw_peek_and_export_nb(
             return 0;   /* EAGAIN — re-arm EPOLLIN and wait */
         }
         if (ready < 0) {
+            fprintf(stderr, "[tlsgw] Path C: tls_record_ready error fd=%d\n", conn->tcp_fd);
             wolfssl_conn_free(conn);
             return -2;
         }
@@ -450,6 +459,7 @@ int tlsgw_peek_and_export_nb(
             return 0;
         }
         if (peeked < 0) {
+            fprintf(stderr, "[tlsgw] Path C: tls_read_peek failed fd=%d\n", conn->tcp_fd);
             wolfssl_conn_free(conn);
             return -2;
         }
@@ -486,6 +496,9 @@ int tlsgw_peek_and_export_nb(
     unsigned int blob_sz = TLSPEEK_MAX_EXPORT_SZ;
     int rc = wolfSSL_tls_export(conn->ssl, serial->tls_blob, &blob_sz);
     if (rc <= 0) {
+        int werr = wolfSSL_get_error(conn->ssl, rc);
+        fprintf(stderr, "[tlsgw] wolfSSL_tls_export FAILED rc=%d werr=%d fd=%d\n",
+                rc, werr, conn->tcp_fd);
         wolfssl_conn_free(conn);
         return -2;
     }

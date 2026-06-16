@@ -15,9 +15,10 @@
 /* ── AEAD decryption ──────────────────────────────────────────────────────── */
 
 /**
- * aead_aes_gcm_decrypt() — Stateless AES-256-GCM decryption.
+ * aead_aes_gcm_decrypt() — Stateless AES-GCM decryption (128 or 256 bit).
  *
- * @param key         32-byte AES-256 key (client_write_key).
+ * @param key         AES key buffer (client_write_key).
+ * @param key_len     Key length in bytes: 16 for AES-128-GCM, 32 for AES-256-GCM.
  * @param nonce       12-byte nonce (IV XOR seq_num).
  * @param aad         Additional authenticated data (TLS record header, 5 B).
  * @param aad_len     Length of aad (always 5 for TLS 1.3).
@@ -28,7 +29,7 @@
  * @return 0 on success, -1 on authentication failure or error.
  */
 int aead_aes_gcm_decrypt(
-    const uint8_t *key,
+    const uint8_t *key, size_t key_len,
     const uint8_t *nonce,
     const uint8_t *aad,     size_t aad_len,
     const uint8_t *ciphertext, size_t ct_len,

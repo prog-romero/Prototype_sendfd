@@ -131,10 +131,17 @@ int tlspeek_keylog_cb(WOLFSSL *ssl, int id, const unsigned char *secret,
 
     if (id == CLIENT_TRAFFIC_SECRET) {
         TLSPEEK_VLOG("[keylog] Intercepted CLIENT_TRAFFIC_SECRET (%d bytes)\n", secretSz);
-        derive_keys_from_raw_secret(ctx->client_write_key,
+        int dr = derive_keys_from_raw_secret(ctx->client_write_key,
                                      ctx->client_write_iv,
                                      secret, secretSz,
                                      key_len, hash_algo);
+        fprintf(stderr, "[keylog] CLIENT_TRAFFIC_SECRET: secretSz=%d key_len=%zu derive=%d "
+                "key[0..3]=%02x%02x%02x%02x iv[0..3]=%02x%02x%02x%02x\n",
+                secretSz, key_len, dr,
+                ctx->client_write_key[0], ctx->client_write_key[1],
+                ctx->client_write_key[2], ctx->client_write_key[3],
+                ctx->client_write_iv[0],  ctx->client_write_iv[1],
+                ctx->client_write_iv[2],  ctx->client_write_iv[3]);
     } else if (id == SERVER_TRAFFIC_SECRET) {
         TLSPEEK_VLOG("[keylog] Intercepted SERVER_TRAFFIC_SECRET (%d bytes)\n", secretSz);
         derive_keys_from_raw_secret(ctx->server_write_key,
@@ -195,10 +202,10 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
         if (raw_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             return 0;
         }
-        // if (raw_len == 0)
-        //    fprintf(stderr, "[tlspeek] recv(MSG_PEEK): connection closed\n");
-        // else
-        //    perror("[tlspeek] recv(MSG_PEEK) failed");
+        if (raw_len == 0)
+            fprintf(stderr, "[tlspeek] recv(MSG_PEEK): connection closed fd=%d\n", ctx->tcp_fd);
+        else
+            fprintf(stderr, "[tlspeek] recv(MSG_PEEK) failed fd=%d errno=%d\n", ctx->tcp_fd, errno);
         return -1;
     }
 
@@ -218,10 +225,10 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
                  record_type, raw[1], raw[2], record_len);
 
     if (record_type != 0x17) {
-        // fprintf(stderr,
-        //         "[tlspeek] ERROR: expected Application Data (0x17), "
-        //         "got 0x%02X — first record may still be a handshake?\n",
-        //         record_type);
+        fprintf(stderr,
+                "[tlspeek] ERROR: expected Application Data (0x17), "
+                "got 0x%02X — first record may still be a handshake?\n",
+                record_type);
         return -1;
     }
 
@@ -257,11 +264,29 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
     uint8_t plaintext[TLSPEEK_MAX_RECORD];
     int     ret;
 
+    fprintf(stderr, "[tlspeek] decrypt: cipher=%d seq=%llu "
+            "key[0..3]=%02x%02x%02x%02x iv[0..3]=%02x%02x%02x%02x ct_len=%zu\n",
+            (int)ctx->cipher_suite, (unsigned long long)ctx->read_seq_num,
+            ctx->client_write_key[0], ctx->client_write_key[1],
+            ctx->client_write_key[2], ctx->client_write_key[3],
+            ctx->client_write_iv[0],  ctx->client_write_iv[1],
+            ctx->client_write_iv[2],  ctx->client_write_iv[3],
+            ct_len);
+
     switch (ctx->cipher_suite) {
     case TLSPEEK_AES_256_GCM:
+        ret = aead_aes_gcm_decrypt(
+            ctx->client_write_key, 32,  /* AES-256: 32-byte key */
+            nonce,
+            aad,        TLSPEEK_HEADER_SIZE,
+            ciphertext, ct_len,
+            auth_tag,
+            plaintext
+        );
+        break;
     case TLSPEEK_AES_128_GCM:
         ret = aead_aes_gcm_decrypt(
-            ctx->client_write_key,
+            ctx->client_write_key, 16,  /* AES-128: 16-byte key */
             nonce,
             aad,        TLSPEEK_HEADER_SIZE,
             ciphertext, ct_len,

@@ -4,19 +4,32 @@
 # Collects per-component CPU and RAM metrics using pidstat during throughput evaluation.
 #
 # KEY DESIGN:
-#   - ONE pidstat process monitors ALL components simultaneously → perfect time alignment.
-#   - Samples every 1 second; results are aggregated into windows of --interval seconds.
-#   - Within each window the MEAN (average) of observed values is kept.
-#   - awk writes directly to per-component CSV files: all files have the same row count
-#     and line N in gateway.csv corresponds exactly to line N in faasd.csv, etc.
+#   - fn-a and fn-b run concurrently. Their fwatchdog/worker processes share the
+#     EXACT SAME Linux comm string (15-char truncated name), so they cannot be
+#     told apart by name alone. Before starting pidstat, this script resolves
+#     the actual PID of each component instance via `ctr task ls` (fwatchdog)
+#     and its child process(es) (the worker), and labels each PID individually:
+#       fwatchdog-<function>, worker-<function>, gateway, faasd
+#   - ONE pidstat process (restricted to those resolved PIDs via -p) monitors
+#     everything simultaneously → perfect time alignment, no unrelated processes.
+#   - Within a second, PIDs that map to the SAME label (e.g. faasd's several
+#     processes, or a function's two worker children) are SUMMED — this is the
+#     correct combined load of that one logical component. PIDs belonging to
+#     DIFFERENT functions never share a label, so fn-a and fn-b are always kept
+#     separate even though their processes have identical comm strings.
+#   - Those per-second totals are then aggregated into windows of --interval
+#     seconds, keeping the MEDIAN (robust to transient spikes, unlike the mean).
+#   - awk writes directly to per-component CSV files: all files have the same
+#     row count and line N in gateway.csv corresponds exactly to line N in
+#     fwatchdog-<fn>.csv, etc.
 #
-# Usage:
-#   ./collect_pidstat.sh --mode <vanilla|prototype> \
-#                        --duration <seconds>        \
-#                        --interval <seconds>
+# Usage (must run as root — needed for `ctr`):
+#   sudo ./collect_pidstat.sh --mode <vanilla|prototype> \
+#                             --duration <seconds>        \
+#                             --interval <seconds>
 #
-#   --mode      vanilla   : gateway, faasd, fwatchdog, vanilla-fn-work
-#               prototype : gateway, faasd, fwatchdog, timing-fn-ka-wo
+#   --mode      vanilla   : gateway, faasd, fwatchdog-<fn>, worker-<fn>  (fn = vanilla-fn-a/b)
+#               prototype : gateway, faasd, fwatchdog-<fn>, worker-<fn>  (fn = sumprod-timing-fn-a/b, ...)
 #   --duration  total collection time in seconds (= number of wrk2 rate steps × step duration)
 #   --interval  aggregation window in seconds    (= your wrk2 window / step duration)
 #
@@ -26,10 +39,15 @@
 
 set -euo pipefail
 
+if [[ $EUID -ne 0 ]]; then
+    echo "Error: this script needs root (it calls 'ctr' to resolve container PIDs). Re-run with sudo." >&2
+    exit 1
+fi
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 usage() {
-    echo "Usage: $0 --mode <vanilla|prototype> --duration <seconds> --interval <seconds>"
+    echo "Usage: sudo $0 --mode <vanilla|prototype> --duration <seconds> --interval <seconds>"
     exit 1
 }
 
@@ -54,18 +72,73 @@ if [[ "$MODE" != "vanilla" && "$MODE" != "prototype" ]]; then
     exit 1
 fi
 
-# ── Components by mode ────────────────────────────────────────────────────────
-# Process names are the first 15 characters of the binary (Linux comm limit).
-#   vanilla   : vanilla-fn-worker  (17 chars) → comm = "vanilla-fn-work"
-#   prototype : timing-fn-ka-worker(19 chars) → comm = "timing-fn-ka-wo"
+# ── Resolve PID → label for every component instance ──────────────────────────
+#
+# gateway/faasd are host-level singletons (faasd may legitimately have several
+# processes — provider, up, one shim per container — all summed under "faasd").
+# Each function's fwatchdog PID comes from `ctr task ls`; its worker child PID(s)
+# come from `pgrep -P <fwatchdog_pid>`, filtered to the expected worker comm so
+# unrelated children are never picked up.
+
+declare -A PID_LABEL
+
+GW_PID=$(ctr -n openfaas task ls 2>/dev/null | awk '$1=="gateway"{print $2}')
+[[ -n "$GW_PID" ]] && PID_LABEL[$GW_PID]="gateway"
+
+for p in $(pgrep -x faasd 2>/dev/null); do
+    PID_LABEL[$p]="faasd"
+done
 
 if [[ "$MODE" == "vanilla" ]]; then
-    COMP_LIST=("gateway" "faasd" "fwatchdog" "vanilla-fn-work")
+    WORKER_COMM="vanilla-fn-work"
 else
-    COMP_LIST=("gateway" "faasd" "fwatchdog" "timing-fn-ka-wo")
+    WORKER_COMM="timing-fn-ka-wo"
 fi
 
-COMP_STR="${COMP_LIST[*]}"   # space-separated string passed to awk
+FN_MATCHES=0
+while read -r FN FNPID _STATUS; do
+    [[ "$FN" == "TASK" || -z "$FN" ]] && continue
+    if [[ "$MODE" == "vanilla" ]]; then
+        [[ "$FN" != *vanilla* ]] && continue
+    else
+        [[ "$FN" == *vanilla* ]] && continue
+    fi
+    FN_MATCHES=$((FN_MATCHES + 1))
+    PID_LABEL[$FNPID]="fwatchdog-${FN}"
+    for CPID in $(pgrep -P "$FNPID" 2>/dev/null); do
+        CCOMM=$(ps -p "$CPID" -o comm= 2>/dev/null || true)
+        [[ "$CCOMM" == "$WORKER_COMM" ]] && PID_LABEL[$CPID]="worker-${FN}"
+    done
+done < <(ctr -n openfaas-fn task ls 2>/dev/null)
+
+if [[ $FN_MATCHES -eq 0 ]]; then
+    echo "[pidstat] WARNING: no running function task matched mode='$MODE' — only gateway/faasd will be measured. Did you deploy the functions?" >&2
+fi
+
+if [[ ${#PID_LABEL[@]} -eq 0 ]]; then
+    echo "Error: resolved zero PIDs (gateway/faasd not found). Is faasd running?" >&2
+    exit 1
+fi
+
+PID_LIST=()
+PID_MAP_PARTS=()
+for pid in "${!PID_LABEL[@]}"; do
+    PID_LIST+=("$pid")
+    PID_MAP_PARTS+=("${pid}:${PID_LABEL[$pid]}")
+done
+PID_CSV=$(IFS=,; echo "${PID_LIST[*]}")
+PID_MAP_STR=$(IFS=,; echo "${PID_MAP_PARTS[*]}")
+
+mapfile -t LABELS < <(printf '%s\n' "${PID_LABEL[@]}" | sort -u)
+
+echo "[pidstat] resolved components:"
+for COMP in "${LABELS[@]}"; do
+    COMP_PIDS=()
+    for pid in "${!PID_LABEL[@]}"; do
+        [[ "${PID_LABEL[$pid]}" == "$COMP" ]] && COMP_PIDS+=("$pid")
+    done
+    printf "  %-30s pid(s): %s\n" "$COMP" "${COMP_PIDS[*]}"
+done
 
 # ── Output directories ────────────────────────────────────────────────────────
 
@@ -78,13 +151,13 @@ mkdir -p "$CPU_DIR" "$RAM_DIR"
 
 # ── Write CSV headers (overwrites any previous run) ───────────────────────────
 
-for COMP in "${COMP_LIST[@]}"; do
+for COMP in "${LABELS[@]}"; do
     printf "timestamp,usr_pct,system_pct,cpu_pct\n"               > "$CPU_DIR/${COMP}.csv"
     printf "timestamp,minflt_s,majflt_s,vsz_kb,rss_kb,mem_pct\n" > "$RAM_DIR/${COMP}.csv"
 done
 
 echo "======================================================================"
-echo "[pidstat] mode=$MODE  duration=${DURATION}s  interval=${INTERVAL}s  (MEAN per window)"
+echo "[pidstat] mode=$MODE  duration=${DURATION}s  interval=${INTERVAL}s  (MEDIAN per window, summed only across PIDs of the SAME component)"
 echo "[pidstat] output: $OUT_DIR"
 echo "======================================================================"
 
@@ -93,34 +166,46 @@ echo "======================================================================"
 # pidstat -u column order (sysstat 12.x, aarch64) — 10 fields:
 #   $1=Time  $2=UID  $3=PID  $4=%usr  $5=%system  $6=%guest  $7=%wait  $8=%CPU  $9=CPU  $10=Command
 #
-# We read from the END so the script is robust to versions that add/remove
-# columns in the middle:
-#   $NF     = Command
+# Component identity comes from PID (via pid_map), NOT from the Command name —
+# this is what lets fn-a's and fn-b's identically-named fwatchdog/worker stay
+# separate. We still read %usr/%system/%CPU from the END so the script stays
+# robust to sysstat versions that add/remove columns in the middle:
 #   $(NF-2) = %CPU   (total cpu%)
 #   $(NF-5) = %system
 #   $(NF-6) = %usr
 #
 # WINDOW LOGIC:
 #   - A new second is detected when the timestamp ($1) changes.
-#   - sample_num counts how many distinct seconds have been seen in the current window.
-#   - When sample_num reaches INTERVAL, flush (write mean row per component) and reset.
-#   - Every component always gets a row per window (value = 0.0 if the process was
-#     not seen), which guarantees that all CSV files have the same row count.
-#   - Mean = sum of 1-second samples / number of samples seen (win_cnt[c]).
+#   - Within a second, PIDs mapping to the SAME label are SUMMED into that
+#     second's total for that label.
+#   - Each finished second's total becomes one sample of the current window.
+#   - When the window reaches INTERVAL seconds, flush: write the MEDIAN of
+#     those per-second totals (one row per component). A component with no
+#     PID active in a given second contributes 0 for that second, which
+#     guarantees every CSV file has the same row count.
 
 CPU_AWK='
-BEGIN {
-    n = split(comp_list, arr, " ")
-    for (i = 1; i <= n; i++) {
-        comps[arr[i]] = 1
-        win_usr[arr[i]] = 0
-        win_sys[arr[i]] = 0
-        win_cpu[arr[i]] = 0
-        win_cnt[arr[i]] = 0
+function median(arr, n,    sorted, i, j, tmp) {
+    for (i = 1; i <= n; i++) sorted[i] = arr[i]
+    for (i = 2; i <= n; i++) {
+        tmp = sorted[i]; j = i - 1
+        while (j >= 1 && sorted[j] > tmp) { sorted[j + 1] = sorted[j]; j-- }
+        sorted[j + 1] = tmp
     }
-    sample_num = 0
-    last_ts    = ""
-    window_ts  = ""
+    return (n % 2 == 1) ? sorted[(n + 1) / 2] : (sorted[n / 2] + sorted[n / 2 + 1]) / 2
+}
+
+BEGIN {
+    nm = split(pid_map, pairs, ",")
+    for (i = 1; i <= nm; i++) {
+        split(pairs[i], kv, ":")
+        label_of[kv[1]] = kv[2]
+        comps[kv[2]] = 1
+    }
+    sec_count   = 0
+    last_ts     = ""
+    window_ts   = ""
+    have_second = 0
 }
 
 /^Linux/         { next }
@@ -129,49 +214,67 @@ BEGIN {
 /UID/            { next }
 
 NF >= 9 {
-    ts   = $1
-    comp = $NF
-    if (!(comp in comps)) next
+    ts  = $1
+    pid = $3
+    if (!(pid in label_of)) next
+    comp = label_of[pid]
 
     usr = $(NF-6)+0
     sys = $(NF-5)+0
     cpu = $(NF-2)+0
 
-    # Detect boundary between seconds
     if (ts != last_ts) {
-        if (last_ts != "") {
-            sample_num++
-            if (sample_num >= interval) {
-                # Flush window: one row per component (mean values)
+        if (have_second) {
+            sec_count++
+            for (c in comps) {
+                samp_usr[c, sec_count] = cur_usr[c]
+                samp_sys[c, sec_count] = cur_sys[c]
+                samp_cpu[c, sec_count] = cur_cpu[c]
+            }
+            if (sec_count >= interval) {
                 for (c in comps) {
-                    cnt = (win_cnt[c] > 0) ? win_cnt[c] : 1
+                    for (k = 1; k <= sec_count; k++) {
+                        tmp_usr[k] = samp_usr[c, k]
+                        tmp_sys[k] = samp_sys[c, k]
+                        tmp_cpu[k] = samp_cpu[c, k]
+                    }
                     printf "%s,%.2f,%.2f,%.2f\n", window_ts, \
-                        win_usr[c]/cnt, win_sys[c]/cnt, win_cpu[c]/cnt \
+                        median(tmp_usr, sec_count), median(tmp_sys, sec_count), median(tmp_cpu, sec_count) \
                         >> (cpu_dir "/" c ".csv")
                 }
-                # Reset accumulators
-                for (c in comps) { win_usr[c]=0; win_sys[c]=0; win_cpu[c]=0; win_cnt[c]=0 }
-                sample_num = 0
+                sec_count = 0
             }
         }
         last_ts = ts
-        if (sample_num == 0) window_ts = ts   # first second of new window
+        if (sec_count == 0) window_ts = ts   # first second of new window
+        for (c in comps) { cur_usr[c] = 0; cur_sys[c] = 0; cur_cpu[c] = 0 }
+        have_second = 1
     }
 
-    # Accumulate sum for mean computation
-    win_usr[comp] += usr
-    win_sys[comp] += sys
-    win_cpu[comp] += cpu
-    win_cnt[comp]++
+    # Sum across PIDs that map to this same label within the same second.
+    cur_usr[comp] += usr
+    cur_sys[comp] += sys
+    cur_cpu[comp] += cpu
 }
 
 END {
-    # Flush the last partial window
-    if (sample_num > 0)
+    if (have_second) {
+        sec_count++
         for (c in comps) {
-            cnt = (win_cnt[c] > 0) ? win_cnt[c] : 1
+            samp_usr[c, sec_count] = cur_usr[c]
+            samp_sys[c, sec_count] = cur_sys[c]
+            samp_cpu[c, sec_count] = cur_cpu[c]
+        }
+    }
+    if (sec_count > 0)
+        for (c in comps) {
+            for (k = 1; k <= sec_count; k++) {
+                tmp_usr[k] = samp_usr[c, k]
+                tmp_sys[k] = samp_sys[c, k]
+                tmp_cpu[k] = samp_cpu[c, k]
+            }
             printf "%s,%.2f,%.2f,%.2f\n", window_ts, \
-                win_usr[c]/cnt, win_sys[c]/cnt, win_cpu[c]/cnt \
+                median(tmp_usr, sec_count), median(tmp_sys, sec_count), median(tmp_cpu, sec_count) \
                 >> (cpu_dir "/" c ".csv")
         }
 }
@@ -182,8 +285,7 @@ END {
 # pidstat -r column order — 9 fields:
 #   $1=Time  $2=UID  $3=PID  $4=minflt/s  $5=majflt/s  $6=VSZ  $7=RSS  $8=%MEM  $9=Command
 #
-# From the end:
-#   $NF     = Command
+# Same PID-based identity as the CPU awk above. From the end:
 #   $(NF-1) = %MEM
 #   $(NF-2) = RSS  (KB)
 #   $(NF-3) = VSZ  (KB)
@@ -191,20 +293,27 @@ END {
 #   $(NF-5) = minflt/s
 
 RAM_AWK='
-BEGIN {
-    n = split(comp_list, arr, " ")
-    for (i = 1; i <= n; i++) {
-        comps[arr[i]] = 1
-        win_minflt[arr[i]] = 0
-        win_majflt[arr[i]] = 0
-        win_vsz[arr[i]]    = 0
-        win_rss[arr[i]]    = 0
-        win_mem[arr[i]]    = 0
-        win_cnt[arr[i]]    = 0
+function median(arr, n,    sorted, i, j, tmp) {
+    for (i = 1; i <= n; i++) sorted[i] = arr[i]
+    for (i = 2; i <= n; i++) {
+        tmp = sorted[i]; j = i - 1
+        while (j >= 1 && sorted[j] > tmp) { sorted[j + 1] = sorted[j]; j-- }
+        sorted[j + 1] = tmp
     }
-    sample_num = 0
-    last_ts    = ""
-    window_ts  = ""
+    return (n % 2 == 1) ? sorted[(n + 1) / 2] : (sorted[n / 2] + sorted[n / 2 + 1]) / 2
+}
+
+BEGIN {
+    nm = split(pid_map, pairs, ",")
+    for (i = 1; i <= nm; i++) {
+        split(pairs[i], kv, ":")
+        label_of[kv[1]] = kv[2]
+        comps[kv[2]] = 1
+    }
+    sec_count   = 0
+    last_ts     = ""
+    window_ts   = ""
+    have_second = 0
 }
 
 /^Linux/         { next }
@@ -213,9 +322,10 @@ BEGIN {
 /UID/            { next }
 
 NF >= 8 {
-    ts   = $1
-    comp = $NF
-    if (!(comp in comps)) next
+    ts  = $1
+    pid = $3
+    if (!(pid in label_of)) next
+    comp = label_of[pid]
 
     minflt = $(NF-5)+0
     majflt = $(NF-4)+0
@@ -224,70 +334,96 @@ NF >= 8 {
     mem    = $(NF-1)+0
 
     if (ts != last_ts) {
-        if (last_ts != "") {
-            sample_num++
-            if (sample_num >= interval) {
+        if (have_second) {
+            sec_count++
+            for (c in comps) {
+                samp_minflt[c, sec_count] = cur_minflt[c]
+                samp_majflt[c, sec_count] = cur_majflt[c]
+                samp_vsz[c, sec_count]    = cur_vsz[c]
+                samp_rss[c, sec_count]    = cur_rss[c]
+                samp_mem[c, sec_count]    = cur_mem[c]
+            }
+            if (sec_count >= interval) {
                 for (c in comps) {
-                    cnt = (win_cnt[c] > 0) ? win_cnt[c] : 1
+                    for (k = 1; k <= sec_count; k++) {
+                        tmp_minflt[k] = samp_minflt[c, k]
+                        tmp_majflt[k] = samp_majflt[c, k]
+                        tmp_vsz[k]    = samp_vsz[c, k]
+                        tmp_rss[k]    = samp_rss[c, k]
+                        tmp_mem[k]    = samp_mem[c, k]
+                    }
                     printf "%s,%.2f,%.2f,%d,%d,%.2f\n", window_ts, \
-                        win_minflt[c]/cnt, win_majflt[c]/cnt, \
-                        win_vsz[c]/cnt, win_rss[c]/cnt, win_mem[c]/cnt \
+                        median(tmp_minflt, sec_count), median(tmp_majflt, sec_count), \
+                        median(tmp_vsz, sec_count), median(tmp_rss, sec_count), median(tmp_mem, sec_count) \
                         >> (ram_dir "/" c ".csv")
                 }
-                for (c in comps) { win_minflt[c]=0; win_majflt[c]=0; win_vsz[c]=0; win_rss[c]=0; win_mem[c]=0; win_cnt[c]=0 }
-                sample_num = 0
+                sec_count = 0
             }
         }
         last_ts = ts
-        if (sample_num == 0) window_ts = ts
+        if (sec_count == 0) window_ts = ts
+        for (c in comps) { cur_minflt[c] = 0; cur_majflt[c] = 0; cur_vsz[c] = 0; cur_rss[c] = 0; cur_mem[c] = 0 }
+        have_second = 1
     }
 
-    win_minflt[comp] += minflt
-    win_majflt[comp] += majflt
-    win_vsz[comp]    += vsz
-    win_rss[comp]    += rss
-    win_mem[comp]    += mem
-    win_cnt[comp]++
+    # Sum across PIDs that map to this same label within the same second.
+    cur_minflt[comp] += minflt
+    cur_majflt[comp] += majflt
+    cur_vsz[comp]    += vsz
+    cur_rss[comp]    += rss
+    cur_mem[comp]    += mem
 }
 
 END {
-    if (sample_num > 0)
+    if (have_second) {
+        sec_count++
         for (c in comps) {
-            cnt = (win_cnt[c] > 0) ? win_cnt[c] : 1
+            samp_minflt[c, sec_count] = cur_minflt[c]
+            samp_majflt[c, sec_count] = cur_majflt[c]
+            samp_vsz[c, sec_count]    = cur_vsz[c]
+            samp_rss[c, sec_count]    = cur_rss[c]
+            samp_mem[c, sec_count]    = cur_mem[c]
+        }
+    }
+    if (sec_count > 0)
+        for (c in comps) {
+            for (k = 1; k <= sec_count; k++) {
+                tmp_minflt[k] = samp_minflt[c, k]
+                tmp_majflt[k] = samp_majflt[c, k]
+                tmp_vsz[k]    = samp_vsz[c, k]
+                tmp_rss[k]    = samp_rss[c, k]
+                tmp_mem[k]    = samp_mem[c, k]
+            }
             printf "%s,%.2f,%.2f,%d,%d,%.2f\n", window_ts, \
-                win_minflt[c]/cnt, win_majflt[c]/cnt, \
-                win_vsz[c]/cnt, win_rss[c]/cnt, win_mem[c]/cnt \
+                median(tmp_minflt, sec_count), median(tmp_majflt, sec_count), \
+                median(tmp_vsz, sec_count), median(tmp_rss, sec_count), median(tmp_mem, sec_count) \
                 >> (ram_dir "/" c ".csv")
         }
 }
 '
 
-# ── Launch ONE pidstat process per metric, covering ALL components ────────────
-#
-# A single pidstat run guarantees all components are sampled at the same instant.
-# pidstat samples every 1 second for the full DURATION; awk aggregates into
-# windows of INTERVAL seconds and writes the max to per-component CSV files.
+# ── Launch ONE pidstat process per metric, restricted to the resolved PIDs ────
 
-echo "[pidstat] starting CPU collector  (pidstat -u, 1s samples)..."
-pidstat -u 1 "$DURATION" 2>/dev/null \
+echo "[pidstat] starting CPU collector  (pidstat -u -p <resolved PIDs>, 1s samples)..."
+pidstat -u -p "$PID_CSV" 1 "$DURATION" 2>/dev/null \
     | awk \
-        -v comp_list="$COMP_STR" \
-        -v interval="$INTERVAL"  \
-        -v cpu_dir="$CPU_DIR"    \
+        -v pid_map="$PID_MAP_STR" \
+        -v interval="$INTERVAL"   \
+        -v cpu_dir="$CPU_DIR"     \
         "$CPU_AWK" &
 CPU_PID=$!
 
-echo "[pidstat] starting RAM collector  (pidstat -r, 1s samples)..."
-pidstat -r 1 "$DURATION" 2>/dev/null \
+echo "[pidstat] starting RAM collector  (pidstat -r -p <resolved PIDs>, 1s samples)..."
+pidstat -r -p "$PID_CSV" 1 "$DURATION" 2>/dev/null \
     | awk \
-        -v comp_list="$COMP_STR" \
-        -v interval="$INTERVAL"  \
-        -v ram_dir="$RAM_DIR"    \
+        -v pid_map="$PID_MAP_STR" \
+        -v interval="$INTERVAL"   \
+        -v ram_dir="$RAM_DIR"     \
         "$RAM_AWK" &
 RAM_PID=$!
 
 echo ""
-echo "[pidstat] collecting for ${DURATION}s — 1s samples aggregated into ${INTERVAL}s windows (MEAN)."
+echo "[pidstat] collecting for ${DURATION}s — 1s samples (summed per component) aggregated into ${INTERVAL}s windows (MEDIAN)."
 echo "[pidstat] press Ctrl+C to abort early."
 echo ""
 
