@@ -18,7 +18,7 @@
 #     DIFFERENT functions never share a label, so fn-a and fn-b are always kept
 #     separate even though their processes have identical comm strings.
 #   - Those per-second totals are then aggregated into windows of --interval
-#     seconds, keeping the MEDIAN (robust to transient spikes, unlike the mean).
+#     seconds, keeping the MEAN.
 #   - awk writes directly to per-component CSV files: all files have the same
 #     row count and line N in gateway.csv corresponds exactly to line N in
 #     fwatchdog-<fn>.csv, etc.
@@ -157,7 +157,7 @@ for COMP in "${LABELS[@]}"; do
 done
 
 echo "======================================================================"
-echo "[pidstat] mode=$MODE  duration=${DURATION}s  interval=${INTERVAL}s  (MEDIAN per window, summed only across PIDs of the SAME component)"
+echo "[pidstat] mode=$MODE  duration=${DURATION}s  interval=${INTERVAL}s  (MEAN per window, summed only across PIDs of the SAME component)"
 echo "[pidstat] output: $OUT_DIR"
 echo "======================================================================"
 
@@ -179,20 +179,16 @@ echo "======================================================================"
 #   - Within a second, PIDs mapping to the SAME label are SUMMED into that
 #     second's total for that label.
 #   - Each finished second's total becomes one sample of the current window.
-#   - When the window reaches INTERVAL seconds, flush: write the MEDIAN of
+#   - When the window reaches INTERVAL seconds, flush: write the MEAN of
 #     those per-second totals (one row per component). A component with no
 #     PID active in a given second contributes 0 for that second, which
 #     guarantees every CSV file has the same row count.
 
 CPU_AWK='
-function median(arr, n,    sorted, i, j, tmp) {
-    for (i = 1; i <= n; i++) sorted[i] = arr[i]
-    for (i = 2; i <= n; i++) {
-        tmp = sorted[i]; j = i - 1
-        while (j >= 1 && sorted[j] > tmp) { sorted[j + 1] = sorted[j]; j-- }
-        sorted[j + 1] = tmp
-    }
-    return (n % 2 == 1) ? sorted[(n + 1) / 2] : (sorted[n / 2] + sorted[n / 2 + 1]) / 2
+function mean(arr, n,    sum, i) {
+    sum = 0
+    for (i = 1; i <= n; i++) sum += arr[i]
+    return sum / n
 }
 
 BEGIN {
@@ -239,7 +235,7 @@ NF >= 9 {
                         tmp_cpu[k] = samp_cpu[c, k]
                     }
                     printf "%s,%.2f,%.2f,%.2f\n", window_ts, \
-                        median(tmp_usr, sec_count), median(tmp_sys, sec_count), median(tmp_cpu, sec_count) \
+                        mean(tmp_usr, sec_count), mean(tmp_sys, sec_count), mean(tmp_cpu, sec_count) \
                         >> (cpu_dir "/" c ".csv")
                 }
                 sec_count = 0
@@ -274,7 +270,7 @@ END {
                 tmp_cpu[k] = samp_cpu[c, k]
             }
             printf "%s,%.2f,%.2f,%.2f\n", window_ts, \
-                median(tmp_usr, sec_count), median(tmp_sys, sec_count), median(tmp_cpu, sec_count) \
+                mean(tmp_usr, sec_count), mean(tmp_sys, sec_count), mean(tmp_cpu, sec_count) \
                 >> (cpu_dir "/" c ".csv")
         }
 }
@@ -293,14 +289,10 @@ END {
 #   $(NF-5) = minflt/s
 
 RAM_AWK='
-function median(arr, n,    sorted, i, j, tmp) {
-    for (i = 1; i <= n; i++) sorted[i] = arr[i]
-    for (i = 2; i <= n; i++) {
-        tmp = sorted[i]; j = i - 1
-        while (j >= 1 && sorted[j] > tmp) { sorted[j + 1] = sorted[j]; j-- }
-        sorted[j + 1] = tmp
-    }
-    return (n % 2 == 1) ? sorted[(n + 1) / 2] : (sorted[n / 2] + sorted[n / 2 + 1]) / 2
+function mean(arr, n,    sum, i) {
+    sum = 0
+    for (i = 1; i <= n; i++) sum += arr[i]
+    return sum / n
 }
 
 BEGIN {
@@ -353,8 +345,8 @@ NF >= 8 {
                         tmp_mem[k]    = samp_mem[c, k]
                     }
                     printf "%s,%.2f,%.2f,%d,%d,%.2f\n", window_ts, \
-                        median(tmp_minflt, sec_count), median(tmp_majflt, sec_count), \
-                        median(tmp_vsz, sec_count), median(tmp_rss, sec_count), median(tmp_mem, sec_count) \
+                        mean(tmp_minflt, sec_count), mean(tmp_majflt, sec_count), \
+                        mean(tmp_vsz, sec_count), mean(tmp_rss, sec_count), mean(tmp_mem, sec_count) \
                         >> (ram_dir "/" c ".csv")
                 }
                 sec_count = 0
@@ -395,8 +387,8 @@ END {
                 tmp_mem[k]    = samp_mem[c, k]
             }
             printf "%s,%.2f,%.2f,%d,%d,%.2f\n", window_ts, \
-                median(tmp_minflt, sec_count), median(tmp_majflt, sec_count), \
-                median(tmp_vsz, sec_count), median(tmp_rss, sec_count), median(tmp_mem, sec_count) \
+                mean(tmp_minflt, sec_count), mean(tmp_majflt, sec_count), \
+                mean(tmp_vsz, sec_count), mean(tmp_rss, sec_count), mean(tmp_mem, sec_count) \
                 >> (ram_dir "/" c ".csv")
         }
 }
@@ -423,7 +415,7 @@ pidstat -r -p "$PID_CSV" 1 "$DURATION" 2>/dev/null \
 RAM_PID=$!
 
 echo ""
-echo "[pidstat] collecting for ${DURATION}s — 1s samples (summed per component) aggregated into ${INTERVAL}s windows (MEDIAN)."
+echo "[pidstat] collecting for ${DURATION}s — 1s samples (summed per component) aggregated into ${INTERVAL}s windows (MEAN)."
 echo "[pidstat] press Ctrl+C to abort early."
 echo ""
 

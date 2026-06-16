@@ -13,6 +13,7 @@ import argparse
 import csv
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -247,6 +248,158 @@ def _compute_cpu_busy_stats(sample_text: str) -> Tuple[float, float, float, int]
     return round(avg_pct, 3), round(max(busy_pcts), 3), round(min(busy_pcts), 3), len(rows)
 
 
+# ── pidstat integration ──────────────────────────────────────────────────────
+#
+# Resolves PID -> logical component label exactly once per sweep (mirrors the
+# resolution section of pidstat/collect_pidstat.sh), then samples pidstat in
+# lockstep with each rate step instead of running collect_pidstat.sh as one
+# independent, free-running process. This keeps every pidstat window aligned
+# with the exact wrk2 load window it describes — no drift into --pause gaps.
+
+_PID_RESOLVE_SCRIPT = r"""
+WORKER_COMM="$1"
+IS_VANILLA="$2"
+declare -A PID_LABEL
+
+GW_PID=$(ctr -n openfaas task ls 2>/dev/null | awk '$1=="gateway"{print $2}')
+[[ -n "$GW_PID" ]] && PID_LABEL[$GW_PID]="gateway"
+
+for p in $(pgrep -x faasd 2>/dev/null); do
+    PID_LABEL[$p]="faasd"
+done
+
+while read -r FN FNPID _STATUS; do
+    [[ "$FN" == "TASK" || -z "$FN" ]] && continue
+    if [[ "$IS_VANILLA" == "1" ]]; then
+        [[ "$FN" != *vanilla* ]] && continue
+    else
+        [[ "$FN" == *vanilla* ]] && continue
+    fi
+    PID_LABEL[$FNPID]="fwatchdog-${FN}"
+    for CPID in $(pgrep -P "$FNPID" 2>/dev/null); do
+        CCOMM=$(ps -p "$CPID" -o comm= 2>/dev/null || true)
+        [[ "$CCOMM" == "$WORKER_COMM" ]] && PID_LABEL[$CPID]="worker-${FN}"
+    done
+done < <(ctr -n openfaas-fn task ls 2>/dev/null)
+
+PARTS=()
+for pid in "${!PID_LABEL[@]}"; do
+    PARTS+=("${pid}:${PID_LABEL[$pid]}")
+done
+IFS=,
+echo "${PARTS[*]}"
+"""
+
+
+def _resolve_pidstat_pids(pi_ssh: str, mode: str) -> Dict[str, str]:
+    """Resolve PID -> component label (gateway, faasd, fwatchdog-<fn>, worker-<fn>) on the Pi."""
+    worker_comm = "vanilla-fn-work" if mode == "vanilla" else "timing-fn-ka-wo"
+    is_vanilla = "1" if mode == "vanilla" else "0"
+
+    remote_cmd = (
+        f"sudo bash -s -- {shlex.quote(worker_comm)} {shlex.quote(is_vanilla)}"
+    )
+    result = subprocess.run(
+        ["ssh", pi_ssh, remote_cmd],
+        input=_PID_RESOLVE_SCRIPT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    raw = result.stdout.strip()
+    pid_label: Dict[str, str] = {}
+    if raw:
+        for pair in raw.split(","):
+            pid, _, label = pair.partition(":")
+            if pid and label:
+                pid_label[pid] = label
+    return pid_label
+
+
+def _start_pi_pidstat_sampling(
+    pi_ssh: str, pid_csv: str, duration_s: int
+) -> Tuple[subprocess.Popen[str], subprocess.Popen[str]]:
+    cpu_cmd = f"sudo pidstat -u -p {pid_csv} 1 {duration_s} 2>/dev/null"
+    ram_cmd = f"sudo pidstat -r -p {pid_csv} 1 {duration_s} 2>/dev/null"
+    cpu_proc = subprocess.Popen(
+        ["ssh", pi_ssh, cpu_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    ram_proc = subprocess.Popen(
+        ["ssh", pi_ssh, ram_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    return cpu_proc, ram_proc
+
+
+def _mean(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _parse_pidstat_per_second(
+    text: str, pid_label: Dict[str, str], offsets: Dict[str, int]
+) -> Dict[str, Dict[str, List[float]]]:
+    """Sum same-label PIDs within each second, return per-label per-metric list of
+    per-second sums for the whole sampling window (mirrors collect_pidstat.sh's awk)."""
+    labels = sorted(set(pid_label.values()))
+    samples: Dict[str, Dict[str, List[float]]] = {
+        label: {metric: [] for metric in offsets} for label in labels
+    }
+    cur: Dict[str, Dict[str, float]] = {
+        label: {metric: 0.0 for metric in offsets} for label in labels
+    }
+    last_ts = None
+    have_second = False
+
+    def flush_second() -> None:
+        for label in labels:
+            for metric in offsets:
+                samples[label][metric].append(cur[label][metric])
+                cur[label][metric] = 0.0
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Linux") or "Average" in line or "UID" in line:
+            continue
+        parts = line.split()
+        if len(parts) < 8:
+            continue
+        ts, pid = parts[0], parts[2]
+        if pid not in pid_label:
+            continue
+        label = pid_label[pid]
+        if ts != last_ts:
+            if have_second:
+                flush_second()
+            last_ts = ts
+            have_second = True
+        for metric, neg_idx in offsets.items():
+            try:
+                cur[label][metric] += float(parts[neg_idx])
+            except (IndexError, ValueError):
+                pass
+
+    if have_second:
+        flush_second()
+
+    return samples
+
+
+_CPU_OFFSETS = {"usr_pct": -7, "system_pct": -6, "cpu_pct": -3}
+_RAM_OFFSETS = {"minflt_s": -6, "majflt_s": -5, "vsz_kb": -4, "rss_kb": -3, "mem_pct": -2}
+
+
+def _pidstat_window_means(
+    text: str, pid_label: Dict[str, str], offsets: Dict[str, int]
+) -> Dict[str, Dict[str, float]]:
+    per_second = _parse_pidstat_per_second(text, pid_label, offsets)
+    return {
+        label: {metric: round(_mean(vals), 2) for metric, vals in metrics.items()}
+        for label, metrics in per_second.items()
+    }
+
+
 def _run_wrk2(
     wrk2_bin: str,
     lua_script: str,
@@ -350,6 +503,7 @@ def main():
     parser.add_argument("--timeout-s", type=int, default=10, help="wrk2 request timeout")
     parser.add_argument("--threads", type=int, default=4, help="wrk2 client threads")
     parser.add_argument("--pause", type=int, default=5, help="Pause between rate steps")
+    parser.add_argument("--no-pidstat", action="store_true", help="Disable per-component pidstat collection")
 
     args = parser.parse_args()
 
@@ -376,13 +530,42 @@ def main():
     print(f"Out CSV    : {args.out}")
     print()
 
+    pidstat_enabled = not args.no_pidstat
+    pid_label: Dict[str, str] = {}
+    pid_csv = ""
+    pidstat_mode_dir = "vanilla" if args.mode == "vanilla" else "prototype"
+    pidstat_cpu_rows: Dict[str, List[Dict[str, object]]] = {}
+    pidstat_ram_rows: Dict[str, List[Dict[str, object]]] = {}
+
+    if pidstat_enabled:
+        print("Resolving pidstat component PIDs on the Pi...")
+        pid_label = _resolve_pidstat_pids(args.pi_ssh, args.mode)
+        if not pid_label:
+            print("  [WARN] could not resolve any PID (faasd/gateway not found?) — pidstat collection disabled for this run.")
+            pidstat_enabled = False
+        else:
+            pid_csv = ",".join(sorted(pid_label.keys(), key=int))
+            labels = sorted(set(pid_label.values()))
+            print(f"  resolved components: {', '.join(labels)}")
+            for label in labels:
+                pidstat_cpu_rows[label] = []
+                pidstat_ram_rows[label] = []
+    print()
+
     rows = []
     for idx, rate in enumerate(rates, start=1):
         print(f"[{idx}/{len(rates)}] Sweeping rate={rate} (C={args.concurrency}, P={args.payload_kb}KB)...")
-        
+
         # Start Pi CPU sampling
         cpu_samples = max(3, args.duration_s + 2)
         cpu_proc = _start_pi_cpu_sampling(args.pi_ssh, cpu_samples, 1)
+
+        # Start per-component pidstat sampling, in lockstep with this rate step's wrk2 window
+        pidstat_cpu_proc = pidstat_ram_proc = None
+        if pidstat_enabled:
+            pidstat_cpu_proc, pidstat_ram_proc = _start_pi_pidstat_sampling(
+                args.pi_ssh, pid_csv, args.duration_s
+            )
 
         # Run wrk2 load
         exit_code, output = _run_wrk2(
@@ -408,6 +591,33 @@ def main():
             cpu_stdout, cpu_stderr = cpu_proc.communicate()
 
         cpu_avg, cpu_max, cpu_min, cpu_count = _compute_cpu_busy_stats(cpu_stdout)
+
+        # Retrieve pidstat sampling for this exact rate step window
+        if pidstat_enabled and pidstat_cpu_proc is not None and pidstat_ram_proc is not None:
+            try:
+                pidstat_cpu_stdout, _ = pidstat_cpu_proc.communicate(timeout=args.duration_s + 30)
+            except subprocess.TimeoutExpired:
+                pidstat_cpu_proc.kill()
+                pidstat_cpu_stdout, _ = pidstat_cpu_proc.communicate()
+            try:
+                pidstat_ram_stdout, _ = pidstat_ram_proc.communicate(timeout=args.duration_s + 30)
+            except subprocess.TimeoutExpired:
+                pidstat_ram_proc.kill()
+                pidstat_ram_stdout, _ = pidstat_ram_proc.communicate()
+
+            cpu_means = _pidstat_window_means(pidstat_cpu_stdout, pid_label, _CPU_OFFSETS)
+            ram_means = _pidstat_window_means(pidstat_ram_stdout, pid_label, _RAM_OFFSETS)
+            for label in pidstat_cpu_rows:
+                cpu_row = {"rate": rate}
+                cpu_row.update(cpu_means.get(label, {m: 0.0 for m in _CPU_OFFSETS}))
+                pidstat_cpu_rows[label].append(cpu_row)
+
+                ram_row = {"rate": rate}
+                ram_row.update(ram_means.get(label, {m: 0.0 for m in _RAM_OFFSETS}))
+                ram_row["vsz_kb"] = int(round(ram_row["vsz_kb"]))
+                ram_row["rss_kb"] = int(round(ram_row["rss_kb"]))
+                pidstat_ram_rows[label].append(ram_row)
+
         parsed = _parse_wrk2_output(output)
 
         row = _base_row()
@@ -446,6 +656,31 @@ def main():
         writer.writerows(rows)
 
     print(f"\n[ok] Sweeps complete. Saved CSV results to: {out_path}")
+
+    if pidstat_enabled:
+        pidstat_dir = script_dir / "pidstat" / pidstat_mode_dir
+        cpu_dir = pidstat_dir / "cpu"
+        ram_dir = pidstat_dir / "ram"
+        cpu_dir.mkdir(parents=True, exist_ok=True)
+        ram_dir.mkdir(parents=True, exist_ok=True)
+
+        for label, cpu_rows in pidstat_cpu_rows.items():
+            cpu_path = cpu_dir / f"{label}.csv"
+            with cpu_path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["rate", "usr_pct", "system_pct", "cpu_pct"])
+                writer.writeheader()
+                writer.writerows(cpu_rows)
+
+        for label, ram_rows in pidstat_ram_rows.items():
+            ram_path = ram_dir / f"{label}.csv"
+            with ram_path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=["rate", "minflt_s", "majflt_s", "vsz_kb", "rss_kb", "mem_pct"]
+                )
+                writer.writeheader()
+                writer.writerows(ram_rows)
+
+        print(f"[ok] pidstat per-component CSVs (one row per rate step, mean over each step's window) saved to: {pidstat_dir}")
 
 
 if __name__ == "__main__":
