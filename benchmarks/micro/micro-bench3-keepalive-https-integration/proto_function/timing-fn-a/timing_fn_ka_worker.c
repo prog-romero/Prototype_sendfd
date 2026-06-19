@@ -477,8 +477,10 @@ int main(void)
              socket_dir, own_ip);
 
     char relay_sock_path[256];
-    snprintf(relay_sock_path, sizeof(relay_sock_path), "%s/%s-relay.sock",
-             socket_dir, own_ip);
+    /* Provider-routed path: workers return wrong-owner keep-alive connections to
+       the single faasd provider socket, which re-routes to the correct container. */
+    snprintf(relay_sock_path, sizeof(relay_sock_path), "%s/provider.sock",
+             socket_dir);
 
     umask(0);
     if (mkdir(socket_dir, 0777) != 0 && errno != EEXIST)

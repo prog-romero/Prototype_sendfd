@@ -270,6 +270,7 @@ done
 
 while read -r FN FNPID _STATUS; do
     [[ "$FN" == "TASK" || -z "$FN" ]] && continue
+    [[ "$_STATUS" != "RUNNING" ]] && continue
     if [[ "$IS_VANILLA" == "1" ]]; then
         [[ "$FN" != *vanilla* ]] && continue
     else
@@ -320,8 +321,11 @@ def _resolve_pidstat_pids(pi_ssh: str, mode: str) -> Dict[str, str]:
 def _start_pi_pidstat_sampling(
     pi_ssh: str, pid_csv: str, duration_s: int
 ) -> Tuple[subprocess.Popen[str], subprocess.Popen[str]]:
-    cpu_cmd = f"sudo pidstat -u -p {pid_csv} 1 {duration_s} 2>/dev/null"
-    ram_cmd = f"sudo pidstat -r -p {pid_csv} 1 {duration_s} 2>/dev/null"
+    # LC_ALL=C forces 24h "HH:MM:SS" timestamps (no AM/PM extra field that would
+    # shift PID parsing) and the literal "Average" trailer line (so it is filtered
+    # out instead of being double-counted as an extra second under a non-EN locale).
+    cpu_cmd = f"sudo LC_ALL=C pidstat -u -p {pid_csv} 1 {duration_s} 2>/dev/null"
+    ram_cmd = f"sudo LC_ALL=C pidstat -r -p {pid_csv} 1 {duration_s} 2>/dev/null"
     cpu_proc = subprocess.Popen(
         ["ssh", pi_ssh, cpu_cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
@@ -331,10 +335,23 @@ def _start_pi_pidstat_sampling(
     return cpu_proc, ram_proc
 
 
-def _mean(values: List[float]) -> float:
+def _percentile(values: List[float], pct: float) -> float:
+    """Linear-interpolated percentile (same method as numpy's default), so the
+    result is unbiased for the small per-second sample counts of one rate step."""
     if not values:
         return 0.0
-    return sum(values) / len(values)
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (pct / 100.0) * (len(ordered) - 1)
+    low = int(rank)
+    high = min(low + 1, len(ordered) - 1)
+    frac = rank - low
+    return ordered[low] + (ordered[high] - ordered[low]) * frac
+
+
+def _p75(values: List[float]) -> float:
+    return _percentile(values, 75.0)
 
 
 def _parse_pidstat_per_second(
@@ -390,12 +407,12 @@ _CPU_OFFSETS = {"usr_pct": -7, "system_pct": -6, "cpu_pct": -3}
 _RAM_OFFSETS = {"minflt_s": -6, "majflt_s": -5, "vsz_kb": -4, "rss_kb": -3, "mem_pct": -2}
 
 
-def _pidstat_window_means(
+def _pidstat_window_p75(
     text: str, pid_label: Dict[str, str], offsets: Dict[str, int]
 ) -> Dict[str, Dict[str, float]]:
     per_second = _parse_pidstat_per_second(text, pid_label, offsets)
     return {
-        label: {metric: round(_mean(vals), 2) for metric, vals in metrics.items()}
+        label: {metric: round(_p75(vals), 2) for metric, vals in metrics.items()}
         for label, metrics in per_second.items()
     }
 
@@ -553,6 +570,7 @@ def main():
     print()
 
     rows = []
+    steps_with_server_errors: List[int] = []
     for idx, rate in enumerate(rates, start=1):
         print(f"[{idx}/{len(rates)}] Sweeping rate={rate} (C={args.concurrency}, P={args.payload_kb}KB)...")
 
@@ -605,15 +623,15 @@ def main():
                 pidstat_ram_proc.kill()
                 pidstat_ram_stdout, _ = pidstat_ram_proc.communicate()
 
-            cpu_means = _pidstat_window_means(pidstat_cpu_stdout, pid_label, _CPU_OFFSETS)
-            ram_means = _pidstat_window_means(pidstat_ram_stdout, pid_label, _RAM_OFFSETS)
+            cpu_p75 = _pidstat_window_p75(pidstat_cpu_stdout, pid_label, _CPU_OFFSETS)
+            ram_p75 = _pidstat_window_p75(pidstat_ram_stdout, pid_label, _RAM_OFFSETS)
             for label in pidstat_cpu_rows:
                 cpu_row = {"rate": rate}
-                cpu_row.update(cpu_means.get(label, {m: 0.0 for m in _CPU_OFFSETS}))
+                cpu_row.update(cpu_p75.get(label, {m: 0.0 for m in _CPU_OFFSETS}))
                 pidstat_cpu_rows[label].append(cpu_row)
 
                 ram_row = {"rate": rate}
-                ram_row.update(ram_means.get(label, {m: 0.0 for m in _RAM_OFFSETS}))
+                ram_row.update(ram_p75.get(label, {m: 0.0 for m in _RAM_OFFSETS}))
                 ram_row["vsz_kb"] = int(round(ram_row["vsz_kb"]))
                 ram_row["rss_kb"] = int(round(ram_row["rss_kb"]))
                 pidstat_ram_rows[label].append(ram_row)
@@ -636,12 +654,42 @@ def main():
 
         rows.append(row)
 
+        # Server-side failures = connection refused/reset/closed-without-response
+        # (socket connect/read/write) + HTTP non-2xx/3xx. These are NOT expected
+        # under healthy load — they mean the gateway or a function is failing
+        # (e.g. a stopped function container). Timeouts are kept separate because
+        # they legitimately appear at saturation (high rate), not a server fault.
+        server_errors = (
+            int(row["errors_non2xx"])
+            + int(row["socket_connect_errors"])
+            + int(row["socket_read_errors"])
+            + int(row["socket_write_errors"])
+        )
+
         print(
             f"  RPS={row['rps']:7.2f} | Throughput={row['transfer_kb_s']:8.2f} KB/s\n"
             f"  AvgLat={row['lat_avg_ms']:7.2f} ms | p99={row['p99_ms']:7.2f} ms\n"
             f"  Pi CPU Avg={row['pi_cpu_busy_avg_pct']:6.2f}% | Max={row['pi_cpu_busy_max_pct']:6.2f}%\n"
-            f"  Timeouts={row['socket_timeout_errors']} | Errors={row['errors_non2xx']}\n"
+            f"  Errors: non2xx={row['errors_non2xx']} connect={row['socket_connect_errors']} "
+            f"read={row['socket_read_errors']} write={row['socket_write_errors']} "
+            f"timeout={row['socket_timeout_errors']}"
         )
+
+        if exit_code != 0:
+            print(f"  [WARN] wrk2 exited with non-zero code {exit_code}.")
+
+        if server_errors > 0:
+            steps_with_server_errors.append(rate)
+            print(
+                "\n"
+                "  ##############################################################\n"
+                "  ##  SERVER-SIDE ERRORS DETECTED — DATA FOR THIS STEP IS      ##\n"
+                "  ##  UNRELIABLE. A function/gateway is likely down or failing.##\n"
+                f"  ##  rate={rate:<5} server_errors={server_errors:<6}                       ##\n"
+                "  ##  (check: sudo ctr -n openfaas-fn task ls   on the Pi)     ##\n"
+                "  ##############################################################"
+            )
+        print()
 
         if idx < len(rates) and args.pause > 0:
             time.sleep(args.pause)
@@ -656,6 +704,14 @@ def main():
         writer.writerows(rows)
 
     print(f"\n[ok] Sweeps complete. Saved CSV results to: {out_path}")
+
+    if steps_with_server_errors:
+        print(
+            "\n[WARNING] Server-side errors occurred at these rate steps: "
+            f"{', '.join(str(r) for r in steps_with_server_errors)}.\n"
+            "          Those rows do NOT reflect a healthy server — re-check the\n"
+            "          function containers on the Pi and re-run the affected rates."
+        )
 
     if pidstat_enabled:
         pidstat_dir = script_dir / "pidstat" / pidstat_mode_dir
@@ -680,7 +736,7 @@ def main():
                 writer.writeheader()
                 writer.writerows(ram_rows)
 
-        print(f"[ok] pidstat per-component CSVs (one row per rate step, mean over each step's window) saved to: {pidstat_dir}")
+        print(f"[ok] pidstat per-component CSVs (one row per rate step, p75 over each step's window) saved to: {pidstat_dir}")
 
 
 if __name__ == "__main__":

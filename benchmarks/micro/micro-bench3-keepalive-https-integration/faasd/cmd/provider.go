@@ -99,14 +99,30 @@ nameserver 8.8.4.4`), workingDirectoryPermission); err != nil {
 		MutateNamespace: httpHeaderMiddleware(handlers.MakeMutateNamespace(client)),
 	}
 
-	// HTTPMIGRATE_ENABLE=1: register the function-IP lookup endpoint so the
-	// OpenFaaS gateway can resolve container IPs for sendfd dispatch.
+	// HTTPMIGRATE_ENABLE=1: enable the provider-routed FD/TLS-state migration path.
 	if os.Getenv("HTTPMIGRATE_ENABLE") == "1" {
+		// Legacy function-IP lookup endpoint (kept for backward compatibility;
+		// the gateway no longer needs it now that the provider resolves IPs and
+		// forwards to the watchdog itself).
 		bootstrap.Router().HandleFunc(
 			"/system/function-ip/{name:[" + bootstrap.NameExpression + "]+}",
 			handlers.MakeFunctionIPHandler(client),
 		).Methods(http.MethodGet)
 		log.Println("[httpmigrate] /system/function-ip/ endpoint registered")
+
+		// Provider-side migration dispatcher: receives [clientFD(, pipeWriteFD)] +
+		// TLS state + target function name from the gateway (first hop) and from
+		// workers (wrong-owner keep-alive relay), resolves the container IP in
+		// process, and forwards to the correct watchdog socket.
+		//
+		// faasd runs on the host, so it uses the host socket directory; it is
+		// bind-mounted into every container at /run/tlsmigrate (see deploy.go).
+		hostMigrateDir := os.Getenv("TLSMIGRATE_HOST_DIR")
+		if hostMigrateDir == "" {
+			hostMigrateDir = "/var/lib/faasd/tlsmigrate"
+		}
+		go handlers.StartMigrateDispatcher(cmd.Context(), client, hostMigrateDir)
+		log.Printf("[httpmigrate] provider migration dispatcher starting on %s/provider.sock\n", hostMigrateDir)
 	}
 
 	log.Printf("Listening on: 0.0.0.0:%d", *config.TCPPort)

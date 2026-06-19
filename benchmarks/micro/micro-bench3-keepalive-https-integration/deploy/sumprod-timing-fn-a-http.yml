@@ -1,0 +1,17 @@
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  sumprod-timing-fn-a:
+    image: romerosdd/sumprod-timing-fn-a-ka-http:latest
+    fprocess: /usr/local/bin/timing-fn-ka-worker
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_enable: "1"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "sumprod-timing-fn-a"

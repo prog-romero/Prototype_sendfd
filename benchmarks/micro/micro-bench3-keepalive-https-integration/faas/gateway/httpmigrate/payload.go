@@ -44,6 +44,17 @@ const (
 
 	// SocketDir is the default directory for all migration UDS sockets.
 	SocketDir = "/run/tlsmigrate"
+
+	// ProviderSock is the single Unix socket exposed by the faasd provider that
+	// receives FD + TLS-state migrations.  In the provider-routed data path the
+	// gateway no longer talks to the watchdog directly: it hands [clientFD,
+	// pipeWriteFD] + payload (which carries the target function name) to the
+	// provider, and the provider resolves the container IP and forwards to the
+	// correct watchdog.  Workers returning a wrong-owner keep-alive connection
+	// also send their fd here.  The provider creates this socket on the host at
+	// /var/lib/faasd/tlsmigrate/provider.sock, bind-mounted into containers at
+	// /run/tlsmigrate/provider.sock.
+	ProviderSock = SocketDir + "/provider.sock"
 )
 
 // KAPayload is the Go representation of httpmigrate_ka_payload_t (C struct).

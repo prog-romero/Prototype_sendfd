@@ -41,7 +41,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -659,45 +658,6 @@ func wrapGtwConn(cconn *C.wolfssl_gtw_conn_t, fd int) *WolfSSLGtwConn {
 		localAddr:  gtwSocketAddr(fd, false),
 		remoteAddr: gtwSocketAddr(fd, true),
 	}
-}
-
-// ── EnsureRelaySocketHTTPS ───────────────────────────────────────────────────
-
-// EnsureRelaySocketHTTPS creates the per-container HTTPS relay socket and starts
-// a relay goroutine for a given container IP.  Called lazily from
-// dispatchMigrateHTTPS when the first /function/ request for a container is
-// dispatched.
-//
-// The socket path is <SocketDir>/<ip>-relay.sock.  Workers that detect a
-// wrong-owner keep-alive request connect to this socket and send the raw TCP fd
-// + updated TLS serial state so the gateway can re-dispatch to the correct
-// container.
-//
-// This function is idempotent: calling it for the same IP more than once is safe.
-func EnsureRelaySocketHTTPS(ip string, serialSize int, providerURL string, notifier CompletionNotifier) {
-	relayMu.Lock()
-	if relayKnown[ip] {
-		relayMu.Unlock()
-		return
-	}
-	relayKnown[ip] = true
-	relayMu.Unlock()
-
-	sockPath := filepath.Join(SocketDir, ip+"-relay.sock")
-	_ = os.Remove(sockPath)
-
-	listenFD, err := bindUnixSocket(sockPath, 512)
-	if err != nil {
-		log.Printf("[relay-https] failed to create relay socket %s: %v\n", sockPath, err)
-		relayMu.Lock()
-		delete(relayKnown, ip)
-		relayMu.Unlock()
-		return
-	}
-	_ = os.Chmod(sockPath, 0o777)
-
-	log.Printf("[relay-https] relay socket ready: %s\n", sockPath)
-	go relayListenLoopHTTPS(listenFD, serialSize, providerURL, notifier)
 }
 
 // ── rawTCPListen ─────────────────────────────────────────────────────────────

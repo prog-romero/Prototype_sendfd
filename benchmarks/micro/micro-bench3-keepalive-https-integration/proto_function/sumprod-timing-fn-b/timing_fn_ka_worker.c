@@ -712,7 +712,9 @@ int main(void)
     snprintf(fn_sock_path, sizeof(fn_sock_path), "%s/%s-fn.sock", socket_dir, own_ip);
 
     char relay_sock_path[256];
-    snprintf(relay_sock_path, sizeof(relay_sock_path), "%s/%s-relay.sock", socket_dir, own_ip);
+    /* Provider-routed path: workers return wrong-owner keep-alive connections to
+       the single faasd provider socket, which re-routes to the correct container. */
+    snprintf(relay_sock_path, sizeof(relay_sock_path), "%s/provider.sock", socket_dir);
 
     s_function_name = fn_name;
     s_relay_socket = relay_sock_path;

@@ -14,8 +14,6 @@ package httpmigrate
 
 import (
 	"fmt"
-	"log"
-	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -82,17 +80,20 @@ func dispatchMigrateHTTPS(
 	providerURL string,
 	notifier CompletionNotifier,
 ) error {
-	// 1. Resolve container IP — same helper as HTTP mode.
-	ip, err := ResolveContainerIP(targetFn, providerURL)
-	if err != nil {
-		return fmt.Errorf("resolve IP for %s: %w", targetFn, err)
-	}
+	// Provider-routed data path (HTTPS): identical to HTTP mode — the gateway
+	// hands [rawFD, pipeWriteFD] + payload (timing + target fn name + TLS serial)
+	// to the faasd provider, which resolves the container IP in-process and
+	// forwards to the correct watchdog.  The completion pipe stays owned by the
+	// gateway so Prometheus metrics are reported here (option A: unchanged).
+	//
+	// providerURL is retained for source compatibility but unused: the provider
+	// socket path is fixed (ProviderSock) and the provider resolves IPs itself.
+	_ = providerURL
 
-	// 2. Ensure relay socket for this container is registered.
-	EnsureRelaySocketHTTPS(ip, len(payload.Serial), providerURL, notifier)
+	payload.Base.SetTarget(targetFn)
 
-	// 3. Create a completion pipe (pipe — kernel mechanism where writing to pipeW
-	//    is readable from pipeR, used to signal request completion to gateway).
+	// Create a completion pipe (writing to pipeW is readable from pipeR; used to
+	// signal request completion to the gateway for Prometheus).
 	var pipeEnds [2]int
 	if err := syscall.Pipe(pipeEnds[:]); err != nil {
 		return fmt.Errorf("pipe: %w", err)
@@ -100,32 +101,28 @@ func dispatchMigrateHTTPS(
 	pipeReadFD  := pipeEnds[0]
 	pipeWriteFD := pipeEnds[1]
 
-	// 4. Connect to of-watchdog's Unix domain socket and send FDs + payload.
-	//    IMPORTANT: start readCompletionPipe goroutine ONLY after sendfd2WithState
-	//    succeeds.  If dispatch fails, pipeWriteFD is closed (by sendfd2WithState's
-	//    deferred Close or the explicit close below) without a write.  The old code
-	//    started the goroutine first — readFull then saw (0, nil) from syscall.Read
-	//    and spun forever, accumulating spinning goroutines that persisted after
-	//    the client disconnected.
-	sockPath := filepath.Join(SocketDir, ip+".sock")
-	watchdogFD, err := connectUnixSocket(sockPath)
+	// Connect to the provider's migration socket and send FDs + payload.
+	// IMPORTANT: start readCompletionPipe ONLY after sendfd2WithState succeeds, so
+	// a failed dispatch (pipeWriteFD closed without a write) cannot leave readFull
+	// spinning on an EOF pipe.
+	providerFD, err := connectUnixSocket(ProviderSock)
 	if err != nil {
 		_ = syscall.Close(pipeReadFD)
 		_ = syscall.Close(pipeWriteFD)
-		return fmt.Errorf("connect watchdog %s: %w", sockPath, err)
+		return fmt.Errorf("connect provider %s: %w", ProviderSock, err)
 	}
-	defer syscall.Close(watchdogFD)
+	defer syscall.Close(providerFD)
 
-	// 5. sendfd2WithState: sends [rawFD, pipeWriteFD] via SCM_RIGHTS + payloadBytes.
-	//    sendfd2WithState closes both rawFD and pipeWriteFD unconditionally (via defer).
+	// sendfd2WithState sends [rawFD, pipeWriteFD] via SCM_RIGHTS + payloadBytes and
+	// closes both FDs unconditionally (via defer).
 	payloadBytes := payload.Marshal()
-	if err := sendfd2WithState(watchdogFD, rawFD, pipeWriteFD, payloadBytes); err != nil {
+	if err := sendfd2WithState(providerFD, rawFD, pipeWriteFD, payloadBytes); err != nil {
 		_ = syscall.Close(pipeReadFD)
 		// pipeWriteFD already closed by sendfd2WithState's deferred Close.
-		return fmt.Errorf("sendfd2 to watchdog: %w", err)
+		return fmt.Errorf("sendfd2 to provider: %w", err)
 	}
 
-	// 6. Monitor pipe in background — ONLY after successful dispatch.
+	// Monitor pipe in background — ONLY after successful dispatch.
 	start := time.Now()
 	if notifier != nil {
 		go readCompletionPipe(pipeReadFD, targetFn, start, notifier)
@@ -133,72 +130,4 @@ func dispatchMigrateHTTPS(
 		go func() { syscall.Close(pipeReadFD) }()
 	}
 	return nil
-}
-
-// relayListenLoopHTTPS is started in a goroutine by RunLoopHTTPS.
-// Workers return wrong-owner keep-alive connections here with the updated TLS serial.
-// The relay re-dispatches to the correct container using dispatchMigrateHTTPS.
-//
-// Note: the relay socket path is per-container IP, created by EnsureRelaySocket.
-// This function is the HTTPS-aware version — it handles the larger payload buffer.
-func relayListenLoopHTTPS(listenFD int, serialSize int, providerURL string, notifier CompletionNotifier) {
-	defer syscall.Close(listenFD)
-
-	// Buffer size for the full HTTPS payload: 160 bytes (KAPayload base) + serial.
-	bufSize := KAPayloadSize + serialSize
-
-	for {
-		connFD, _, err := syscall.Accept(listenFD)
-		if err != nil {
-			if err == syscall.EINTR {
-				continue
-			}
-			log.Printf("[relay-https] accept error: %v\n", err)
-			return
-		}
-
-		go func(cFD int) {
-			defer syscall.Close(cFD)
-
-			// Allocate a dedicated buffer per connection to prevent data races
-			buf := make([]byte, bufSize)
-			clientFD, relayErr := recvfd1WithState(cFD, buf)
-			if relayErr != nil {
-				log.Printf("[relay-https] recvfd1 error: %v\n", relayErr)
-				return
-			}
-
-			// First 160 bytes are the KAPayload base.
-			basePay := UnmarshalPayload(buf[:KAPayloadSize])
-			if basePay == nil || (basePay.Magic != KAPayloadHTTPSMagic && basePay.Magic != KAMagic) {
-				log.Printf("[relay-https] bad magic\n")
-				_ = syscall.Close(clientFD)
-				return
-			}
-
-			targetFn := basePay.Target()
-			if targetFn == "" {
-				log.Printf("[relay-https] empty target function\n")
-				_ = syscall.Close(clientFD)
-				return
-			}
-
-			// Rebuild payload with serial bytes from relay buffer.
-			serial := make([]byte, serialSize)
-			if len(buf) >= KAPayloadSize+serialSize {
-				copy(serial, buf[KAPayloadSize:KAPayloadSize+serialSize])
-			}
-
-			httpsPayload := &KAPayloadHTTPS{Base: *basePay, Serial: serial}
-
-			if err := dispatchMigrateHTTPS(clientFD, targetFn, httpsPayload,
-				providerURL, notifier); err != nil {
-				log.Printf("[relay-https] dispatch failed fn=%s: %v\n", targetFn, err)
-				// Only close clientFD on failure: on success sendfd2WithState
-				// (inside dispatchMigrateHTTPS) already closed it via defer.
-				// Closing it again would double-close a potentially reused fd.
-				_ = syscall.Close(clientFD)
-			}
-		}(connFD)
-	}
 }

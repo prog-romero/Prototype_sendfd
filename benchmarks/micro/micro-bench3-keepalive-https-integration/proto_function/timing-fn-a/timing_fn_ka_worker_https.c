@@ -518,7 +518,9 @@ int main(void)
 
     char fn_sock[256],relay_sock[256];
     snprintf(fn_sock,   sizeof(fn_sock),   "%s/%s-fn.sock",    socket_dir,own_ip);
-    snprintf(relay_sock,sizeof(relay_sock),"%s/%s-relay.sock", socket_dir,own_ip);
+    /* Provider-routed path: workers return wrong-owner keep-alive connections to
+       the single faasd provider socket, which re-routes to the correct container. */
+    snprintf(relay_sock,sizeof(relay_sock),"%s/provider.sock", socket_dir);
     s_relay_sock = relay_sock;
 
     wolfSSL_Init();
