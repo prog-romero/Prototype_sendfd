@@ -1,0 +1,101 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.fullproxy — Approach 3 image (shared by fn-a and fn-b).
+#
+# The of-watchdog is built with CGO + wolfSSL + libtlspeek so it performs ALL
+# the connection plumbing (TLS peek, owner routing, relay, keep-alive, request
+# framing, wolfSSL read/write, TLS state re-export) for BOTH HTTP and HTTPS.
+#
+# The function itself is a PLAIN HTTP server (vanilla_fn_worker) that only does
+# business logic (sum or product) on 127.0.0.1:8085. It contains zero sendfd /
+# TLS code. sum-vs-product is selected at runtime via VANILLA_FN_NAME, so a
+# single image serves both fn-a (sum) and fn-b (product); the deploy YAML sets
+# HTTPMIGRATE_KA_FUNCTION_NAME and VANILLA_FN_NAME per function.
+#
+# Build context must be the repository root. Built under native arm64 emulation:
+#   docker buildx build --platform linux/arm64 \
+#     -f benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/sumprod-timing-fn-a/Dockerfile.fullproxy \
+#     -t romerosdd/sumprod-fullproxy:latest --push .
+
+# ── Stage 1: build wolfSSL (native arm64) ─────────────────────────────────────
+FROM golang:1.24-bookworm AS wolfssl-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential autoconf automake libtool ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY wolfssl/ /wolfssl-src/
+WORKDIR /wolfssl-src
+RUN ./autogen.sh && \
+    ./configure --prefix=/usr/local \
+        --enable-tls13 --enable-opensslextra --enable-atomicuser \
+        --enable-sessionexport --enable-session-ticket --enable-keylog-export \
+        --enable-aesgcm --enable-chacha --enable-hkdf --enable-aescbc \
+        --enable-shared --enable-static && \
+    make -j"$(nproc)" && make install && ldconfig
+
+# ── Stage 2: build libtlspeek (native arm64) ──────────────────────────────────
+FROM wolfssl-build AS tlspeek-build
+RUN apt-get update && apt-get install -y --no-install-recommends cmake \
+ && rm -rf /var/lib/apt/lists/*
+COPY libtlspeek /libtlspeek-src
+WORKDIR /libtlspeek-src
+RUN rm -rf build && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+        -DWOLFSSL_INCLUDE=/usr/local/include \
+        -DWOLFSSL_LIB=/usr/local/lib/libwolfssl.so && \
+    make -j"$(nproc)" tlspeek && \
+    install -d /usr/local/include/tlspeek && \
+    cp -f ../lib/*.h ../common/*.h /usr/local/include/tlspeek/ && \
+    cp -f libtlspeek.a /usr/local/lib/libtlspeek.a && ldconfig
+
+# ── Stage 3: build the CGO watchdog (it does all plumbing) ─────────────────────
+# of-watchdog/go.mod requires Go >= 1.26, while wolfSSL/libtlspeek build fine on
+# the older golang:1.24 base above. So this stage uses golang:latest and pulls
+# in the wolfSSL + libtlspeek artifacts (headers + libs under /usr/local) that
+# match the cgo CFLAGS/LDFLAGS in fullproxy_cgo.go. gcc (from the golang
+# buildpack-deps base) is required for CGO.
+FROM golang:latest AS watchdog-build
+COPY --from=tlspeek-build /usr/local/include /usr/local/include
+COPY --from=tlspeek-build /usr/local/lib     /usr/local/lib
+RUN ldconfig
+WORKDIR /go/src/github.com/openfaas/of-watchdog
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/of-watchdog/ .
+RUN rm -rf vendor && go mod download
+RUN mkdir -p /out && CGO_ENABLED=1 go build -tags wolfssl \
+    -ldflags "-s -w" -o /out/fwatchdog .
+
+# ── Stage 4: build the plain-HTTP business function ────────────────────────────
+FROM tlspeek-build AS fn-build
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/sumprod-vanilla-fn-a/vanilla_fn_worker.c /src/worker.c
+RUN install -d /out && gcc -O2 -Wall -Wextra -o /out/business-fn /src/worker.c
+
+# ── Stage 5: runtime image ─────────────────────────────────────────────────────
+# trixie-slim (glibc >= 2.41) so the CGO watchdog — dynamically linked against
+# the glibc of golang:latest (Debian trixie) — finds its required symbols. The
+# bookworm-built libwolfssl.so and business-fn run fine on trixie (glibc is
+# backward compatible).
+FROM debian:trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=wolfssl-build /usr/local/lib/libwolfssl.so* /usr/local/lib/
+RUN ldconfig
+COPY --from=watchdog-build /out/fwatchdog   /usr/bin/fwatchdog
+COPY --from=fn-build       /out/business-fn /usr/local/bin/business-fn
+
+# fprocess is the plain HTTP business server; the HTTP-mode runner starts it and
+# the watchdog reverse-proxies migrated requests to it on 127.0.0.1:8085.
+ENV fprocess="/usr/local/bin/business-fn"
+ENV mode=http
+ENV http_upstream_url="http://127.0.0.1:8085"
+ENV sendfd_enable=1
+ENV sendfd_full_proxy=1
+ENV sendfd_socket_dir=/run/tlsmigrate
+ENV SENDFD_SOCKET_DIR=/run/tlsmigrate
+# Defaults for fn-a (sum); the deploy YAML overrides these per function.
+ENV HTTPMIGRATE_KA_FUNCTION_NAME=sumprod-timing-fn-a
+ENV VANILLA_FN_NAME=sum-a
+ENV VANILLA_FN_PORT=8085
+# Certificates for the HTTPS path (same secret convention as the C-worker images).
+ENV HTTPS_TLS_CERT=/var/openfaas/secrets/server-crt
+ENV HTTPS_TLS_KEY=/var/openfaas/secrets/server-key
+
+CMD ["/usr/bin/fwatchdog"]

@@ -2,16 +2,31 @@
 
 // Package pkg — sendfd_server.go
 //
-// StartSendFDServer creates a Unix domain socket at <socketDir>/<ownIP>.sock
-// and relays every received pair of FDs + httpmigrate payload to the function
-// worker's socket at <socketDir>/<ownIP>-fn.sock.
+// StartSendFDServer creates a SOCK_SEQPACKET Unix domain socket at
+// <socketDir>/<ownIP>.sock and accepts the FD-migration connections the gateway
+// (and relayed keep-alive connections from sibling containers) send to it. Each
+// connection carries the client FD + a timing pipe FD via SCM_RIGHTS, plus the
+// httpmigrate payload via the message body.
 //
-// Socket type: SOCK_SEQPACKET (required for SCM_RIGHTS across process boundaries).
+// SOCK_SEQPACKET is required for SCM_RIGHTS across process boundaries.
 //
-// Protocol in this direction (gateway → watchdog → function):
-//   - Gateway: sendmsg(watchdog.sock, [clientFD, pipeWriteFD], payload)
-//   - Watchdog: recvmsg → sendmsg(fn.sock, [clientFD, pipeWriteFD], payload)
-//   - Function: recvmsg → process request → write(pipeWriteFD, ts, 8); close(pipeWriteFD)
+// There are two mutually-exclusive behaviours, selected by the handler argument:
+//
+//   - Legacy relay (handler == nil): the watchdog only forwards each received
+//     pair of FDs + payload to the C function worker's socket
+//     (<socketDir>/<ownIP>-fn.sock); the worker performs all the plumbing.
+//         Gateway   : sendmsg(<ip>.sock, [clientFD, pipeFD], payload)
+//         Watchdog  : recvmsg → sendmsg(<ip>-fn.sock, [clientFD, pipeFD], payload)
+//         C worker  : recvmsg → peek/route/parse/respond → signal pipe
+//
+//   - Full proxy (handler != nil, "Approach 3"): the watchdog itself drives the
+//     whole connection for its keep-alive lifetime — TLS peek, owner routing,
+//     relay, HTTP framing, wolfSSL read/write (HTTPS) and the direct response
+//     write to the client — and only calls handler for business logic. The
+//     function process is a plain HTTP server. See wd_bridge.c / fullproxy*.go.
+//         Gateway   : sendmsg(<ip>.sock, [clientFD, pipeFD], payload)
+//         Watchdog  : recvmsg → serveFullProxyConn (drives the connection) →
+//                     handler.ServeHTTP → write response to clientFD → signal pipe
 
 package pkg
 
@@ -20,10 +35,13 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/openfaas/of-watchdog/config"
 )
 
 const kaPayloadSize = 32768 // enough for both HTTP (160B) and HTTPS (~16KB) payloads
@@ -63,12 +81,23 @@ func getContainerIP() (string, error) {
 }
 
 // StartSendFDServer is the top-level entry point.  It discovers the container's
-// own IP, creates the gateway-facing socket at <socketDir>/<ip>.sock, and
-// accepts connections, relaying each received pair of FDs to the function
-// worker's socket at <socketDir>/<ip>-fn.sock.
+// own IP and creates the gateway-facing socket at <socketDir>/<ip>.sock.
+//
+// Behaviour depends on handler:
+//
+//   - handler == nil (legacy mode): every received pair of FDs is relayed to
+//     the function worker's socket at <socketDir>/<ip>-fn.sock, and the C worker
+//     does all the connection plumbing itself.
+//
+//   - handler != nil (full-proxy mode, Approach 3): the watchdog itself drives
+//     the whole connection (TLS peek, owner routing, relay, keep-alive, HTTP
+//     parse and direct response write) and invokes handler for business logic.
+//     The function process is a plain HTTP server.
 //
 // The function blocks until ctx is cancelled or a fatal error occurs.
-func StartSendFDServer(ctx context.Context, socketDir string) {
+func StartSendFDServer(ctx context.Context, cfg config.WatchdogConfig, handler http.Handler) {
+	socketDir := cfg.SendFDSocketDir
+
 	ip, err := getContainerIP()
 	if err != nil {
 		log.Printf("[sendfd] getContainerIP: %v\n", err)
@@ -80,6 +109,12 @@ func StartSendFDServer(ctx context.Context, socketDir string) {
 		return
 	}
 
+	fullProxy := handler != nil
+
+	// In full-proxy mode the watchdog also has to answer relayed keep-alive
+	// connections that other containers send to the provider socket. We publish
+	// a name symlink <socketDir>/<fnName>.sock -> <ip>.sock so the provider can
+	// route by function name exactly like it did for the C workers.
 	gwSockPath := filepath.Join(socketDir, ip+".sock")
 	_ = os.Remove(gwSockPath) // remove stale socket from a previous run
 
@@ -91,7 +126,22 @@ func StartSendFDServer(ctx context.Context, socketDir string) {
 	defer syscall.Close(listenFD)
 	_ = os.Chmod(gwSockPath, 0o777)
 
-	log.Printf("[sendfd] listening on %s\n", gwSockPath)
+	if fullProxy {
+		if err := initFullProxy(cfg); err != nil {
+			log.Printf("[sendfd] full-proxy init failed: %v\n", err)
+			return
+		}
+		if cfg.OwnFunctionName != "" {
+			nameSock := filepath.Join(socketDir, cfg.OwnFunctionName+".sock")
+			_ = os.Remove(nameSock)
+			if err := os.Symlink(gwSockPath, nameSock); err != nil {
+				log.Printf("[sendfd] symlink %s -> %s: %v\n", nameSock, gwSockPath, err)
+			}
+		}
+		log.Printf("[sendfd] full-proxy listening on %s (fn=%q)\n", gwSockPath, cfg.OwnFunctionName)
+	} else {
+		log.Printf("[sendfd] listening on %s\n", gwSockPath)
+	}
 
 	// Accept loop — ctx cancellation stops the loop via a background goroutine
 	// that closes the listening fd.
@@ -116,8 +166,29 @@ func StartSendFDServer(ctx context.Context, socketDir string) {
 			log.Printf("[sendfd] accept: %v\n", acceptErr)
 			return
 		}
-		go relayToFunction(connFD, fnSockPath)
+		if fullProxy {
+			go acceptFullProxy(connFD, cfg, handler)
+		} else {
+			go relayToFunction(connFD, fnSockPath)
+		}
 	}
+}
+
+// acceptFullProxy receives the 2 FDs (clientFD, pipeWriteFD) + payload from the
+// gateway (or from a relayed keep-alive connection) and hands the connection to
+// the full-proxy driver, which owns it for its whole keep-alive lifetime.
+func acceptFullProxy(connFD int, cfg config.WatchdogConfig, handler http.Handler) {
+	defer syscall.Close(connFD)
+
+	payload := make([]byte, kaPayloadSize)
+	fd1, fd2, recvErr := recvfdsWithState(connFD, payload)
+	if recvErr != nil {
+		log.Printf("[sendfd] full-proxy recvfds: %v\n", recvErr)
+		return
+	}
+
+	// serveFullProxyConn takes ownership of fd1 and fd2 (it closes them).
+	serveFullProxyConn(fd1, fd2, payload, cfg, handler)
 }
 
 // relayToFunction receives 2 FDs + payload from the gateway and forwards them

@@ -109,20 +109,33 @@ func (w *Watchdog) Start(ctx context.Context) error {
 
 	if w.config.SendFDEnable {
 		log.Printf("SendFD server enabled, socket dir: %s\n", w.config.SendFDSocketDir)
-		go StartSendFDServer(ctx, w.config.SendFDSocketDir)
 
-		// Start the worker process (fprocess) in the background immediately
-		// so it can create its -fn.sock and receive FDs.
-		go func() {
-			log.Printf("Starting fprocess in background: %s\n", w.config.FunctionProcess)
-			parts := strings.Split(w.config.FunctionProcess, " ")
-			cmd := exec.Command(parts[0], parts[1:]...)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				log.Printf("fprocess exited with error: %v\n", err)
-			}
-		}()
+		if w.config.SendFDFullProxy {
+			// Approach 3: the watchdog itself performs all connection plumbing
+			// (TLS peek, routing, relay, keep-alive, HTTP parse, direct write)
+			// and delegates only business logic to the function via the shared
+			// requestHandler. The function process is the plain HTTP server that
+			// the HTTP-mode runner already started, so we do NOT launch a
+			// separate C worker here.
+			log.Printf("SendFD full-proxy mode enabled (function name: %q)\n", w.config.OwnFunctionName)
+			go StartSendFDServer(ctx, w.config, baseFunctionHandler)
+		} else {
+			// Legacy mode: relay received FDs to the C worker's -fn.sock and let
+			// the worker do the plumbing. Start the worker process (fprocess) in
+			// the background so it can create its -fn.sock and receive FDs.
+			go StartSendFDServer(ctx, w.config, nil)
+
+			go func() {
+				log.Printf("Starting fprocess in background: %s\n", w.config.FunctionProcess)
+				parts := strings.Split(w.config.FunctionProcess, " ")
+				cmd := exec.Command(parts[0], parts[1:]...)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					log.Printf("fprocess exited with error: %v\n", err)
+				}
+			}()
+		}
 	}
 
 	listenUntilShutdown(s,

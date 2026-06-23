@@ -203,9 +203,9 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
             return 0;
         }
         if (raw_len == 0)
-            fprintf(stderr, "[tlspeek] recv(MSG_PEEK): connection closed fd=%d\n", ctx->tcp_fd);
+            TLSPEEK_VLOG("[tlspeek] recv(MSG_PEEK): connection closed fd=%d\n", ctx->tcp_fd);
         else
-            fprintf(stderr, "[tlspeek] recv(MSG_PEEK) failed fd=%d errno=%d\n", ctx->tcp_fd, errno);
+            TLSPEEK_VLOG("[tlspeek] recv(MSG_PEEK) failed fd=%d errno=%d\n", ctx->tcp_fd, errno);
         return -1;
     }
 
@@ -264,7 +264,7 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
     uint8_t plaintext[TLSPEEK_MAX_RECORD];
     int     ret;
 
-    fprintf(stderr, "[tlspeek] decrypt: cipher=%d seq=%llu "
+    TLSPEEK_VLOG("[tlspeek] decrypt: cipher=%d seq=%llu "
             "key[0..3]=%02x%02x%02x%02x iv[0..3]=%02x%02x%02x%02x ct_len=%zu\n",
             (int)ctx->cipher_suite, (unsigned long long)ctx->read_seq_num,
             ctx->client_write_key[0], ctx->client_write_key[1],

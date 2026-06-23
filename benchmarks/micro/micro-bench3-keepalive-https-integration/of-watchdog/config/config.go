@@ -75,6 +75,29 @@ type WatchdogConfig struct {
 	// SendFDSocketDir is the directory for httpmigrate UDS sockets (default /run/tlsmigrate).
 	SendFDSocketDir string
 
+	// SendFDFullProxy enables "Approach 3": the watchdog performs ALL the
+	// connection plumbing that the C function workers used to do (TLS peek,
+	// owner routing, relay, keep-alive, HTTP parse and direct response write).
+	// The function process then only needs to implement business logic as a
+	// plain HTTP server reachable via UpstreamURL.
+	//
+	// When false (default) the watchdog keeps the legacy behaviour: it merely
+	// relays the received FDs to the C worker's -fn.sock, and the worker does
+	// the plumbing itself. This guarantees existing images keep working.
+	SendFDFullProxy bool
+
+	// OwnFunctionName is this container's function name, used by the full-proxy
+	// path to decide whether an incoming request belongs to us (handle it) or
+	// to another function (relay it). Sourced from HTTPMIGRATE_KA_FUNCTION_NAME
+	// or OPENFAAS_NAME.
+	OwnFunctionName string
+
+	// TLSCertFile / TLSKeyFile are the server certificate and key used by the
+	// full-proxy HTTPS path to restore wolfSSL sessions. Sourced from
+	// HTTPS_TLS_CERT / HTTPS_TLS_KEY.
+	TLSCertFile string
+	TLSKeyFile  string
+
 	// Handler is the HTTP handler to use in "inproc" mode
 	Handler http.HandlerFunc
 }
@@ -208,6 +231,17 @@ func New(env []string) (WatchdogConfig, error) {
 	} else {
 		c.SendFDSocketDir = "/run/tlsmigrate"
 	}
+
+	c.SendFDFullProxy = getBools(envMap, "sendfd_full_proxy", "SENDFD_FULL_PROXY")
+
+	if v := envMap["HTTPMIGRATE_KA_FUNCTION_NAME"]; v != "" {
+		c.OwnFunctionName = v
+	} else if v := envMap["OPENFAAS_NAME"]; v != "" {
+		c.OwnFunctionName = v
+	}
+
+	c.TLSCertFile = envMap["HTTPS_TLS_CERT"]
+	c.TLSKeyFile = envMap["HTTPS_TLS_KEY"]
 
 	return c, nil
 }

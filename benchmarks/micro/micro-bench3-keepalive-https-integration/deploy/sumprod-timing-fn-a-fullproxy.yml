@@ -1,0 +1,31 @@
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+# Approach 3 (full-proxy): the watchdog does ALL plumbing (HTTP + HTTPS).
+# The function image only carries a plain HTTP business server (sum on fn-a).
+functions:
+  sumprod-timing-fn-a:
+    image: romerosdd/sumprod-fullproxy:latest
+    fprocess: /usr/local/bin/business-fn
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      # Enable the FD migration server AND the full-proxy driver in the watchdog.
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "sumprod-timing-fn-a"
+      # Business binary: sum (name without "-b"/"prod").
+      VANILLA_FN_NAME: "sum-a"
+      VANILLA_FN_PORT: "8085"
+      # TLS material for the HTTPS path.
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"
+    secrets:
+      - server-crt
+      - server-key
