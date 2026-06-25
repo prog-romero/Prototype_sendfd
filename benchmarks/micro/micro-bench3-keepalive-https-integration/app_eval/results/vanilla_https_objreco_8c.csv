@@ -1,0 +1,7 @@
+timestamp,sweep_type,monitored_variable,monitored_value,rate,concurrency,target_mode,payload_kb,exit_code,rps,transfer_kb_s,transfer_mb_s,lat_avg_ms,lat_stdev_ms,lat_max_ms,p50_ms,p75_ms,p90_ms,p95_ms,p99_ms,total_requests,read_mb,errors_non2xx,socket_connect_errors,socket_read_errors,socket_write_errors,socket_timeout_errors,pi_cpu_busy_avg_pct,pi_cpu_busy_max_pct,pi_cpu_busy_min_pct,pi_cpu_samples
+2026-06-24T21:13:21+00:00,rate_sweep,rate,1,1,8,vanilla-https,7,0,1.07,0.0,0.0,883.24,77.05,1020.0,893.44,924.16,984.58,0.0,1020.0,0,0.0,0,0,0,0,0,48.704,286.869,8.867,62
+2026-06-24T21:14:33+00:00,rate_sweep,rate,2,2,8,vanilla-https,7,0,2.0,1.64,0.002,866.02,75.99,1000.0,875.52,917.5,954.37,0.0,995.84,0,0.0,0,0,0,0,0,83.329,272.727,9.901,62
+2026-06-24T21:15:45+00:00,rate_sweep,rate,3,3,8,vanilla-https,7,0,3.07,2.29,0.002,1010.0,1010.0,4560.0,855.04,947.2,2780.0,0.0,4560.0,0,0.0,54,0,0,0,0,95.786,302.513,7.843,62
+2026-06-24T21:16:57+00:00,rate_sweep,rate,4,4,8,vanilla-https,7,0,4.07,1.87,0.002,1020.0,3000.0,17680.0,291.33,329.73,374.27,0.0,15700.0,0,0.0,241,1777,0,0,10,95.203,234.271,9.877,62
+2026-06-24T21:18:09+00:00,rate_sweep,rate,5,5,8,vanilla-https,7,0,3.1,1.01,0.001,18850.0,18460.0,46170.0,13930.0,38170.0,42990.0,0.0,46170.0,0,0.0,186,6974,0,0,134,253.113,358.897,7.882,62
+2026-06-24T21:19:22+00:00,rate_sweep,rate,6,6,8,vanilla-https,7,0,2.27,0.0,0.0,2700.0,4570.0,16960.0,9.36,4210.0,10320.0,0.0,16310.0,0,0.0,136,7927,0,0,164,298.806,354.66,7.901,62

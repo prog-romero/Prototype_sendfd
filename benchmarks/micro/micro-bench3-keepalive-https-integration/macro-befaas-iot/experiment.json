@@ -1,0 +1,12 @@
+{
+  "comment": "Config experiment minimale lue par @befaas/lib (helper.loadExperiment). call.js l'utilise pour résoudre le provider de chaque fonction appelée via ctx.call : provider=openfaas -> endpoint=process.env.OPENFAAS_ENDPOINT. Seules les 4 fonctions de notre chaîne synchrone sont déclarées.",
+  "program": {
+    "functions": {
+      "objectrecognition":        { "provider": "openfaas" },
+      "emergencydetection":       { "provider": "openfaas" },
+      "trafficstatistics":        { "provider": "openfaas" },
+      "setlightphasecalculation": { "provider": "openfaas" }
+    }
+  },
+  "services": {}
+}

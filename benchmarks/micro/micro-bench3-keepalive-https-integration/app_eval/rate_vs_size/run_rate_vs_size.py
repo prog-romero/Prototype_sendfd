@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""
+RPS max (sans erreur) par taille d'image — macro-bench BeFaaS IoT.
+
+Idée
+----
+Pour CHAQUE taille d'image, on balaye une liste de débits croissants (--rates).
+Pour chaque débit on lance wrk2 (open-loop, -R<rate>) sur objectrecognition avec
+l'image de cette taille, et on regarde s'il y a eu des erreurs.
+
+Le « RPS max sans erreur » d'une taille = le **RPS effectivement atteint le plus
+élevé** parmi les paliers de débit qui se sont terminés **sans aucune erreur**
+(ni non-2xx, ni socket connect/read/write, ni timeout).
+
+On produit :
+  - un CSV DÉTAILLÉ : une ligne par (taille, débit) avec rps atteint + erreurs ;
+  - un CSV RÉSUMÉ  : une ligne par taille avec le RPS max sans erreur.
+Le plot (plot_rate_vs_size.py) trace le RPS max vs taille, proto vs vanilla.
+
+Exemple
+-------
+  python3 run_rate_vs_size.py --mode proto --scheme https --host 192.168.2.2 \\
+      --sizes 2,4,8,16,32,64,128,256,512,1024 \\
+      --rates 2,4,6,8,10,12,16,20,30,40,50 \\
+      --concurrency 32 --duration-s 20 \\
+      --out results/proto_https.csv
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import os
+import re
+import subprocess
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+# ── parsers wrk2 (identiques aux autres scripts du bench) ─────────────────────
+
+_LATENCY_STATS_RE = re.compile(
+    r"Latency\s+"
+    r"(?P<avg>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<avg_u>us|ms|s)\s+"
+    r"(?P<stdev>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<stdev_u>us|ms|s)\s+"
+    r"(?P<max>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<max_u>us|ms|s)",
+    re.IGNORECASE,
+)
+_PERCENTILE_RE = re.compile(
+    r"(?P<pct>[0-9]+(?:\.[0-9]+)?)%\s+(?P<val>[0-9]+\.?[0-9]*)\s*(?P<unit>us|ms|s)"
+)
+_REQUESTS_IN_RE = re.compile(
+    r"(?P<reqs>[0-9,]+)\s+requests in\s+[0-9.]+s,\s+(?P<read>[0-9.]+)(?P<read_u>KB|MB|GB)\s+read"
+)
+_RPS_RE = re.compile(r"Requests/sec:\s+(?P<rps>[0-9.]+)")
+_TRANSFER_RE = re.compile(r"Transfer/sec:\s+(?P<val>[0-9.]+)(?P<unit>KB|MB|GB)")
+_ERRORS_RE = re.compile(r"Non-2xx or 3xx responses:\s+(?P<n>[0-9]+)")
+_SOCKET_ERRORS_RE = re.compile(
+    r"Socket errors:\s*connect\s+(?P<connect>[0-9]+),\s*read\s+(?P<read>[0-9]+),"
+    r"\s*write\s+(?P<write>[0-9]+),\s*timeout\s+(?P<timeout>[0-9]+)"
+)
+
+
+def _to_ms(v, u):
+    return v / 1000.0 if u == "us" else (v * 1000.0 if u == "s" else v)
+
+
+def _to_kb(v, u):
+    return v if u == "KB" else (v * 1024.0 if u == "MB" else (v * 1024.0 * 1024.0 if u == "GB" else v))
+
+
+def _f0(raw):
+    return 0.0 if raw.strip().lower() in {"nan", "-nan", "+nan"} else float(raw)
+
+
+def _parse(text: str) -> dict:
+    m = _LATENCY_STATS_RE.search(text)
+    avg_ms = _to_ms(_f0(m.group("avg")), m.group("avg_u")) if m else 0.0
+    pcts = {}
+    for pm in _PERCENTILE_RE.finditer(text):
+        pcts[f"p{float(pm.group('pct')):g}_ms"] = _to_ms(float(pm.group("val")), pm.group("unit"))
+    req_m = _REQUESTS_IN_RE.search(text)
+    rps_m = _RPS_RE.search(text)
+    tr_m = _TRANSFER_RE.search(text)
+    err_m = _ERRORS_RE.search(text)
+    sock_m = _SOCKET_ERRORS_RE.search(text)
+    return {
+        "rps": round(float(rps_m.group("rps")), 3) if rps_m else 0.0,
+        "transfer_kb_s": round(_to_kb(float(tr_m.group("val")), tr_m.group("unit")), 3) if tr_m else 0.0,
+        "avg_ms": round(avg_ms, 3),
+        "p99_ms": round(pcts.get("p99_ms", 0.0), 3),
+        "total_requests": int(req_m.group("reqs").replace(",", "")) if req_m else 0,
+        "errors_non2xx": int(err_m.group("n")) if err_m else 0,
+        "socket_connect_errors": int(sock_m.group("connect")) if sock_m else 0,
+        "socket_read_errors": int(sock_m.group("read")) if sock_m else 0,
+        "socket_write_errors": int(sock_m.group("write")) if sock_m else 0,
+        "socket_timeout_errors": int(sock_m.group("timeout")) if sock_m else 0,
+    }
+
+
+def _find_wrk2() -> str:
+    env = os.environ.get("WRK2")
+    if env:
+        e = os.path.expanduser(env)
+        if os.path.isfile(e) and os.access(e, os.X_OK):
+            return e
+    for c in (os.path.expanduser("~/wrk2/wrk"), os.path.expanduser("~/wrk2/wrk2")):
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return "wrk2"
+
+
+def _run_wrk2(wrk2, lua, url, req_path, image_path, duration_s, timeout_s, threads, conc, rate):
+    env = os.environ.copy()
+    env["WRK_IMAGE_PATH"] = image_path
+    env["WRK_PATH"] = req_path
+    actual_threads = min(threads, conc)
+    cmd = [wrk2, f"-t{actual_threads}", f"-c{conc}", f"-d{duration_s}s", f"-R{rate}",
+           "--timeout", f"{timeout_s}s", "--latency", "-s", lua, url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env,
+                           timeout=duration_s + timeout_s + 40)
+    except subprocess.TimeoutExpired as exc:
+        return 124, f"wrk2 process timeout: {exc}"
+    except FileNotFoundError:
+        return 127, "wrk2 introuvable"
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def _parse_int_list(raw):
+    return [int(x.strip()) for x in raw.split(",") if x.strip()]
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="RPS max sans erreur par taille d'image (BeFaaS IoT).")
+    p.add_argument("--mode", choices=["proto", "vanilla"], required=True)
+    p.add_argument("--scheme", choices=["https", "http"], default="https")
+    p.add_argument("--host", default="192.168.2.2")
+    p.add_argument("--port", type=int, default=None, help="override port (def 8443/8080)")
+    p.add_argument("--function", default="objectrecognition")
+    p.add_argument("--sizes", default="2,4,8,16,32,64,128,256,512,1024",
+                   help="tailles d'image KB (img-<KB>kb.jpg)")
+    p.add_argument("--rates", default="2,4,6,8,10,12,16,20,30,40,50",
+                   help="débits cibles req/s à balayer pour chaque taille")
+    p.add_argument("--images-dir", default=None,
+                   help="dossier des images (def: ../base_latence/images)")
+    p.add_argument("--concurrency", type=int, default=32,
+                   help="connexions wrk2 (assez haut pour atteindre le RPS visé)")
+    p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--duration-s", type=int, default=20, help="durée par palier")
+    p.add_argument("--timeout-s", type=int, default=30)
+    p.add_argument("--pause", type=int, default=3, help="pause entre paliers (s)")
+    p.add_argument("--rps-tolerance", type=float, default=0.90,
+                   help="un palier ne compte que si rps_atteint >= tolerance*rate (def 0.90)")
+    p.add_argument("--no-stop-on-error", action="store_true",
+                   help="ne pas arrêter le balayage d'une taille au 1er palier en échec")
+    p.add_argument("--out", required=True, help="CSV RÉSUMÉ (1 ligne/taille)")
+    p.add_argument("--detail-out", default=None,
+                   help="CSV DÉTAILLÉ (1 ligne/(taille,débit)). Déf: <out sans .csv>_detail.csv")
+    p.add_argument("--append", action="store_true",
+                   help="AJOUTER au CSV existant au lieu de l'écraser (workflow taille par taille : "
+                        "relancer avec une nouvelle --sizes et le même --out accumule les lignes).")
+    args = p.parse_args()
+
+    port = args.port or (8443 if args.scheme == "https" else 8080)
+    req_path = f"/function/{args.function}"
+    url = f"{args.scheme}://{args.host}:{port}{req_path}"
+
+    wrk2 = _find_wrk2()
+    script_dir = Path(__file__).resolve().parent
+    lua = str(script_dir / "client" / "post_image.lua")
+    images_dir = Path(args.images_dir) if args.images_dir else (script_dir.parent / "base_latence" / "images")
+
+    sizes = _parse_int_list(args.sizes)
+    rates = sorted(_parse_int_list(args.rates))
+
+    detail_out = args.detail_out or str(Path(args.out).with_suffix("")) + "_detail.csv"
+
+    print(f"=== RPS max sans erreur ({args.mode.upper()} / {args.scheme.upper()}) ===")
+    print(f"url        : {url}")
+    print(f"images     : {images_dir}")
+    print(f"sizes KB   : {sizes}")
+    print(f"rates      : {rates}")
+    print(f"concurrency: {args.concurrency}   duration: {args.duration_s}s   tol: {args.rps_tolerance}")
+    print(f"résumé     : {args.out}")
+    print(f"détail     : {detail_out}\n")
+
+    detail_rows = []
+    summary_rows = []
+
+    for size_kb in sizes:
+        img = images_dir / f"img-{size_kb}kb.jpg"
+        if not img.is_file():
+            print(f"[{size_kb:>5} KB] IMAGE INTROUVABLE {img} — passée")
+            continue
+        image_bytes = img.stat().st_size
+        print(f"[{size_kb:>5} KB] ({image_bytes} o)")
+
+        best_rps = 0.0
+        best_rate = 0
+        for rate in rates:
+            rc, out = _run_wrk2(wrk2, lua, url, req_path, str(img),
+                                args.duration_s, args.timeout_s, args.threads,
+                                args.concurrency, rate)
+            d = _parse(out)
+            server_errors = (d["errors_non2xx"] + d["socket_connect_errors"]
+                             + d["socket_read_errors"] + d["socket_write_errors"])
+            total_errors = server_errors + d["socket_timeout_errors"]
+            kept_up = d["rps"] >= args.rps_tolerance * rate
+            sustainable = (total_errors == 0) and kept_up
+
+            flag = "OK " if sustainable else ("ERR" if total_errors else "SAT")
+            print(f"   R={rate:<4} -> rps={d['rps']:7.2f}  p99={d['p99_ms']:7.1f}ms"
+                  f"  err(non2xx={d['errors_non2xx']},conn={d['socket_connect_errors']},"
+                  f"to={d['socket_timeout_errors']})  [{flag}]")
+
+            detail_rows.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "mode": args.mode, "scheme": args.scheme, "function": args.function,
+                "size_kb": size_kb, "image_bytes": image_bytes,
+                "target_rate": rate, "concurrency": args.concurrency,
+                "achieved_rps": d["rps"], "transfer_kb_s": d["transfer_kb_s"],
+                "avg_ms": d["avg_ms"], "p99_ms": d["p99_ms"],
+                "total_requests": d["total_requests"],
+                "errors_non2xx": d["errors_non2xx"],
+                "socket_connect_errors": d["socket_connect_errors"],
+                "socket_read_errors": d["socket_read_errors"],
+                "socket_write_errors": d["socket_write_errors"],
+                "socket_timeout_errors": d["socket_timeout_errors"],
+                "sustainable": int(sustainable), "exit_code": rc,
+            })
+
+            if sustainable and d["rps"] > best_rps:
+                best_rps = d["rps"]
+                best_rate = rate
+
+            if (not sustainable) and (not args.no_stop_on_error):
+                print(f"      (palier en échec -> arrêt du balayage pour {size_kb} KB)")
+                break
+            if args.pause > 0:
+                time.sleep(args.pause)
+
+        print(f"   => RPS max sans erreur ({size_kb} KB) = {best_rps:.2f} (à R={best_rate})\n")
+        summary_rows.append({
+            "mode": args.mode, "scheme": args.scheme, "function": args.function,
+            "size_kb": size_kb, "image_bytes": image_bytes,
+            "max_rps_no_error": round(best_rps, 3), "rate_at_max": best_rate,
+            "concurrency": args.concurrency, "duration_s": args.duration_s,
+        })
+
+    # écriture des CSV (mode "w" = écrase ; --append = ajoute à la suite)
+    def write_rows(path, rows, append):
+        if not rows:
+            return
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        non_empty = Path(path).exists() and Path(path).stat().st_size > 0
+        open_mode = "a" if (append and non_empty) else "w"
+        with open(path, open_mode, newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            if open_mode == "w":
+                w.writeheader()
+            w.writerows(rows)
+
+    write_rows(args.out, summary_rows, args.append)
+    write_rows(detail_out, detail_rows, args.append)
+
+    verb = "ajouté à" if args.append else "écrit dans"
+    print(f"[ok] résumé {verb} → {args.out}")
+    print(f"[ok] détail {verb} → {detail_out}")
+
+
+if __name__ == "__main__":
+    main()

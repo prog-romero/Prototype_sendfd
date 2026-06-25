@@ -1,0 +1,10 @@
+{
+  "name": "befaas-host",
+  "version": "1.0.0",
+  "description": "OpenFaaS node10-express-service host for BeFaaS IoT functions",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

@@ -1,0 +1,29 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Service Redis pour faasd — Option B (ROBUSTE, IP stable).
+#
+# Pourquoi Option B : sur faasd, le réseau `default` n'a pas d'IPAM explicite,
+# donc `ipv4_address:` est IGNORÉ (Redis reçoit une IP dynamique, ex. 10.62.0.20,
+# qui change à chaque redémarrage). À la place, on PUBLIE le port Redis sur l'IP
+# du bridge `openfaas0` = 10.62.0.1 (exactement comme le gateway publie 8080/8443).
+# Cette IP ne change jamais, et les fonctions la joignent déjà (10.62.0.1:8080).
+#
+# `"10.62.0.1:6379:6379"` ne publie QUE sur le bridge → joignable par les
+# fonctions, PAS exposé au LAN (plus sûr que "6379:6379" / 0.0.0.0).
+#
+# REDIS_ENDPOINT à utiliser dans les fonctions = redis://10.62.0.1:6379
+# (c'est déjà le défaut de deploy-all.sh : REDIS_IP=10.62.0.1).
+#
+# Si Redis est DÉJÀ dans votre docker-compose.yaml (cas actuel), il suffit de
+# changer la ligne `ports:` (voir instructions / commande sed fournie).
+# ─────────────────────────────────────────────────────────────────────────────
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    container_name: redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "10.62.0.1:6379:6379"
+    restart: on-failure
+
+# (Le bloc `networks: default: ipv4_address:` n'est PAS nécessaire et est ignoré
+#  par faasd — ne pas le mettre.)

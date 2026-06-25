@@ -44,11 +44,19 @@ func invokeBusinessLogic(handler http.Handler, reqBytes []byte, shouldClose bool
 		return errorResponseBytes(http.StatusBadRequest, shouldClose)
 	}
 
-	// httputil.ReverseProxy (used by the HTTP-mode handler) requires an
-	// outbound-style request: RequestURI must be empty and the URL must carry a
-	// scheme/host. The Director installed by makeHTTPRequestHandler overrides
-	// the host with UpstreamURL, so any placeholder is fine here.
-	req.RequestURI = ""
+	// IMPORTANT: do NOT clear req.RequestURI here.
+	//
+	// The HTTP-mode handler (executor.HTTPFunctionRunner.Run) builds the upstream
+	// URL by appending req.RequestURI to UpstreamURL:
+	//     upstreamURL := f.UpstreamURL.String()
+	//     if len(r.RequestURI) > 0 { upstreamURL += r.RequestURI }
+	// so RequestURI MUST carry the original "/function/<name>/..." path that
+	// http.ReadRequest already parsed. Clearing it sent every request to the
+	// upstream root "/", which made rpc functions (koa route POST /call) return
+	// 404 while only objectrecognition (route POST /) worked.
+	//
+	// scheme/host are only needed by the stdlib ReverseProxy fallback path
+	// (SSE / ndjson / websocket); the Director overrides the host anyway.
 	req.URL.Scheme = "http"
 	if req.URL.Host == "" {
 		req.URL.Host = "function"

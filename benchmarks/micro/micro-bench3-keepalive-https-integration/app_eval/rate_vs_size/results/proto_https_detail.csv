@@ -1,0 +1,10 @@
+timestamp,mode,scheme,function,size_kb,image_bytes,target_rate,concurrency,achieved_rps,transfer_kb_s,avg_ms,p99_ms,total_requests,errors_non2xx,socket_connect_errors,socket_read_errors,socket_write_errors,socket_timeout_errors,sustainable,exit_code
+2026-06-25T14:00:06+00:00,proto,https,objectrecognition,2,2089,2,1,2.0,1.63,211.28,230.4,40,0,0,0,0,0,1,0
+2026-06-25T14:00:36+00:00,proto,https,objectrecognition,2,2089,4,1,4.0,3.23,205.31,247.55,80,0,0,0,0,0,1,0
+2026-06-25T14:01:06+00:00,proto,https,objectrecognition,2,2089,6,1,4.75,3.91,3150.0,4090.0,95,0,0,0,0,0,0,0
+2026-06-25T14:03:04+00:00,proto,https,objectrecognition,2,2089,2,50,2.39,1.93,0.0,0.0,48,0,0,0,0,0,1,0
+2026-06-25T14:03:34+00:00,proto,https,objectrecognition,2,2089,4,50,4.78,3.86,3150.0,3580.0,96,0,0,0,0,0,1,0
+2026-06-25T14:04:04+00:00,proto,https,objectrecognition,2,2089,6,50,7.17,4.89,1520.0,2880.0,144,61,0,0,0,0,0,0
+2026-06-25T14:15:22+00:00,proto,https,objectrecognition,2,2089,2,8,2.0,1.61,588.71,706.56,40,0,0,0,0,0,1,0
+2026-06-25T14:15:52+00:00,proto,https,objectrecognition,2,2089,4,8,3.65,1.38,63.6,156.8,73,73,1707,0,0,10,0,0
+2026-06-25T14:54:01+00:00,proto,https,objectrecognition,2,2089,2,1,2.0,0.0,13.52,24.67,40,35,0,0,0,0,0,0

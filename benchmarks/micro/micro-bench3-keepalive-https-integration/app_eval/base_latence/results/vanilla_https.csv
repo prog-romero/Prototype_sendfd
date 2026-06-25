@@ -1,0 +1,8 @@
+timestamp,mode,scheme,function,size_kb,image_bytes,n_requests_target,rate_rps,total_requests,avg_ms,stdev_ms,max_ms,p50_ms,p75_ms,p90_ms,p99_ms,errors_non2xx,socket_connect_errors,socket_read_errors,socket_write_errors,socket_timeout_errors,exit_code
+2026-06-25T13:04:10+00:00,vanilla,https,objectrecognition,2,2089,30,1,36,215.37,7.79,232.58,213.38,219.65,227.46,232.7,0,0,0,0,0,0
+2026-06-25T13:04:45+00:00,vanilla,https,objectrecognition,4,4040,30,1,36,215.52,6.75,234.88,214.53,219.77,220.93,235.01,0,0,0,0,0,0
+2026-06-25T13:05:20+00:00,vanilla,https,objectrecognition,8,8121,30,1,36,219.92,7.54,235.14,219.39,224.26,234.49,235.26,0,0,0,0,0,0
+2026-06-25T13:05:56+00:00,vanilla,https,objectrecognition,16,16378,30,1,31,222.73,8.35,241.41,221.18,228.61,231.93,241.54,0,0,0,0,0,0
+2026-06-25T13:06:31+00:00,vanilla,https,objectrecognition,32,33031,30,1,36,238.35,18.59,319.23,235.26,239.62,252.29,319.49,0,0,0,0,0,0
+2026-06-25T13:07:07+00:00,vanilla,https,objectrecognition,64,65817,30,1,36,258.61,10.31,285.95,254.59,262.65,270.33,286.21,0,0,0,0,0,0
+2026-06-25T13:07:42+00:00,vanilla,https,objectrecognition,128,130933,30,1,36,308.32,23.33,376.06,309.5,319.74,336.38,376.32,0,0,0,0,0,0

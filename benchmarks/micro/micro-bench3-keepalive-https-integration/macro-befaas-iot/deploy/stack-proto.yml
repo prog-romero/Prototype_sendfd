@@ -1,0 +1,126 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stack PROTOTYPE (full-proxy / migration sendfd) — 4 fonctions IoT BeFaaS.
+#
+# Chemin : client → gateway → sendfd(FD + état TLS) → provider → watchdog
+#          full-proxy (termine TLS, peek, route) → serveur Node → réponse
+#          ÉCRITE DIRECTEMENT sur le FD client. Chaque appel inter-fonction
+#          (ctx.call) repasse par le gateway et est donc migré à son tour.
+#
+# OPENFAAS_ENDPOINT ci-dessous = HTTPS (port 8443) : chaque hop migre l'état
+# TLS. Pour l'éval "tout HTTP", remplacez par http://<gw>:8080/function
+# (voir deploy-all.sh, MODE=http).
+#
+# Secrets server-crt / server-key : déjà présents sur le Pi (mêmes que les
+# images sumprod full-proxy).
+# ─────────────────────────────────────────────────────────────────────────────
+
+functions:
+
+  objectrecognition:
+    image: romerosdd/iot-fullproxy-objectrecognition:latest
+    fprocess: node index.js
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "objectrecognition"
+      IS_OPENFAAS: "1"
+      BEFAAS_FN_NAME: "objectrecognition"
+      OPENFAAS_ENDPOINT: "https://192.168.2.2:8443/function"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      REDIS_ENDPOINT: "redis://10.62.0.1:6379"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"
+
+  emergencydetection:
+    image: romerosdd/iot-fullproxy-emergencydetection:latest
+    fprocess: node index.js
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "emergencydetection"
+      IS_OPENFAAS: "1"
+      BEFAAS_FN_NAME: "emergencydetection"
+      OPENFAAS_ENDPOINT: "https://192.168.2.2:8443/function"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      REDIS_ENDPOINT: "redis://10.62.0.1:6379"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"
+
+  trafficstatistics:
+    image: romerosdd/iot-fullproxy-trafficstatistics:latest
+    fprocess: node index.js
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "trafficstatistics"
+      IS_OPENFAAS: "1"
+      BEFAAS_FN_NAME: "trafficstatistics"
+      OPENFAAS_ENDPOINT: "https://192.168.2.2:8443/function"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      REDIS_ENDPOINT: "redis://10.62.0.1:6379"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"
+
+  setlightphasecalculation:
+    image: romerosdd/iot-fullproxy-setlightphasecalculation:latest
+    fprocess: node index.js
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "setlightphasecalculation"
+      IS_OPENFAAS: "1"
+      BEFAAS_FN_NAME: "setlightphasecalculation"
+      OPENFAAS_ENDPOINT: "https://192.168.2.2:8443/function"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      REDIS_ENDPOINT: "redis://10.62.0.1:6379"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"

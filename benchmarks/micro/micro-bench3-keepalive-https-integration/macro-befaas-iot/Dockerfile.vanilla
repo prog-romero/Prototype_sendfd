@@ -1,0 +1,84 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.vanilla — image fonction IoT BeFaaS, mode VANILLA (HTTP standard).
+#
+# Partagé par les 4 fonctions ; la fonction à embarquer est choisie au build via
+# l'argument FUNCTION_NAME :
+#
+#   docker buildx build --platform linux/arm64 \
+#     --build-arg FUNCTION_NAME=emergencydetection \
+#     -f benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/Dockerfile.vanilla \
+#     -t romerosdd/iot-vanilla-emergencydetection:latest --push .
+#
+# FUNCTION_NAME ∈ {objectrecognition, emergencydetection, trafficstatistics, setlightphasecalculation}
+#
+# Contenu : of-watchdog vanilla (mode=http, sendfd_enable=0) qui reverse-proxy
+# vers le serveur Node (template node10-express-service + fonction BeFaaS) sur
+# 127.0.0.1:8085. Pas de TLS, pas de sendfd : c'est la baseline.
+#
+# Le contexte de build DOIT être la racine du dépôt.
+
+ARG FUNCTION_NAME=emergencydetection
+
+# ── Stage 1 : build du watchdog vanilla (sans CGO) ───────────────────────────
+# golang:latest (Debian trixie) fournit Go >= 1.26 (requis par go.mod).
+FROM golang:latest AS watchdog-build
+WORKDIR /go/src/github.com/openfaas/of-watchdog
+COPY benchmarks/micro/micro-bench3-keepalive-http-integration/of-watchdog/ .
+RUN rm -rf vendor && go mod download
+RUN mkdir -p /out && CGO_ENABLED=0 GOOS=linux \
+    go build -ldflags "-s -w" -o /out/fwatchdog .
+
+# ── Stage 2 : image runtime (Node + fonction BeFaaS) ─────────────────────────
+FROM node:18-bullseye-slim
+ARG FUNCTION_NAME
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=watchdog-build /out/fwatchdog /usr/bin/fwatchdog
+
+# --- Couche hôte (template node10-express-service) : /home/app -----------------
+WORKDIR /home/app
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/template/package.json ./package.json
+RUN npm install --omit=dev
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/template/index.js ./index.js
+
+# --- Couche fonction : /home/app/function -------------------------------------
+WORKDIR /home/app/function
+# Dépendances BeFaaS (@befaas/lib + jimp + lodash + @koa/multer + multer).
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/function-package.json ./package.json
+RUN npm install --omit=dev
+# Le handler-hôte (branche openfaasHandler + normalise le chemin).
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/template/handler.js ./handler.js
+# La VRAIE fonction BeFaaS (objectrecognition a juste la ligne publisher retirée).
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/functions/${FUNCTION_NAME}/index.js ./index.js
+# experiment.json lu par @befaas/lib (placé aux deux emplacements possibles de cwd).
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/experiment.json ./experiment.json
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/experiment.json /home/app/experiment.json
+
+# Le watchdog démarre fprocess depuis /home/app -> "node index.js" -> template.
+WORKDIR /home/app
+
+ENV fprocess="node index.js"
+ENV mode=http
+ENV http_upstream_url="http://127.0.0.1:8085"
+ENV http_port=8085
+ENV sendfd_enable=0
+
+# Active le chemin OpenFaaS dans @befaas/lib + identité de la fonction.
+ENV IS_OPENFAAS=1
+ENV BEFAAS_FN_NAME=emergencydetection
+# Endpoint pour les appels inter-fonctions (ctx.call).
+# ATTENTION : ce défaut est purement indicatif. La valeur RÉELLE est imposée au
+# déploiement par deploy-all.sh selon le MODE, et elle est IDENTIQUE pour vanilla
+# et proto (http://…:8080 en mode http, https://…:8443 en mode https) -> la
+# comparaison est équitable (même schéma client + inter-fonctions dans les 2 modes).
+ENV OPENFAAS_ENDPOINT="http://192.168.2.2:8080/function"
+# Cert auto-signé du gateway : node-fetch doit l'accepter pour l'éval HTTPS
+# (vanilla-https appelle aussi https://gateway:8443). Inerte en mode http.
+ENV NODE_TLS_REJECT_UNAUTHORIZED=0
+# Backend d'état Redis (trafficstatistics + setlightphasecalculation). Surchargé par le YAML.
+ENV REDIS_ENDPOINT="redis://10.62.0.1:6379"
+
+CMD ["/usr/bin/fwatchdog"]

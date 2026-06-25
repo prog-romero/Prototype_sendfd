@@ -1,0 +1,78 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stack VANILLA (baseline) — 4 fonctions IoT BeFaaS.
+#
+# Chemin : client → gateway faasd → provider → watchdog(HTTP) → serveur Node.
+# Les appels inter-fonctions (ctx.call) passent par OPENFAAS_ENDPOINT.
+#
+# OPENFAAS_ENDPOINT ci-dessous = HTTP (port 8080). Pour l'éval "tout HTTPS"
+# (gateway termine TLS au 8443), remplacez par https://<gw>:8443/function et
+# ajoutez NODE_TLS_REJECT_UNAUTHORIZED: "0" (voir deploy-all.sh, MODE=https).
+#
+# <GW> = IP du gateway joignable DEPUIS un conteneur fonction. Sur le Pi :
+#   - 192.168.2.2  (IP LAN du Pi) — défaut ci-dessous
+#   - 10.62.0.1    (bridge faasd, évite le hairpin) — alternative
+# <REDIS_IP> = IP du conteneur Redis (voir redis-compose-snippet.yml).
+# ─────────────────────────────────────────────────────────────────────────────
+
+functions:
+
+  objectrecognition:
+    image: romerosdd/iot-vanilla-objectrecognition:latest
+    fprocess: node index.js
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      sendfd_enable: "0"
+      IS_OPENFAAS: "1"
+      BEFAAS_FN_NAME: "objectrecognition"
+      OPENFAAS_ENDPOINT: "http://192.168.2.2:8080/function"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      REDIS_ENDPOINT: "redis://10.62.0.1:6379"
+
+  emergencydetection:
+    image: romerosdd/iot-vanilla-emergencydetection:latest
+    fprocess: node index.js
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      sendfd_enable: "0"
+      IS_OPENFAAS: "1"
+      BEFAAS_FN_NAME: "emergencydetection"
+      OPENFAAS_ENDPOINT: "http://192.168.2.2:8080/function"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      REDIS_ENDPOINT: "redis://10.62.0.1:6379"
+
+  trafficstatistics:
+    image: romerosdd/iot-vanilla-trafficstatistics:latest
+    fprocess: node index.js
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      sendfd_enable: "0"
+      IS_OPENFAAS: "1"
+      BEFAAS_FN_NAME: "trafficstatistics"
+      OPENFAAS_ENDPOINT: "http://192.168.2.2:8080/function"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      REDIS_ENDPOINT: "redis://10.62.0.1:6379"
+
+  setlightphasecalculation:
+    image: romerosdd/iot-vanilla-setlightphasecalculation:latest
+    fprocess: node index.js
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      sendfd_enable: "0"
+      IS_OPENFAAS: "1"
+      BEFAAS_FN_NAME: "setlightphasecalculation"
+      OPENFAAS_ENDPOINT: "http://192.168.2.2:8080/function"
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
+      REDIS_ENDPOINT: "redis://10.62.0.1:6379"
