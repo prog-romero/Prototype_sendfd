@@ -52,6 +52,22 @@ echo "    REDIS_ENDPOINT    = redis://${REDIS_IP}:6379"
 echo "    stack rendu       = $TMP"
 echo
 
-faas-cli deploy -f "$TMP" --gateway "$GATEWAY_URL"
+# IMPORTANT : déployer les fonctions UNE PAR UNE (et non `faas-cli deploy -f`
+# qui les pousse en parallèle). Le déploiement parallèle déclenche une race dans
+# faasd (collision de snapshots containerd : "snapshot <fn>-snapshot already
+# exists") qui fait qu'une fonction (souvent la dernière) renvoie 200/404 mais ne
+# se matérialise jamais. En séquentiel + petite pause, chaque création se termine
+# proprement avant la suivante.
+FUNCTIONS="objectrecognition emergencydetection trafficstatistics setlightphasecalculation"
+rc=0
+for fn in $FUNCTIONS; do
+  echo ">>> deploy $fn"
+  if ! faas-cli deploy -f "$TMP" --filter "$fn" --gateway "$GATEWAY_URL"; then
+    rc=1
+  fi
+  sleep 3
+done
 
+echo
 echo "=== déploiement terminé. Vérifiez : faas-cli list --gateway $GATEWAY_URL ==="
+exit $rc

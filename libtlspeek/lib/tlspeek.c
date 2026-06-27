@@ -191,35 +191,58 @@ int tls_read_peek(tlspeek_ctx_t *ctx, uint8_t *buf, size_t size)
         return -1;
     }
 
-    /* ── Sub-step 2a: MSG_PEEK — read encrypted bytes WITHOUT consuming ── */
+    /* ── Sub-step 2a: bounded MSG_PEEK — peek ONLY the first TLS record ──
+     *
+     * Optimisation (vs. peeking a full ~16 KB buffer): the TLS 1.3 record header
+     * (type + version + length, 5 bytes) is sent IN CLEAR. We first MSG_PEEK just
+     * those 5 bytes to learn the first record's length, then MSG_PEEK EXACTLY that
+     * one record (header + payload + tag). Because the HTTP request line — and
+     * therefore "/function/<name>" — always sits at the very start of this first
+     * record, this is sufficient to route while copying the minimum off the wire:
+     * we never pull the (possibly large) request body the client may have
+     * coalesced into the same TCP segment.
+     *
+     * MSG_PEEK never consumes the kernel buffer, so the worker still reads the
+     * whole stream afterwards with wolfSSL_read().
+     */
+    uint8_t hdr[TLSPEEK_HEADER_SIZE];
+    ssize_t hlen = recv(ctx->tcp_fd, hdr, TLSPEEK_HEADER_SIZE, MSG_PEEK);
+    if (hlen <= 0) {
+        if (hlen < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return 0;
+        }
+        TLSPEEK_VLOG("[tlspeek] recv(MSG_PEEK) header closed/failed fd=%d errno=%d\n",
+                     ctx->tcp_fd, errno);
+        return -1;
+    }
+    if (hlen < TLSPEEK_HEADER_SIZE) {
+        return 0;   /* the 5-byte record header has not fully arrived yet */
+    }
+
+    uint8_t  record_type = hdr[0];
+    /* uint16 version     = hdr[1..2] — should be 0x0303 */
+    uint16_t record_len  = (uint16_t)((hdr[3] << 8) | hdr[4]);
+
+    /* Peek exactly one record: 5-byte header + record_len bytes (ciphertext+tag). */
+    size_t  want = (size_t)TLSPEEK_HEADER_SIZE + (size_t)record_len;
     uint8_t raw[TLSPEEK_HEADER_SIZE + TLSPEEK_MAX_RECORD + TLSPEEK_TAG_SIZE];
+    if (want > sizeof(raw)) {
+        fprintf(stderr, "[tlspeek] record_len %u exceeds TLSPEEK_MAX_RECORD\n", record_len);
+        return -1;
+    }
 
-    TLSPEEK_VLOG("[tlspeek] MSG_PEEK recv on fd=%d (up to %zu bytes)...\n",
-                 ctx->tcp_fd, sizeof(raw));
+    TLSPEEK_VLOG("[tlspeek] MSG_PEEK fd=%d: 1 record = %zu bytes (hdr+rec)\n",
+                 ctx->tcp_fd, want);
 
-    ssize_t raw_len = recv(ctx->tcp_fd, raw, sizeof(raw), MSG_PEEK);
+    ssize_t raw_len = recv(ctx->tcp_fd, raw, want, MSG_PEEK);
     if (raw_len <= 0) {
         if (raw_len < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             return 0;
         }
-        if (raw_len == 0)
-            TLSPEEK_VLOG("[tlspeek] recv(MSG_PEEK): connection closed fd=%d\n", ctx->tcp_fd);
-        else
-            TLSPEEK_VLOG("[tlspeek] recv(MSG_PEEK) failed fd=%d errno=%d\n", ctx->tcp_fd, errno);
+        TLSPEEK_VLOG("[tlspeek] recv(MSG_PEEK): connection closed/failed fd=%d errno=%d\n",
+                     ctx->tcp_fd, errno);
         return -1;
     }
-
-    TLSPEEK_VLOG("[tlspeek] MSG_PEEK got %zd bytes — kernel buffer UNCHANGED\n",
-                 raw_len);
-
-    /* ── Sub-step 2b: Parse TLS 1.3 record header (5 bytes) ── */
-    if (raw_len < TLSPEEK_HEADER_SIZE) {
-        return 0;
-    }
-
-    uint8_t  record_type = raw[0];
-    /* uint16 version     = raw[1..2] — should be 0x0303 */
-    uint16_t record_len  = (uint16_t)((raw[3] << 8) | raw[4]);
 
     TLSPEEK_VLOG("[tlspeek] TLS record: type=0x%02X version=0x%02X%02X len=%u\n",
                  record_type, raw[1], raw[2], record_len);

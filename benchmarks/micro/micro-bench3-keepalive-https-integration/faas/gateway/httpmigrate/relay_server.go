@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"syscall"
 	"time"
 )
@@ -23,8 +24,8 @@ import (
 //
 // IMPORTANT: the readCompletionPipe goroutine is started ONLY after
 // sendfd2WithState succeeds.  If dispatch fails, pipeWriteFD is closed by
-// sendfd2WithState's deferred Close without writing.  Starting the goroutine
-// first would make readFull spin on an EOF pipe.
+// sendfd2WithState's deferred Close without writing — starting the goroutine
+// first would make it wait pointlessly on an already-EOF pipe.
 //
 // providerURL is retained in the signature for source compatibility but is no
 // longer used — the provider socket path is fixed (ProviderSock).
@@ -69,14 +70,45 @@ func dispatchMigrate(clientFD int, targetFn string, payload *KAPayload, provider
 // ── readCompletionPipe ────────────────────────────────────────────────────────
 
 // readCompletionPipe reads an 8-byte little-endian uint64 timestamp (nanoseconds)
-// written by the function worker after it has sent the HTTP response.
-// It then calls notifier with the elapsed duration for Prometheus.
+// written by the function worker after it has sent the HTTP response, then calls
+// notifier with the elapsed duration for Prometheus.
+//
+// SCALABILITY — why the Go netpoller and a deadline are used here:
+//
+// One readCompletionPipe goroutine runs per in-flight migrated request. The old
+// implementation did a BLOCKING syscall.Read on the raw pipe fd. A blocking
+// syscall is NOT integrated with the Go scheduler's network poller, so each
+// goroutine waiting on the pipe pinned a dedicated OS thread (M) for the whole
+// duration of the request. Under load this exploded the OS-thread count: the
+// gateway CPU climbed (scheduler/sysmon overhead) and requests started failing
+// even though the application CPU was not saturated — and because Go parks
+// (never destroys) those threads, CPU stayed high run-after-run until a restart.
+//
+// Wrapping the fd in an *os.File makes Read go through the Go netpoller: the
+// goroutine is suspended WITHOUT holding an OS thread. A read deadline
+// guarantees the goroutine (and the fd) are always released even if the worker
+// never signals — so there is no goroutine/fd leak.
 func readCompletionPipe(pipeReadFD int, fnName string, start time.Time, notifier CompletionNotifier) {
-	defer syscall.Close(pipeReadFD)
+	// Non-blocking + *os.File ⇒ reads are serviced by the netpoller (epoll),
+	// not by a blocked OS thread.
+	if err := syscall.SetNonblock(pipeReadFD, true); err != nil {
+		_ = syscall.Close(pipeReadFD)
+		return
+	}
+	f := os.NewFile(uintptr(pipeReadFD), "completion-pipe")
+	if f == nil {
+		_ = syscall.Close(pipeReadFD)
+		return
+	}
+	defer f.Close() // closes the underlying pipeReadFD
+
+	// Bound the wait: the worker writes the timestamp as soon as it has sent the
+	// response; if it never does (crash / stuck), we still return after the
+	// gateway's upstream timeout window instead of leaking the goroutine + fd.
+	_ = f.SetReadDeadline(time.Now().Add(65 * time.Second))
 
 	var tsBuf [8]byte
-	n, err := readFull(pipeReadFD, tsBuf[:])
-	if err != nil || n < 8 {
+	if _, err := io.ReadFull(f, tsBuf[:]); err != nil {
 		return
 	}
 	_ = binary.LittleEndian.Uint64(tsBuf[:]) // worker-side timestamp (unused here)
@@ -85,30 +117,6 @@ func readCompletionPipe(pipeReadFD int, fnName string, start time.Time, notifier
 	if notifier != nil {
 		notifier(fnName, elapsed)
 	}
-}
-
-// ── readFull ─────────────────────────────────────────────────────────────────
-
-// readFull reads exactly len(buf) bytes from a blocking fd (typically a pipe).
-// syscall.Read returns (0, nil) when the write-end of a pipe is closed without
-// writing — that is EOF on a pipe.  Without this check the old code would spin
-// forever at 100 % CPU per stuck goroutine.
-func readFull(fd int, buf []byte) (int, error) {
-	total := 0
-	for total < len(buf) {
-		n, err := syscall.Read(fd, buf[total:])
-		if n > 0 {
-			total += n
-		}
-		if n == 0 && err == nil {
-			// Pipe write-end closed (EOF): no more data will ever arrive.
-			return total, io.EOF
-		}
-		if err != nil {
-			return total, err
-		}
-	}
-	return total, nil
 }
 
 // ── Unix socket helper ────────────────────────────────────────────────────────

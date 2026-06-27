@@ -110,6 +110,71 @@ def _find_wrk2() -> str:
     return "wrk2"
 
 
+# ── CPU GLOBAL du Pi (via /proc/stat over ssh) ───────────────────────────────
+# Même méthode que app_eval/sweep_app_wrk2.py. Échelle = n_cpus × 100 :
+# 4 cœurs totalement occupés = 400 % (et non 0..100 %).
+
+def _start_pi_cpu_sampling(pi_ssh, samples, interval_s=1):
+    remote = ("nproc; "
+              f"for i in $(seq 1 {samples}); do "
+              "awk '/^cpu / {print $2,$3,$4,$5,$6,$7,$8,$9}' /proc/stat; "
+              f"sleep {interval_s}; done")
+    return subprocess.Popen(["ssh", pi_ssh, remote],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def _compute_cpu_busy_stats(text):
+    """Renvoie (avg, max, min, n_samples) du CPU busy en % sur l'échelle n_cpus×100."""
+    lines = text.strip().splitlines()
+    n_cpus = 1
+    data = lines
+    if lines:
+        try:
+            c = int(lines[0].strip())
+            if c > 0:
+                n_cpus, data = c, lines[1:]
+        except ValueError:
+            pass
+    rows = []
+    for raw in data:
+        parts = raw.strip().split()
+        if len(parts) < 8:
+            continue
+        try:
+            rows.append(tuple(int(x) for x in parts[:8]))
+        except ValueError:
+            continue
+    if len(rows) < 2:
+        return 0.0, 0.0, 0.0, len(rows)
+    busy = []
+    for prev, cur in zip(rows, rows[1:]):
+        pu, pn, ps, pidle, piow, pirq, psoft, psteal = prev
+        cu, cn, cs, cidle, ciow, cirq, csoft, csteal = cur
+        prev_busy = pu + pn + ps + pirq + psoft + psteal
+        cur_busy = cu + cn + cs + cirq + csoft + csteal
+        d_total = (cur_busy + cidle + ciow) - (prev_busy + pidle + piow)
+        d_busy = cur_busy - prev_busy
+        if d_total <= 0:
+            continue
+        busy.append((100.0 * n_cpus * d_busy) / d_total)  # échelle 0..n_cpus*100 (400% sur 4 cœurs)
+    if not busy:
+        return 0.0, 0.0, 0.0, len(rows)
+    return round(sum(busy) / len(busy), 2), round(max(busy), 2), round(min(busy), 2), len(rows)
+
+
+def _bitrate_mbit(rps, image_bytes, transfer_kb_s):
+    """Débit réseau réel du Pi (Mbit/s) = upload image (client->Pi) + download réponses (Pi->client).
+
+    - upload   : l'IMAGE est envoyée par le client à chaque requête (rps × taille).
+                 wrk2 ne le compte PAS dans Transfer/sec, on le calcule donc ici.
+    - download : Transfer/sec de wrk2 = les réponses (petit JSON) reçues par le client.
+    - Les appels inter-fonctions restent internes au Pi (bridge) -> hors carte réseau.
+    """
+    upload = rps * image_bytes * 8.0 / 1e6
+    download = transfer_kb_s * 1024.0 * 8.0 / 1e6
+    return round(upload, 3), round(download, 3), round(upload + download, 3)
+
+
 def _run_wrk2(wrk2, lua, url, req_path, image_path, duration_s, timeout_s, threads, conc, rate):
     env = os.environ.copy()
     env["WRK_IMAGE_PATH"] = image_path
@@ -137,6 +202,10 @@ def main() -> None:
     p.add_argument("--scheme", choices=["https", "http"], default="https")
     p.add_argument("--host", default="192.168.2.2")
     p.add_argument("--port", type=int, default=None, help="override port (def 8443/8080)")
+    p.add_argument("--pi-ssh", default="romero@192.168.2.2",
+                   help="SSH du Pi pour échantillonner le CPU global (/proc/stat) pendant chaque palier")
+    p.add_argument("--nic-max-mbit", type=float, default=940.0,
+                   help="débit MAX de la carte réseau du Pi en Mbit/s (mesuré via iperf3, def 940)")
     p.add_argument("--function", default="objectrecognition")
     p.add_argument("--sizes", default="2,4,8,16,32,64,128,256,512,1024",
                    help="tailles d'image KB (img-<KB>kb.jpg)")
@@ -150,10 +219,12 @@ def main() -> None:
     p.add_argument("--duration-s", type=int, default=20, help="durée par palier")
     p.add_argument("--timeout-s", type=int, default=30)
     p.add_argument("--pause", type=int, default=3, help="pause entre paliers (s)")
-    p.add_argument("--rps-tolerance", type=float, default=0.90,
-                   help="un palier ne compte que si rps_atteint >= tolerance*rate (def 0.90)")
+    p.add_argument("--rps-tolerance", type=float, default=0.8,
+                   help="AFFICHAGE seulement : marque [SAT] si rps_atteint < tolerance*rate. "
+                        "N'influence plus l'arrêt ni le max (on ne s'arrête que sur ERREUR).")
     p.add_argument("--no-stop-on-error", action="store_true",
-                   help="ne pas arrêter le balayage d'une taille au 1er palier en échec")
+                   help="ne pas arrêter le balayage d'une taille au 1er palier EN ERREUR "
+                        "(balaye alors tous les --rates)")
     p.add_argument("--out", required=True, help="CSV RÉSUMÉ (1 ligne/taille)")
     p.add_argument("--detail-out", default=None,
                    help="CSV DÉTAILLÉ (1 ligne/(taille,débit)). Déf: <out sans .csv>_detail.csv")
@@ -182,6 +253,7 @@ def main() -> None:
     print(f"sizes KB   : {sizes}")
     print(f"rates      : {rates}")
     print(f"concurrency: {args.concurrency}   duration: {args.duration_s}s   tol: {args.rps_tolerance}")
+    print(f"pi-ssh     : {args.pi_ssh}   NIC max : {args.nic_max_mbit} Mbit/s")
     print(f"résumé     : {args.out}")
     print(f"détail     : {detail_out}\n")
 
@@ -198,19 +270,36 @@ def main() -> None:
 
         best_rps = 0.0
         best_rate = 0
+        best = {}   # métriques CPU/réseau du palier qui donne best_rps
         for rate in rates:
+            # CPU GLOBAL du Pi échantillonné pendant TOUTE la fenêtre wrk2 de ce palier.
+            cpu_proc = _start_pi_cpu_sampling(args.pi_ssh, max(3, args.duration_s + 2))
             rc, out = _run_wrk2(wrk2, lua, url, req_path, str(img),
                                 args.duration_s, args.timeout_s, args.threads,
                                 args.concurrency, rate)
+            try:
+                cpu_out, _ = cpu_proc.communicate(timeout=args.duration_s + args.timeout_s + 30)
+            except subprocess.TimeoutExpired:
+                cpu_proc.kill()
+                cpu_out, _ = cpu_proc.communicate()
+            cpu_avg, cpu_max, _cpu_min, _ncpu = _compute_cpu_busy_stats(cpu_out)
+
             d = _parse(out)
+            up_mbit, dn_mbit, nic_mbit = _bitrate_mbit(d["rps"], image_bytes, d["transfer_kb_s"])
+            nic_pct = round(100.0 * nic_mbit / args.nic_max_mbit, 2) if args.nic_max_mbit > 0 else 0.0
+
             server_errors = (d["errors_non2xx"] + d["socket_connect_errors"]
                              + d["socket_read_errors"] + d["socket_write_errors"])
             total_errors = server_errors + d["socket_timeout_errors"]
+            has_errors = total_errors > 0
+            # On NE décide plus rien sur la tolérance : un palier sans erreur compte
+            # pour le max (même s'il sature : le rps plafonne mais reste valide).
+            # kept_up n'est plus qu'un indicateur d'AFFICHAGE (SAT = saturé sans erreur).
             kept_up = d["rps"] >= args.rps_tolerance * rate
-            sustainable = (total_errors == 0) and kept_up
 
-            flag = "OK " if sustainable else ("ERR" if total_errors else "SAT")
-            print(f"   R={rate:<4} -> rps={d['rps']:7.2f}  p99={d['p99_ms']:7.1f}ms"
+            flag = "ERR" if has_errors else ("OK " if kept_up else "SAT")
+            print(f"   R={rate:<4} -> rps={d['rps']:7.2f}  cpu={cpu_avg:6.0f}/{cpu_max:.0f}%"
+                  f"  net={nic_pct:5.1f}%({nic_mbit:.0f}Mb/s)  p99={d['p99_ms']:6.0f}ms"
                   f"  err(non2xx={d['errors_non2xx']},conn={d['socket_connect_errors']},"
                   f"to={d['socket_timeout_errors']})  [{flag}]")
 
@@ -220,6 +309,9 @@ def main() -> None:
                 "size_kb": size_kb, "image_bytes": image_bytes,
                 "target_rate": rate, "concurrency": args.concurrency,
                 "achieved_rps": d["rps"], "transfer_kb_s": d["transfer_kb_s"],
+                "cpu_avg_pct": cpu_avg, "cpu_max_pct": cpu_max,
+                "upload_mbit_s": up_mbit, "download_mbit_s": dn_mbit,
+                "net_mbit_s": nic_mbit, "net_pct": nic_pct,
                 "avg_ms": d["avg_ms"], "p99_ms": d["p99_ms"],
                 "total_requests": d["total_requests"],
                 "errors_non2xx": d["errors_non2xx"],
@@ -227,25 +319,44 @@ def main() -> None:
                 "socket_read_errors": d["socket_read_errors"],
                 "socket_write_errors": d["socket_write_errors"],
                 "socket_timeout_errors": d["socket_timeout_errors"],
-                "sustainable": int(sustainable), "exit_code": rc,
+                "sustainable": int(not has_errors), "exit_code": rc,
             })
 
-            if sustainable and d["rps"] > best_rps:
+            # Le max retenu = plus haut rps parmi les paliers SANS ERREUR.
+            if (not has_errors) and d["rps"] > best_rps:
                 best_rps = d["rps"]
                 best_rate = rate
+                best = {  # on retient le CPU/réseau du palier rate_at_max
+                    "cpu_avg_pct": cpu_avg, "cpu_max_pct": cpu_max,
+                    "transfer_kb_s": d["transfer_kb_s"],
+                    "upload_mbit_s": up_mbit, "download_mbit_s": dn_mbit,
+                    "net_mbit_s": nic_mbit, "net_pct": nic_pct,
+                }
 
-            if (not sustainable) and (not args.no_stop_on_error):
-                print(f"      (palier en échec -> arrêt du balayage pour {size_kb} KB)")
+            # ARRÊT uniquement s'il y a des ERREURS (et plus sur la tolérance/saturation).
+            if has_errors and (not args.no_stop_on_error):
+                print(f"      (palier en ERREUR -> arrêt du balayage pour {size_kb} KB)")
                 break
             if args.pause > 0:
                 time.sleep(args.pause)
 
-        print(f"   => RPS max sans erreur ({size_kb} KB) = {best_rps:.2f} (à R={best_rate})\n")
+        print(f"   => RPS max sans erreur ({size_kb} KB) = {best_rps:.2f} (à R={best_rate})"
+              f"  | CPU {best.get('cpu_avg_pct', 0):.0f}/{best.get('cpu_max_pct', 0):.0f}%"
+              f"  | NET {best.get('net_pct', 0):.1f}%\n")
         summary_rows.append({
             "mode": args.mode, "scheme": args.scheme, "function": args.function,
             "size_kb": size_kb, "image_bytes": image_bytes,
             "max_rps_no_error": round(best_rps, 3), "rate_at_max": best_rate,
             "concurrency": args.concurrency, "duration_s": args.duration_s,
+            "nic_max_mbit": args.nic_max_mbit,
+            # CPU (échelle 400%) et réseau RELEVÉS AU PALIER rate_at_max :
+            "cpu_avg_pct": best.get("cpu_avg_pct", 0.0),
+            "cpu_max_pct": best.get("cpu_max_pct", 0.0),
+            "transfer_kb_s": best.get("transfer_kb_s", 0.0),
+            "upload_mbit_s": best.get("upload_mbit_s", 0.0),
+            "download_mbit_s": best.get("download_mbit_s", 0.0),
+            "net_mbit_s": best.get("net_mbit_s", 0.0),
+            "net_pct": best.get("net_pct", 0.0),
         })
 
     # écriture des CSV (mode "w" = écrase ; --append = ajoute à la suite)

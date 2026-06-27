@@ -103,8 +103,8 @@ func dispatchMigrateHTTPS(
 
 	// Connect to the provider's migration socket and send FDs + payload.
 	// IMPORTANT: start readCompletionPipe ONLY after sendfd2WithState succeeds, so
-	// a failed dispatch (pipeWriteFD closed without a write) cannot leave readFull
-	// spinning on an EOF pipe.
+	// a failed dispatch (pipeWriteFD closed without a write) cannot leave the
+	// completion goroutine waiting pointlessly on an already-EOF pipe.
 	providerFD, err := connectUnixSocket(ProviderSock)
 	if err != nil {
 		_ = syscall.Close(pipeReadFD)

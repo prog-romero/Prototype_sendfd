@@ -1,5 +1,0 @@
-mode,scheme,function,size_kb,image_bytes,max_rps_no_error,rate_at_max,concurrency,duration_s
-proto,https,objectrecognition,2,2089,4.0,4,1,20
-proto,https,objectrecognition,2,2089,4.78,4,50,20
-proto,https,objectrecognition,2,2089,2.0,2,8,20
-proto,https,objectrecognition,2,2089,0.0,0,1,20

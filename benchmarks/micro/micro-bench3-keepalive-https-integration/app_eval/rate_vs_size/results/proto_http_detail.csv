@@ -1,0 +1,2 @@
+timestamp,mode,scheme,function,size_kb,image_bytes,target_rate,concurrency,achieved_rps,transfer_kb_s,cpu_avg_pct,cpu_max_pct,upload_mbit_s,download_mbit_s,net_mbit_s,net_pct,avg_ms,p99_ms,total_requests,errors_non2xx,socket_connect_errors,socket_read_errors,socket_write_errors,socket_timeout_errors,sustainable,exit_code
+2026-06-27T16:46:39+00:00,proto,http,objectrecognition,1024,1048171,20,8,1.3,0.0,157.42,258.65,10.901,0.0,10.901,1.16,13440.0,16590.0,26,0,0,0,0,0,1,0

@@ -1,7 +1,0 @@
-timestamp,sweep_type,monitored_variable,monitored_value,rate,concurrency,target_mode,payload_kb,exit_code,rps,transfer_kb_s,transfer_mb_s,lat_avg_ms,lat_stdev_ms,lat_max_ms,p50_ms,p75_ms,p90_ms,p95_ms,p99_ms,total_requests,read_mb,errors_non2xx,socket_connect_errors,socket_read_errors,socket_write_errors,socket_timeout_errors,pi_cpu_busy_avg_pct,pi_cpu_busy_max_pct,pi_cpu_busy_min_pct,pi_cpu_samples
-2026-06-24T20:19:04+00:00,rate_sweep,rate,2,2,8,proto-https,7,0,2.0,1.45,0.001,677.61,80.51,793.6,691.2,737.79,760.83,0.0,793.09,0,0.0,0,0,0,0,0,72.497,255.919,8.845,62
-2026-06-24T20:20:16+00:00,rate_sweep,rate,4,4,8,proto-https,7,0,4.0,2.67,0.003,722.62,63.72,806.91,739.84,765.44,782.34,0.0,799.74,0,0.0,0,0,0,0,0,122.702,289.724,13.827,62
-2026-06-24T20:21:29+00:00,rate_sweep,rate,6,6,8,proto-https,7,0,6.0,3.93,0.004,700.28,64.95,875.52,714.75,744.96,766.97,0.0,817.15,0,0.0,0,0,0,0,0,165.797,308.081,8.802,62
-2026-06-24T20:22:39+00:00,rate_sweep,rate,8,8,8,proto-https,7,0,8.0,5.4,0.005,691.24,73.7,871.42,700.41,741.89,779.78,0.0,816.13,0,0.0,0,0,0,0,0,222.757,336.318,7.94,62
-2026-06-24T20:23:53+00:00,rate_sweep,rate,10,10,8,proto-https,7,0,9.85,6.51,0.006,1510.0,749.89,3340.0,1350.0,2120.0,2570.0,0.0,3190.0,0,0.0,0,0,0,0,0,282.211,381.463,8.845,62
-2026-06-24T20:25:04+00:00,rate_sweep,rate,12,12,8,proto-https,7,0,9.86,6.66,0.007,5420.0,2690.0,11980.0,4980.0,7670.0,9050.0,0.0,10990.0,0,0.0,0,0,0,0,0,319.036,391.388,7.882,62

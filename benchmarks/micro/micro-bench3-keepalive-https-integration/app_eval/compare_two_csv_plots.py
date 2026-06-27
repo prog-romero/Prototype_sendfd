@@ -136,9 +136,17 @@ def main() -> None:
     df_a = prepare(load_csv(args.csv_a))
     df_b = prepare(load_csv(args.csv_b))
 
-    merged = pd.merge(df_a, df_b, on="rate", suffixes=("_a", "_b"), how="inner")
+    # OUTER join : on garde l'UNION des débits des deux fichiers (et non leur
+    # intersection). Ainsi, si un mode a moins de lignes que l'autre (p. ex. on a
+    # supprimé manuellement les paliers en erreur de vanilla), TOUTES les lignes
+    # de l'autre mode (prototype) restent affichées. Aux débits présents dans un
+    # seul fichier, la valeur de l'autre mode est NaN → sa barre n'est tout
+    # simplement pas dessinée (matplotlib saute les NaN), et sa courbe fait un
+    # trou — sans planter.
+    merged = pd.merge(df_a, df_b, on="rate", suffixes=("_a", "_b"), how="outer")
+    merged = merged.sort_values("rate").reset_index(drop=True)
     if merged.empty:
-        raise ValueError("No common rate values found between the two CSV files.")
+        raise ValueError("Aucun débit dans les deux fichiers CSV.")
 
     out_dir = Path(args.out_dir).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -163,7 +171,7 @@ def main() -> None:
             label_b=args.label_b,
         )
 
-    print(f"[ok] Wrote 5 figures in: {out_dir}")
+    print(f"[ok] {len(plot_specs)} figures écrites dans : {out_dir}")
 
 
 if __name__ == "__main__":
