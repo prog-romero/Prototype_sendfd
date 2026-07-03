@@ -1,0 +1,5 @@
+# Dépendances de l'HÔTE (serveur HTTP qui héberge la fonction SeBS).
+# Le serveur WSGI gunicorn lance plusieurs WORKERS process -> vrai parallélisme
+# multi-cœur (le GIL ne bride pas les fonctions CPU comme pagerank/thumbnailer).
+flask>=2.2
+gunicorn>=21.0

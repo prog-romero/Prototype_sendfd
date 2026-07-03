@@ -1,0 +1,69 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stack VANILLA (baseline HTTP standard) — 4 fonctions SeBS.
+#
+# of-watchdog vanilla (sendfd_enable=0) qui reverse-proxy chaque requête vers
+# l'hôte Python (gunicorn + fonction SeBS) sur 127.0.0.1:8085. C'est la baseline
+# à comparer au prototype.
+#
+# MINIO_STORAGE_* : utilisés par thumbnailer + compression. Surchargés au
+# déploiement par deploy-all.sh.
+# ─────────────────────────────────────────────────────────────────────────────
+
+functions:
+
+  dynamic-html:
+    image: romerosdd/sebs-vanilla-dynamic-html:latest
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      sendfd_enable: "0"
+      SEBS_FN_NAME: "dynamic-html"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"
+
+  thumbnailer:
+    image: romerosdd/sebs-vanilla-thumbnailer:latest
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      sendfd_enable: "0"
+      SEBS_FN_NAME: "thumbnailer"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"
+
+  compression:
+    image: romerosdd/sebs-vanilla-compression:latest
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      sendfd_enable: "0"
+      SEBS_FN_NAME: "compression"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"
+
+  graph-pagerank:
+    image: romerosdd/sebs-vanilla-graph-pagerank:latest
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      sendfd_enable: "0"
+      SEBS_FN_NAME: "graph-pagerank"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"

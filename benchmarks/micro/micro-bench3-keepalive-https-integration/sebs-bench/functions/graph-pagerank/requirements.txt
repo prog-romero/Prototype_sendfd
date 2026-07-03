@@ -1,0 +1,4 @@
+# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
+# SeBS épingle python-igraph==0.9.0 (renommé "igraph" ; le code fait
+# `import igraph`). Non épinglé -> wheel arm64/py3.13 (pas de compilation C).
+igraph

@@ -99,6 +99,7 @@ type WolfSSLGtwConn struct {
 	fd            int
 	epfd          int // per-conn epoll fd for Read/Write suspension
 	mu            sync.Mutex
+	ioMu          sync.Mutex // sérialise wolfSSL_read/write (session NON thread-safe)
 	wg            sync.WaitGroup
 	closed        bool
 	localAddr     net.Addr
@@ -176,10 +177,18 @@ func (c *WolfSSLGtwConn) Read(p []byte) (int, error) {
 		c.wg.Add(1)
 		c.mu.Unlock()
 
+		// ioMu sérialise l'appel wolfSSL : http.Server lance un backgroundRead
+		// (conn.Read) CONCURRENT au conn.Write du handler ; la même session
+		// WOLFSSL n'est pas thread-safe -> sans ce verrou, un read et un write
+		// simultanés corrompent/tronquent la réponse (visible sur les grosses
+		// réponses multi-records). L'appel est non-bloquant (WANT_* immédiat),
+		// donc pas de deadlock ; waitEpoll reste HORS du verrou.
+		c.ioMu.Lock()
 		n := C.wolfssl_gtw_conn_read(ptr, unsafe.Pointer(&p[0]), C.int(len(p)))
+		code := int(C.wolfssl_gtw_conn_get_error(ptr, n))
+		c.ioMu.Unlock()
 
 		c.mu.Lock()
-		code := int(C.wolfssl_gtw_conn_get_error(ptr, n))
 		c.wg.Done()
 		c.mu.Unlock()
 
@@ -240,10 +249,26 @@ func (c *WolfSSLGtwConn) Write(p []byte) (int, error) {
 		c.wg.Add(1)
 		c.mu.Unlock()
 
-		n := C.wolfssl_gtw_conn_write(ptr, unsafe.Pointer(&p[total]), C.int(len(p)-total))
+		// Un seul record TLS par appel : max app-data TLS 1.3 = 2^14 = 16384.
+		// Ce fork wolfSSL émet UN record de la taille du buffer passé (sans
+		// refragmenter) -> avec un gros buffer il produit un record > 16 KB que
+		// le client rejette ("record overflow") et coupe la connexion. On borne
+		// donc chaque wolfSSL_write à 16384 octets (même correctif que proto,
+		// wd_bridge.c). wolfSSL fera un record valide et on boucle pour le reste.
+		chunk := len(p) - total
+		if chunk > 16384 {
+			chunk = 16384
+		}
+
+		// Sérialise avec Read (cf. commentaire dans Read) : la session WOLFSSL
+		// n'est pas thread-safe et http.Server lit en tâche de fond pendant
+		// qu'on écrit la réponse.
+		c.ioMu.Lock()
+		n := C.wolfssl_gtw_conn_write(ptr, unsafe.Pointer(&p[total]), C.int(chunk))
+		code := int(C.wolfssl_gtw_conn_get_error(ptr, n))
+		c.ioMu.Unlock()
 
 		c.mu.Lock()
-		code := int(C.wolfssl_gtw_conn_get_error(ptr, n))
 		c.wg.Done()
 		c.mu.Unlock()
 
@@ -319,6 +344,14 @@ func (c *WolfSSLGtwConn) Close() error {
 	if c.ptr != nil {
 		C.wolfssl_gtw_conn_close(c.ptr)
 		c.ptr = nil
+	}
+	// Ferme le socket TCP : il a été DÉTACHÉ du wolfSSL conn via
+	// wolfssl_conn_take_raw_fd() dans wrapGtwConn (conn->tcp_fd = -1), donc
+	// wolfssl_gtw_conn_close() ne le ferme PAS. Sans ceci, chaque connexion
+	// ChanListener fuit un socket -> invisible pour /system/* (rare) mais
+	// fatal en vanilla HTTPS (chaque requête passe ici) : épuise les 1024 fd.
+	if fd >= 0 {
+		syscall.Close(fd)
 	}
 	c.fd = -1
 	c.mu.Unlock()

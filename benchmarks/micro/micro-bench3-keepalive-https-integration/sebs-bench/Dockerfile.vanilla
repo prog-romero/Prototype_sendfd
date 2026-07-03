@@ -1,0 +1,67 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.vanilla — image fonction SeBS, mode VANILLA (HTTP standard).
+#
+# Baseline : of-watchdog vanilla (mode=http, sendfd_enable=0, sans CGO) qui
+# reverse-proxy vers l'hôte Python (gunicorn + fonction SeBS) sur 127.0.0.1:8085.
+# Pas de TLS au watchdog, pas de sendfd. C'est exactement la même structure que
+# le Dockerfile.vanilla de macro-befaas-iot (Node remplacé par Python).
+#
+#   docker buildx build --platform linux/arm64 \
+#     --build-arg FUNCTION_NAME=thumbnailer \
+#     -f benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/Dockerfile.vanilla \
+#     -t romerosdd/sebs-vanilla-thumbnailer:latest --push .
+#
+# FUNCTION_NAME ∈ {dynamic-html, thumbnailer, compression, graph-pagerank}
+# Le contexte de build DOIT être la racine du dépôt.
+
+ARG FUNCTION_NAME=dynamic-html
+
+# ── Stage 1 : build du watchdog vanilla (sans CGO) ───────────────────────────
+FROM golang:latest AS watchdog-build
+WORKDIR /go/src/github.com/openfaas/of-watchdog
+COPY benchmarks/micro/micro-bench3-keepalive-http-integration/of-watchdog/ .
+RUN rm -rf vendor && go mod download
+RUN mkdir -p /out && CGO_ENABLED=0 GOOS=linux \
+    go build -ldflags "-s -w" -o /out/fwatchdog .
+
+# ── Stage 2 : image runtime (Python + fonction SeBS) ─────────────────────────
+FROM debian:trixie-slim
+ARG FUNCTION_NAME
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates python3 python3-pip \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=watchdog-build /out/fwatchdog /usr/bin/fwatchdog
+
+# --- Couche hôte (serveur Python partagé) : /home/app -------------------------
+WORKDIR /home/app
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/template/requirements.txt ./host-requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r host-requirements.txt
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/template/server.py ./server.py
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/template/start.sh ./start.sh
+RUN chmod +x ./start.sh
+
+# --- Couche fonction : /home/app/function -------------------------------------
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/functions/${FUNCTION_NAME}/requirements.txt ./function-requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r function-requirements.txt
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/functions/${FUNCTION_NAME}/function/ ./function/
+
+# fprocess = start.sh (UN SEUL token : le watchdog découpe fprocess par espaces
+# sans respecter les guillemets, donc pas de `sh -c '...'`).
+ENV GUNICORN_WORKERS=4
+ENV fprocess="/home/app/start.sh"
+ENV mode=http
+ENV http_upstream_url="http://127.0.0.1:8085"
+ENV http_port=8085
+ENV sendfd_enable=0
+
+ENV SEBS_FN_NAME=dynamic-html
+
+# Stockage objet MinIO (thumbnailer + compression ; inerte ailleurs). Surchargé au déploiement.
+ENV MINIO_STORAGE_CONNECTION_URL="10.62.0.1:9000"
+ENV MINIO_STORAGE_ACCESS_KEY="sebsadmin"
+ENV MINIO_STORAGE_SECRET_KEY="sebssecret"
+
+CMD ["/usr/bin/fwatchdog"]

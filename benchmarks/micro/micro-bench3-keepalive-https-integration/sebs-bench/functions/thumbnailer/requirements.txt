@@ -1,0 +1,5 @@
+# Copyright 2020-2025 ETH Zurich and the SeBS authors. All rights reserved.
+# SeBS épingle Pillow==9.0.0 (py3.7-3.9). Sur debian trixie (py3.13/arm64) on
+# laisse pip choisir la wheel disponible. + minio pour storage.py (wrapper SeBS).
+Pillow
+minio

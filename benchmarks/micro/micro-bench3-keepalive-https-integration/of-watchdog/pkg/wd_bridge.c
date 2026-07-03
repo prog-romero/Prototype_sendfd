@@ -392,6 +392,11 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
     wolfSSL_set_fd(ssl, fd);
     if (tlspeek_restore(ssl, &pl->serial) != 0) { wolfSSL_free(ssl); ssl = NULL; goto done; }
     wolfSSL_set_fd(ssl, fd);
+    /* La session migrée n'a pas besoin d'émettre de NewSessionTicket (pas de
+     * reprise de session dans ce chemin) : le supprimer évite d'entrelacer un
+     * record handshake avant l'app-data de la réponse. À poser APRÈS l'import
+     * (qui restaure options.noTicketTls13 depuis l'état exporté). */
+    wolfSSL_no_ticket_TLSv13(ssl);
 
     for (;;) {
         /* Owner peek only when the buffer is empty (start of a request). */
@@ -475,7 +480,13 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
         if (goInvokeHandler(h, buf, (int)req_sz, sc, &resp, &resp_len) != 0) goto done;
         int off = 0;
         while (off < resp_len) {
-            int n = wolfSSL_write(ssl, (const char *)(resp + off), resp_len - off);
+            /* Un seul record TLS par appel (max app-data TLS 1.3 = 2^14). La
+             * session migrée corrompt le cadrage si wolfSSL fragmente une
+             * réponse >16 KB en plusieurs records dans un même appel : on
+             * découpe donc nous-mêmes en records de 16384 octets. */
+            int chunk = resp_len - off;
+            if (chunk > 16384) chunk = 16384;
+            int n = wolfSSL_write(ssl, (const char *)(resp + off), chunk);
             if (n <= 0) { free(resp); goto done; }
             off += n;
         }

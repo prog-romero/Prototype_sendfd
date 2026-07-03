@@ -1,0 +1,123 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.fullproxy — image fonction SeBS, mode PROTOTYPE (full-proxy).
+#
+# Identique en structure au Dockerfile.fullproxy de macro-befaas-iot : le
+# of-watchdog est compilé avec CGO + wolfSSL + libtlspeek (toute la plomberie de
+# connexion : peek TLS, routage, relai, keep-alive, read/write wolfSSL, ré-export
+# de l'état TLS) pour HTTP ET HTTPS, puis reverse-proxy la requête métier vers
+# l'hôte Python (gunicorn + fonction SeBS) sur 127.0.0.1:8085.
+#
+# La fonction SeBS est NON MODIFIÉE et choisie au build via FUNCTION_NAME :
+#   docker buildx build --platform linux/arm64 \
+#     --build-arg FUNCTION_NAME=thumbnailer \
+#     -f benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/Dockerfile.fullproxy \
+#     -t romerosdd/sebs-fullproxy-thumbnailer:latest --push .
+#
+# FUNCTION_NAME ∈ {dynamic-html, thumbnailer, compression, graph-pagerank}
+# Le contexte de build DOIT être la racine du dépôt.
+
+ARG FUNCTION_NAME=dynamic-html
+
+# ── Stage 1 : build wolfSSL (arm64 natif) ─────────────────────────────────────
+FROM golang:1.24-bookworm AS wolfssl-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential autoconf automake libtool ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY wolfssl/ /wolfssl-src/
+WORKDIR /wolfssl-src
+RUN ./autogen.sh && \
+    ./configure --prefix=/usr/local \
+        --enable-tls13 --enable-opensslextra --enable-atomicuser \
+        --enable-sessionexport --enable-session-ticket --enable-keylog-export \
+        --enable-aesgcm --enable-chacha --enable-hkdf --enable-aescbc \
+        --enable-shared --enable-static && \
+    make -j"$(nproc)" && make install && ldconfig
+
+# ── Stage 2 : build libtlspeek (arm64 natif) ──────────────────────────────────
+FROM wolfssl-build AS tlspeek-build
+RUN apt-get update && apt-get install -y --no-install-recommends cmake \
+ && rm -rf /var/lib/apt/lists/*
+COPY libtlspeek /libtlspeek-src
+WORKDIR /libtlspeek-src
+RUN rm -rf build && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+        -DWOLFSSL_INCLUDE=/usr/local/include \
+        -DWOLFSSL_LIB=/usr/local/lib/libwolfssl.so && \
+    make -j"$(nproc)" tlspeek && \
+    install -d /usr/local/include/tlspeek && \
+    cp -f ../lib/*.h ../common/*.h /usr/local/include/tlspeek/ && \
+    cp -f libtlspeek.a /usr/local/lib/libtlspeek.a && ldconfig
+
+# ── Stage 3 : build du watchdog CGO (toute la plomberie) ──────────────────────
+FROM golang:latest AS watchdog-build
+COPY --from=tlspeek-build /usr/local/include /usr/local/include
+COPY --from=tlspeek-build /usr/local/lib     /usr/local/lib
+RUN ldconfig
+WORKDIR /go/src/github.com/openfaas/of-watchdog
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/of-watchdog/ .
+RUN rm -rf vendor && go mod download
+RUN mkdir -p /out && CGO_ENABLED=1 go build -tags wolfssl \
+    -ldflags "-s -w" -o /out/fwatchdog .
+
+# ── Stage 4 : runtime (trixie pour GLIBC du watchdog CGO + Python) ────────────
+FROM debian:trixie-slim AS runtime
+ARG FUNCTION_NAME
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates python3 python3-pip \
+ && rm -rf /var/lib/apt/lists/*
+
+# libwolfssl.so partagée (le watchdog CGO en dépend au runtime).
+COPY --from=wolfssl-build /usr/local/lib/libwolfssl.so* /usr/local/lib/
+RUN ldconfig
+
+COPY --from=watchdog-build /out/fwatchdog /usr/bin/fwatchdog
+
+# --- Couche hôte (serveur Python partagé) : /home/app -------------------------
+WORKDIR /home/app
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/template/requirements.txt ./host-requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r host-requirements.txt
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/template/server.py ./server.py
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/template/start.sh ./start.sh
+RUN chmod +x ./start.sh
+
+# --- Couche fonction : /home/app/function -------------------------------------
+# Dépendances spécifiques à la fonction (jinja2 / Pillow / minio / igraph...).
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/functions/${FUNCTION_NAME}/requirements.txt ./function-requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r function-requirements.txt
+# Le code SeBS NON MODIFIÉ (function.py + storage.py + templates/...).
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/sebs-bench/functions/${FUNCTION_NAME}/function/ ./function/
+
+# fprocess = start.sh (UN SEUL token : le watchdog découpe fprocess par espaces
+# SANS respecter les guillemets, donc pas de `sh -c '...'`). start.sh lance
+# gunicorn (plusieurs workers -> multi-cœur) ; le watchdog full-proxy lui
+# transmet chaque requête migrée sur 127.0.0.1:8085.
+ENV GUNICORN_WORKERS=4
+ENV fprocess="/home/app/start.sh"
+ENV mode=http
+ENV http_upstream_url="http://127.0.0.1:8085"
+ENV http_port=8085
+
+# Active le serveur de migration FD + le driver full-proxy dans le watchdog.
+ENV sendfd_enable=1
+ENV sendfd_full_proxy=1
+ENV sendfd_socket_dir=/run/tlsmigrate
+ENV SENDFD_SOCKET_DIR=/run/tlsmigrate
+# Identité de la fonction (route + nom du socket nommé). Surchargé par le YAML.
+ENV HTTPMIGRATE_KA_FUNCTION_NAME=dynamic-html
+
+# Identité côté hôte.
+ENV SEBS_FN_NAME=dynamic-html
+
+# Stockage objet MinIO (utilisé par thumbnailer + compression ; inerte ailleurs).
+# Surchargé au déploiement par deploy-all.sh.
+ENV MINIO_STORAGE_CONNECTION_URL="10.62.0.1:9000"
+ENV MINIO_STORAGE_ACCESS_KEY="sebsadmin"
+ENV MINIO_STORAGE_SECRET_KEY="sebssecret"
+
+# Certificats pour le chemin HTTPS (même convention que les images BeFaaS).
+ENV HTTPS_TLS_CERT=/var/openfaas/secrets/server-crt
+ENV HTTPS_TLS_KEY=/var/openfaas/secrets/server-key
+
+CMD ["/usr/bin/fwatchdog"]

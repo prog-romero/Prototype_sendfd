@@ -1,0 +1,1 @@
+{"bucket": {"bucket": "sebs-benchmarks", "input": "thumbnailer/input", "output": "thumbnailer/output"}, "object": {"key": "sample.jpg", "width": 200, "height": 200}}

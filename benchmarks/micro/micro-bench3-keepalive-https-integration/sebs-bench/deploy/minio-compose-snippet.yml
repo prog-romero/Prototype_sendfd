@@ -1,0 +1,25 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Service MinIO (stockage objet S3-compatible) pour faasd — même Option B que
+# Redis : on PUBLIE le port sur l'IP du bridge openfaas0 = 10.62.0.1 (stable),
+# joignable par les fonctions (thumbnailer + compression) et par le script de
+# seeding lancé SUR LE PI, mais PAS exposé au LAN.
+#
+# À coller dans la section `services:` de /var/lib/faasd/docker-compose.yaml,
+# puis `sudo systemctl restart faasd`.
+#
+# Identifiants alignés sur MINIO_STORAGE_ACCESS_KEY / SECRET_KEY des stacks
+# (sebsadmin / sebssecret). storage.py (SeBS) lit MINIO_STORAGE_CONNECTION_URL
+# = 10.62.0.1:9000, secure=False.
+# ─────────────────────────────────────────────────────────────────────────────
+
+  minio:
+    image: docker.io/minio/minio:latest
+    container_name: minio
+    command: ["minio", "server", "/data", "--address", ":9000", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "sebsadmin"
+      MINIO_ROOT_PASSWORD: "sebssecret"
+    ports:
+      - "10.62.0.1:9000:9000"
+      - "10.62.0.1:9001:9001"
+    restart: on-failure

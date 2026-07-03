@@ -1,0 +1,122 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stack PROTOTYPE (full-proxy / migration sendfd) — 4 fonctions SeBS.
+#
+# Chemin : client → gateway → sendfd(FD + état TLS) → provider → watchdog
+#          full-proxy (termine TLS, peek, route) → hôte Python (gunicorn +
+#          fonction SeBS) → réponse écrite DIRECTEMENT sur le FD client.
+#
+# Contrairement à BeFaaS, ces fonctions ne font PAS d'appel inter-fonctions :
+# 1 seul hop client↔fonction -> isole proprement le coût du chemin de données
+# (migration vs proxy), sans confondre avec une chaîne applicative.
+#
+# MINIO_STORAGE_* : utilisés par thumbnailer + compression (inertes pour
+# dynamic-html / graph-pagerank). Surchargés au déploiement par deploy-all.sh.
+# Secrets server-crt / server-key : déjà présents sur le Pi.
+# ─────────────────────────────────────────────────────────────────────────────
+
+functions:
+
+  dynamic-html:
+    image: romerosdd/sebs-fullproxy-dynamic-html:latest
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "dynamic-html"
+      SEBS_FN_NAME: "dynamic-html"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"
+
+  thumbnailer:
+    image: romerosdd/sebs-fullproxy-thumbnailer:latest
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "thumbnailer"
+      SEBS_FN_NAME: "thumbnailer"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"
+
+  compression:
+    image: romerosdd/sebs-fullproxy-compression:latest
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "compression"
+      SEBS_FN_NAME: "compression"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"
+
+  graph-pagerank:
+    image: romerosdd/sebs-fullproxy-graph-pagerank:latest
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "graph-pagerank"
+      SEBS_FN_NAME: "graph-pagerank"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"

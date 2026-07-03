@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import time
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -183,6 +184,13 @@ def _run_wrk2(wrk2, lua, url, req_path, image_path, duration_s, timeout_s, threa
     cmd = [wrk2, f"-t{actual_threads}", f"-c{conc}", f"-d{duration_s}s", f"-R{rate}",
            "--timeout", f"{timeout_s}s", "--latency", "-s", lua, url]
     try:
+        print(f"{image_path}")
+        print(f"{cmd}")
+        print(f"{req_path}")
+        sys.exit(0)
+        #print(f"{cmd}")
+        #sys.exit(0)
+              
         r = subprocess.run(cmd, capture_output=True, text=True, env=env,
                            timeout=duration_s + timeout_s + 40)
     except subprocess.TimeoutExpired as exc:
@@ -215,7 +223,7 @@ def main() -> None:
                    help="dossier des images (def: ../base_latence/images)")
     p.add_argument("--concurrency", type=int, default=32,
                    help="connexions wrk2 (assez haut pour atteindre le RPS visé)")
-    p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--threads", type=int, default=8)
     p.add_argument("--duration-s", type=int, default=20, help="durée par palier")
     p.add_argument("--timeout-s", type=int, default=30)
     p.add_argument("--pause", type=int, default=3, help="pause entre paliers (s)")

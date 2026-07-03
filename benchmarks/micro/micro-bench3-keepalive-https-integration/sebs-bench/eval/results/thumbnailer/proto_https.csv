@@ -1,0 +1,9 @@
+timestamp,mode,scheme,function,rate,concurrency,rps,transfer_kb_s,pi_cpu_busy_avg_pct,pi_cpu_busy_max_pct,lat_avg_ms,lat_p50_ms,lat_p99_ms,total_requests,errors_non2xx,socket_connect_errors,socket_read_errors,socket_write_errors,socket_timeout_errors,exit_code
+2026-07-02T09:57:06+00:00,proto,https,thumbnailer,2,32,3.19,1.73,29.93,248.62,409.83,359.42,787.97,64,0,0,0,0,0,0
+2026-07-02T09:57:35+00:00,proto,https,thumbnailer,4,32,4.79,2.59,41.73,242.79,501.38,476.42,914.94,96,0,0,0,0,0,0
+2026-07-02T09:58:04+00:00,proto,https,thumbnailer,8,32,7.14,3.86,64.34,247.76,411.93,382.72,842.75,143,0,0,0,0,0,0
+2026-07-02T09:58:34+00:00,proto,https,thumbnailer,16,32,15.98,8.64,134.52,302.0,489.44,480.0,908.8,320,0,0,0,0,0,0
+2026-07-02T09:59:03+00:00,proto,https,thumbnailer,32,32,23.67,12.79,197.36,345.41,466.68,463.1,859.65,474,0,0,0,0,0,0
+2026-07-02T09:59:32+00:00,proto,https,thumbnailer,64,32,29.56,15.97,249.39,368.4,6370.0,6400.0,7660.0,592,0,0,0,0,0,0
+2026-07-02T10:00:01+00:00,proto,https,thumbnailer,128,32,21.71,11.74,191.39,368.4,8490.0,7810.0,11350.0,435,0,0,0,0,0,0
+2026-07-02T10:00:30+00:00,proto,https,thumbnailer,256,32,36.55,19.75,316.55,373.4,12830.0,12730.0,17120.0,732,0,0,0,0,0,0
