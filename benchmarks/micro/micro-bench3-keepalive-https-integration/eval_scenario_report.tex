@@ -1,0 +1,135 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage[margin=1.7cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\setlist{nosep, leftmargin=1.3em}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\pagestyle{empty}
+
+\title{\vspace{-1.3cm}\textbf{Scénario d'évaluation : Prototype (migration de connexion) vs Vanilla}\\
+\large Bancs d'essai issus de SeBS, pilotés par \code{wrk2} (HTTPS, keep-alive)}
+\author{}\date{}
+
+\begin{document}
+\maketitle
+\vspace{-1.4cm}
+
+\section{Les applications (banc SeBS)}
+Les quatre fonctions sont issues du banc de référence \textbf{SeBS} (\emph{Serverless Benchmark
+Suite}, SPCL/ETH Zürich, Middleware 2021) : leur \textbf{code métier est repris verbatim}, seul
+l'hôte (Flask + gunicorn derrière le watchdog) et le pilotage (notre harnais \code{wrk2}) sont à nous.
+Elles couvrent des profils de charge variés et volontairement légers.
+
+\begin{center}\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Application} & \textbf{Réf.\ SeBS} & \textbf{Aspect évalué} & \textbf{Stockage} \\
+\midrule
+\code{dynamic-html}   & 110.dynamic-html   & CPU / templating web (grosse réponse) & aucun \\
+\code{thumbnailer}    & 210.thumbnailer    & CPU image + E/S objet                 & MinIO \\
+\code{compression}    & 311.compression    & CPU compression + E/S objet           & MinIO \\
+\code{graph-pagerank} & 501.graph-pagerank & CPU pur (igraph, PageRank)            & aucun \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Entrées et sorties par application}
+Chaque requête POSTe l'\emph{event} JSON ci-dessous ; pour \code{thumbnailer} et \code{compression},
+les données sont d'abord \textbf{semées dans MinIO} par \code{seed-storage.py} (ici : image JPEG
+\textbf{16$\times$12} $\approx$739~o, et dataset de \textbf{12 fichiers} $\approx$48~KB). La sortie est
+celle du \textbf{code SeBS d'origine}.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}l p{6.9cm} p{6.6cm}@{}}
+\toprule
+\textbf{App.} & \textbf{Entrée (event + données semées)} & \textbf{Sortie (SeBS)} \\
+\midrule
+\code{dynamic-html} &
+\code{username} : nom inséré dans la page ; \code{random\_len=1000} : nb d'entiers aléatoires
+(0--10$^6$) générés $\rightarrow$ pilote la \textbf{taille du HTML} et la charge CPU. Aucune donnée externe. &
+Page \textbf{HTML} rendue via Jinja2 (username + heure + liste des nombres). \code{\{result: html\}}. \\
+\addlinespace
+\code{graph-pagerank} &
+\code{size=200} : nb de n\oe{}uds du graphe Barab\'asi--Albert généré ; \code{seed=42} : graine
+aléatoire (reproductibilité). &
+Score \textbf{PageRank} du 1\textsuperscript{er} n\oe{}ud + \code{measurement}
+(\code{graph\_generating\_time}, \code{compute\_time}). \\
+\addlinespace
+\code{thumbnailer} &
+\code{bucket}/\code{input}/\code{output} : bucket et préfixes MinIO ; \code{object.key=sample.jpg} :
+image source ; \code{width=10, height=10} : \textbf{taille cible de la miniature}. &
+\textbf{Miniature JPEG} redimensionnée, ré-uploadée dans \code{thumbnailer/output/} ;
+\code{result=\{bucket,key\}} + \code{measurement} (temps/tailles download, compute, upload). \\
+\addlinespace
+\code{compression} &
+\code{bucket}/\code{input}/\code{output} : bucket et préfixes ; \code{object.key=dataset} :
+\textbf{sous-dossier à compresser}. &
+\textbf{Archive ZIP} du dataset, ré-uploadée dans \code{compression/output/} ;
+\code{result=\{bucket,key\}} + \code{measurement} (idem). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Scénario d'évaluation}
+Pour chaque application, on effectue un \textbf{balayage de débit} (\emph{rate sweep}) en boucle
+ouverte : \code{wrk2} envoie l'\emph{event} JSON de la fonction (POST, keep-alive) à un \textbf{débit
+cible constant}, palier par palier. Chaque palier dure \textbf{60~s}, suivi d'une \textbf{pause de 5~s}
+pour laisser le système revenir au repos. À chaque palier on relève : RPS atteint, latences
+(moy/p50/p99), CPU et réseau du Pi, coût du chemin de données (\emph{client/server/overhead}) et les
+erreurs. La \textbf{même charge exacte} est rejouée dans les deux modes ; seul le mode change :
+\begin{itemize}
+\item \textbf{Prototype} : le gateway \textbf{migre la connexion} (descripteur TCP + état TLS 1.3) vers
+le conteneur, qui répond \textbf{directement} au client (\code{--mode proto}).
+\item \textbf{Vanilla} : chaîne proxy OpenFaaS standard, le gateway relaie requête et réponse
+(\code{--mode vanilla}).
+\end{itemize}
+Les images des fonctions sont \textbf{identiques} dans les deux cas ; le comportement du gateway est
+fixé par sa configuration (\code{HTTPMIGRATE\_ENABLE}), et \code{--mode} n'est qu'une étiquette côté
+client. Toutes les mesures sont en \textbf{HTTPS} (TLS~1.3, wolfSSL, certificat auto-signé) sur le
+port~8443.
+
+\section{Paramètres \code{wrk2} par application}
+Paramètres \textbf{communs} à toutes les applications et aux deux modes : \code{--scheme https}
+(port~8443), \code{--host 192.168.2.2} (le Pi), \code{--duration-s 60}, \code{--timeout-s 60},
+\code{--pause 5}. Le client wrk2 ouvre \emph{concurrency} connexions réparties sur \emph{threads}
+threads, et vise le débit \code{-R} de chaque palier.
+
+\begin{center}\small
+\begin{tabular}{@{}lp{6.6cm}cc@{}}
+\toprule
+\textbf{Application} & \textbf{Débits ciblés (\code{--rates}, req/s)} & \textbf{Concurrence (\code{-c})} & \textbf{Threads (\code{-t})} \\
+\midrule
+\code{compression}    & 2, 4, 6, 8, 10, 12, 14, 16                                   & 16 & 4 \\
+\code{graph-pagerank} & 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 272, 288 & 80 & 8 \\
+\code{thumbnailer}    & 1, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192      & 32 & 4 \\
+\code{dynamic-html}   & 1, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192      & 32 & 4 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Les plages diffèrent car les applications saturent à des débits très différents : \code{compression}
+et \code{graph-pagerank} sont plus lourdes par requête (débits utiles plus bas et concurrence adaptée),
+tandis que \code{dynamic-html} sature le CPU à haut débit.
+
+\section{Environnement d'évaluation}
+\begin{itemize}
+\item \textbf{Serveur} : Raspberry~Pi~4 (\code{192.168.2.2}), 4 c\oe{}urs ARM Cortex-A72, carte réseau
+$\approx$~110~Mo/s (940~Mbit/s mesurés à \code{iperf3}). Il exécute \textbf{faasd} + le gateway OpenFaaS
+modifié (terminaison/migration TLS via wolfSSL).
+\item \textbf{Fonctions} : hôte Python (Flask + \textbf{gunicorn, 4 workers} $\rightarrow$ vrai
+parallélisme multi-c\oe{}ur) derrière le watchdog \emph{full-proxy}. Stockage objet \textbf{MinIO}
+(\code{10.62.0.1:9000}) pour \code{thumbnailer} et \code{compression}.
+\item \textbf{Client} : machine de charge exécutant \code{wrk2} (générateur en boucle ouverte, correction
+de \emph{coordinated omission}), POST de l'event JSON à débit constant, connexions keep-alive.
+\item \textbf{Instrumentation} (par palier) : latences via wrk2 ; \textbf{CPU} du Pi via \code{sar -u}
+(échelle 0--100\,\%) et \textbf{réseau} via \code{sar -n DEV} sur \code{eth0} ; \emph{perf-cost}
+(\code{client\_ms}, \code{server\_ms} du wrapper SeBS, \code{overhead = client - server}) ; comptage des
+réponses et des erreurs/timeouts.
+\end{itemize}
+
+\end{document}

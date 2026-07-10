@@ -1,0 +1,103 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage[margin=1.8cm]{geometry}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\setlist{nosep, leftmargin=1.4em}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\title{\vspace{-1.2cm}\textbf{Migration de connexion et médiation du gateway OpenFaaS}\\
+\large Ce que le gateway apporte sur le chemin d'une requête, et plan pour le conserver}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-1.4cm}
+
+\section{Ce que le gateway fait sur le chemin d'une requête}
+
+Sur le chemin \emph{aller} (client $\rightarrow$ fonction), le gateway ne modifie pas le contenu
+métier de la requête : il l'\textbf{enrichit} de méta-données et la \textbf{normalise}. Sur le chemin
+\emph{retour} (fonction $\rightarrow$ client), il \textbf{médie et observe} la réponse.
+
+\subsection{En-têtes ajoutés à la requête (et à la réponse)}
+
+\begin{center}\small
+\begin{tabular}{@{}p{3.0cm}p{2.1cm}p{10.6cm}@{}}
+\toprule
+\textbf{En-tête} & \textbf{Sens} & \textbf{Rôle / usage concret} \\
+\midrule
+\code{X-Call-Id} & req.\ + rép. & UUID unique par appel (généré si absent). \textbf{Traçage/corrélation} : renvoyé au client, loggé par la fonction, propagé dans la file NATS en mode asynchrone. \\
+\code{X-Start-Time} & req.\ + rép. & Horodatage (ns UTC) d'entrée au gateway. Permet de \textbf{calculer la durée} totale (file d'attente incluse), surtout en asynchrone. \\
+\code{X-Served-By} & rép. & Version du gateway (\code{openfaas-ce/<v>}) : diagnostic. \\
+\code{X-Forwarded-For} & req. & \textbf{IP réelle du client} (le pair direct de la fonction est le gateway). Consommé par la fonction : logs, audit, géo. \\
+\code{X-Forwarded-Host} & req. & \textbf{Host d'origine} demandé par le client. Consommé par la fonction : multi-tenant, URL absolues. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Traitements (logique de médiation) sur l'aller et le retour}
+
+\begin{itemize}
+\item \textbf{Routage} : extraction de \code{/function/<nom>} puis \textbf{reconstruction de l'URL amont} (le sous-chemin et la query string sont transmis à la fonction).
+\item \textbf{Normalisation du corps} : le corps est bufferisé et un \code{Content-Length} explicite est posé (\textbf{dé-chunk}), sans quoi certains workers ne savent pas lire un corps \code{chunked}.
+\item \textbf{Hygiène HTTP} : suppression des en-têtes \emph{hop-by-hop} (\code{Connection}, \code{Keep-Alive}, \code{TE}, \code{Trailer}, \code{Transfer-Encoding}, \code{Upgrade}) — RFC 7230.
+\item \textbf{Auth de service} : injection facultative d'identifiants gateway$\leftrightarrow$fonction (\code{serviceAuthInjector}).
+\item \textbf{Timeout par requête} : l'appel amont est borné (\code{context.WithTimeout}).
+\item \textbf{Scale-from-zero} : si la fonction est à 0 réplique, le gateway la démarre, \textbf{attend} qu'elle soit prête, puis forwarde.
+\item \textbf{Observabilité (retour)} : il lit le \textbf{code HTTP} et la durée, puis enregistre les métriques Prometheus étiquetées \emph{par fonction ET par code} (\code{GatewayFunctionsHistogram}, \code{GatewayFunctionInvocation}) et loggue \code{Forwarded [POST] ... [200] - 0.02s}. Il peut aussi réinjecter des en-têtes de réponse (echo \code{X-Call-Id}, CORS) et gérer les cas particuliers (\code{Server-Sent Events}).
+\end{itemize}
+
+\section{Ce que la migration court-circuite}
+
+La migration transfère la socket brute au worker, qui répond \textbf{directement} au client. Aucune
+information \emph{du client} n'est perdue (la requête arrive octet pour octet). On perd la
+\textbf{médiation du gateway}, surtout côté réponse :
+
+\begin{itemize}
+\item \textbf{Le code HTTP de la réponse} : le pipe de complétion ne transporte qu'un timestamp $\Rightarrow$ métriques \emph{sans} ventilation 2xx/4xx/5xx, log au code non fiable.
+\item \textbf{En-têtes ajoutés} non présents chez la fonction : \code{X-Call-Id}, \code{X-Start-Time}, \code{X-Forwarded-For/Host} ; et pas d'echo/CORS dans la réponse.
+\item \textbf{Timeout} du gateway (déplacé au watchdog), \textbf{auth de service}, \textbf{scale-from-zero}, \textbf{SSE} : non appliqués sur le chemin migré.
+\end{itemize}
+Ce qui reste conservé : \textbf{durée} et \textbf{nombre d'invocations} (via le pipe de complétion).
+
+\section{Plan d'intégration pour tout conserver}
+
+\textbf{Principe directeur.} On répartit la médiation entre les deux points qui voient déjà
+l'information : le \textbf{gateway au moment du \emph{peek}} (il a la requête décodée et l'adresse du
+pair) et le \textbf{watchdog full-proxy} (il voit la réponse avant de la renvoyer). Aucune nouvelle
+traversée réseau : on n'ajoute que quelques octets au \emph{payload} de migration et au pipe.
+
+\begin{enumerate}[label=\textbf{P\arabic*.}]
+\item \textbf{Enrichir le payload de migration avec les méta-données de requête.}
+Au peek, le gateway génère \code{X-Call-Id} (UUID) et \code{X-Start-Time}, et lit l'IP du pair
+(\code{X-Forwarded-For}) et le \code{Host} (\code{X-Forwarded-Host}). Il les place dans la structure
+sérialisée déjà envoyée par \code{sendfd2WithState}. Le \textbf{watchdog les ré-injecte} comme en-têtes
+HTTP avant de passer la requête à gunicorn. $\rightarrow$ Traçage et provenance \textbf{restaurés à l'identique},
+sans coût réseau (quelques octets ajoutés au message existant).
+
+\item \textbf{Étendre le pipe de complétion pour porter le code HTTP.}
+Le watchdog connaît le \code{status\_code} (et la taille) de la réponse. On remplace le message du pipe
+(8 octets de timestamp) par un petit enregistrement \code{\{status\_code, bytes, timestamp\}}. Le gateway,
+dans \code{readCompletionPipe}, appelle alors le notifier avec le \textbf{vrai code} $\rightarrow$ métriques
+Prometheus \emph{par code} (histogramme de durée et compteur d'invocations étiquetés
+\code{function\_name} \emph{et} \code{code}) et log \code{Forwarded ... [code]} fiable \textbf{rétablis}.
+Modification minimale et rétro-compatible (message plus long, lu de la même façon).
+\end{enumerate}
+
+\textbf{Bilan.} P1 et P2 sont les deux plans prioritaires : pour seulement \textbf{quelques octets}
+ajoutés au \emph{payload} de migration et au pipe de complétion, on récupère l'essentiel de la valeur du
+gateway --- \textbf{traçage} et \textbf{provenance} côté requête (P1), \textbf{observabilité par code HTTP}
+côté réponse (P2) --- tout en conservant le gain du chemin direct fonction$\rightarrow$client. Chacun
+s'appuie sur un point qui voit \emph{déjà} l'information (le gateway au peek, le watchdog à la réponse),
+donc l'intégration se fait \textbf{sans traversée réseau supplémentaire}.
+
+\end{document}

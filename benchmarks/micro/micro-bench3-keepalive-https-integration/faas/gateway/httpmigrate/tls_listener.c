@@ -57,7 +57,7 @@ const int TLSGW_SERIAL_SIZE = (int)sizeof(tlspeek_serial_t);
 /* ── Internal structs ────────────────────────────────────────────────────── */
 
 struct wolfssl_gtw_ctx {
-    WOLFSSL_CTX *wctx;
+    WOLFSSL_CTX *wctx;  
 };
 
 struct wolfssl_gtw_conn {

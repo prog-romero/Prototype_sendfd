@@ -219,3 +219,42 @@ python3 run_eval.py --mode vanilla --scheme https --host 192.168.2.2 --port 8443
 python3 run_eval.py --mode vanilla --scheme http  --host 192.168.2.2 --port 8080 --function compression   --input ../../inputs/compression.json   --requests 50 --rate 2 --timeout-s 30 --out results/compression/base_vanilla_http.csv
 python3 run_eval.py --mode vanilla --scheme https --host 192.168.2.2 --port 8443 --function compression   --input ../../inputs/compression.json   --requests 50 --rate 2 --timeout-s 30 --out results/compression/base_vanilla_https.csv
 ```
+
+---
+
+## PHASE F — Plots SeBS : 3 vues (Vanilla vs Prototype)
+
+Ces 3 scripts **auto-découvrent toutes les applications** dans `results/` et
+écrivent, pour chaque app, dans son propre sous-dossier. Une commande = toutes
+les apps. Overhead : valeurs négatives non affichées.
+
+| Vue | Script | Dossier | Contenu |
+|---|---|---|---|
+| Barres par palier | `plot_sebs_compare.py`    | `results/<app>/plots_<scheme>/`   | barres vanilla/proto **à chaque palier RPS** |
+| Boîtes à moustache | `boxplot_sebs_compare.py` | `results/<app>/boxplot_<scheme>/` | distribution de la métrique **sur la plage RPS** |
+| Histogramme des sommes | `sum_sebs_compare.py`    | `results/<app>/sum_<scheme>/`     | 1 barre/mode = **somme** de la métrique sur la plage RPS |
+
+### Toutes les applications, en une commande (HTTPS)
+```bash
+python3 plot_sebs_compare.py    --scheme https
+python3 boxplot_sebs_compare.py --scheme https
+python3 sum_sebs_compare.py     --scheme https
+```
+
+### En HTTP
+```bash
+python3 plot_sebs_compare.py    --scheme http
+python3 boxplot_sebs_compare.py --scheme http
+python3 sum_sebs_compare.py     --scheme http
+```
+
+### Une seule application (ex. compression)
+```bash
+python3 plot_sebs_compare.py    --scheme https --app compression
+python3 boxplot_sebs_compare.py --scheme https --app compression
+python3 sum_sebs_compare.py     --scheme https --app compression
+```
+
+> Chaque vue produit 11 figures/app : `rps`, `net_kb_s`, `cpu_avg_pct`,
+> `cpu_max_pct`, `lat_avg_ms`, `client_ms_avg/p99`, `server_ms_avg/p99`,
+> `overhead_ms_avg/p99`.

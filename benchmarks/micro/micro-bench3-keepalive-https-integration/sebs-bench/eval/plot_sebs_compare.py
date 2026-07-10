@@ -42,7 +42,7 @@ APPS = ["dynamic-html", "graph-pagerank", "thumbnailer", "compression"]
 PLOT_SPECS = [
     # — les 6 plots "à la evaluation_throughput" —
     ("rps",                  "rps",             "requests/s",           False),
-    ("net_kb_s_avg",         "net_kb_s",        "réseau moy (kB/s)",    False),
+    ("net_kb_s_avg",         "net_kb_s",        "réseau moy (kB/s)", False),
     ("pi_cpu_busy_avg_pct",  "cpu_avg_pct",     "cpu moy (%)",          False),
     ("pi_cpu_busy_max_pct",  "cpu_max_pct",     "cpu max (%)",          False),
     ("lat_avg_ms",           "lat_avg_ms",      "latence moy (ms)",     False),
@@ -87,6 +87,26 @@ def _annotate_timeouts(ax, bars, timeouts) -> None:
                     str(int(t)), ha="center", va="bottom", fontsize=8, color="crimson")
 
 
+# Débit max de référence pour le % réseau : 110 Mo/s (= 110 * 1024 kB/s).
+# (Modifier ici si le lien change.)
+NIC_MAX_MB = 110
+NIC_MAX_KB = NIC_MAX_MB * 1024.0
+
+
+def _annotate_net_pct(ax, bars, vals) -> None:
+    """Sur le plot réseau : UNIQUEMENT le pourcentage (par rapport à 110 Mo/s),
+    écrit en OBLIQUE (45°) et légèrement au-dessus de la barre, pour rester aéré
+    et éviter que les valeurs voisines se superposent. Sans parenthèses."""
+    for bar, v in zip(bars, vals):
+        if pd.notna(v) and v > 0:
+            pct = 100.0 * v / NIC_MAX_KB
+            ax.annotate(f"{pct:.1f}%",
+                        xy=(bar.get_x() + bar.get_width() / 2.0, bar.get_height()),
+                        xytext=(0, 5), textcoords="offset points",
+                        ha="left", va="bottom", rotation=45, rotation_mode="anchor",
+                        fontsize=8, color="black")
+
+
 def make_plot(merged, metric, ylabel, out_path, label_a, label_b, app, mask_neg):
     if f"{metric}_a" not in merged.columns or f"{metric}_b" not in merged.columns:
         return False
@@ -106,13 +126,17 @@ def make_plot(merged, metric, ylabel, out_path, label_a, label_b, app, mask_neg)
     b_tmo = merged.get("socket_timeout_errors_b", pd.Series([0] * len(x))).fillna(0)
 
     fig, ax = plt.subplots(figsize=(10, 4.8))
-    bars_a = ax.bar(x - width / 2, np.nan_to_num(a), width=width, alpha=0.65, label=label_a, color="#1f77b4")
-    bars_b = ax.bar(x + width / 2, np.nan_to_num(b), width=width, alpha=0.65, label=label_b, color="#d95f02")
-    ax.plot(x - width / 2, a, marker="o", linewidth=1.5, color="#1f77b4")
-    ax.plot(x + width / 2, b, marker="o", linewidth=1.5, color="#d95f02")
+    bars_a = ax.bar(x - width / 2, np.nan_to_num(a), width=width, alpha=0.75, label=label_a, color="#1f77b4")
+    bars_b = ax.bar(x + width / 2, np.nan_to_num(b), width=width, alpha=0.75, label=label_b, color="#d95f02")
 
     _annotate_timeouts(ax, bars_a, a_tmo.to_list())
     _annotate_timeouts(ax, bars_b, b_tmo.to_list())
+
+    # Plot réseau : valeur kB/s + % du débit max (110 Mo/s) au-dessus de chaque barre.
+    if metric == "net_kb_s_avg":
+        _annotate_net_pct(ax, bars_a, a)
+        _annotate_net_pct(ax, bars_b, b)
+        ax.margins(y=0.22)   # marge haute pour ne pas rogner les étiquettes
 
     ax.set_xticks(x)
     ax.set_xticklabels(x_labels, rotation=45, ha="right")
@@ -127,16 +151,22 @@ def make_plot(merged, metric, ylabel, out_path, label_a, label_b, app, mask_neg)
     return True
 
 
-def plot_app(app_dir: Path, app: str, scheme: str, label_a: str, label_b: str) -> None:
-    van = find_csv(app_dir, "vanilla", scheme)
-    pro = find_csv(app_dir, "proto", scheme)
+def plot_app(app_dir: Path, app: str, scheme: str, label_a: str, label_b: str,
+             van: Path | None = None, pro: Path | None = None) -> None:
+    # fichiers explicites (--vanilla/--proto) sinon auto-découverte
+    van = van or find_csv(app_dir, "vanilla", scheme)
+    pro = pro or find_csv(app_dir, "proto", scheme)
     if not van or not pro:
         print(f"  [skip] {app}: paire {scheme} introuvable (vanilla={bool(van)}, proto={bool(pro)})")
         return
 
-    merged = pd.merge(prepare(van), prepare(pro), on="rate", suffixes=("_a", "_b"), how="inner")
+    # outer join : on garde EXACTEMENT tous les rates présents dans l'un OU
+    # l'autre CSV, sans en fixer ni en supprimer aucun (valeur manquante d'un
+    # mode = barre absente à ce rate).
+    merged = pd.merge(prepare(van), prepare(pro), on="rate", suffixes=("_a", "_b"),
+                      how="outer").sort_values("rate")
     if merged.empty:
-        print(f"  [skip] {app}: aucun rate commun entre {van.name} et {pro.name}")
+        print(f"  [skip] {app}: aucun rate dans {van.name} / {pro.name}")
         return
 
     out_dir = app_dir / f"plots_{scheme}"
@@ -155,9 +185,20 @@ def main() -> None:
                    help="dossier results/ (def: ./results)")
     p.add_argument("--scheme", choices=["https", "http"], default="https")
     p.add_argument("--app", default=None, help="une seule application (def: toutes)")
+    p.add_argument("--vanilla", default=None, help="chemin exact du CSV vanilla (override auto-découverte)")
+    p.add_argument("--proto", default=None, help="chemin exact du CSV proto (override auto-découverte)")
     p.add_argument("--label-a", default="Vanilla")
     p.add_argument("--label-b", default="Prototype")
     args = p.parse_args()
+
+    # Mode fichiers explicites : on trace juste cette paire (rates = ceux des CSV).
+    if args.vanilla and args.proto:
+        van, pro = Path(args.vanilla).resolve(), Path(args.proto).resolve()
+        app_dir = van.parent
+        app = app_dir.name
+        print(f"=== plots SeBS [{args.scheme}] {app} (fichiers explicites) ===")
+        plot_app(app_dir, app, args.scheme, args.label_a, args.label_b, van=van, pro=pro)
+        return
 
     root = Path(args.results_dir).expanduser().resolve()
     apps = [args.app] if args.app else APPS

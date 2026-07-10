@@ -55,10 +55,7 @@ import (
 // After the TLS handshake, each connection is pushed to a ChanListener so the
 // standard http.Server can serve it.
 //
-// In this mode libtlspeek is NEVER used:
-//   - wolfssl_accept_start_plain() accepts without installing the keylog callback.
-//   - All reads/writes use wolfSSL_read/wolfSSL_write directly.
-//   - The OpenFaaS gateway proxies requests to function containers over plain HTTP.
+
 func RunVanillaHTTPS(
 	tlsPort int,
 	certFile, keyFile string,
@@ -70,7 +67,7 @@ func RunVanillaHTTPS(
 		return fmt.Errorf("[vanilla-https] wolfSSL init: %w", err)
 	}
 	defer gtwCtx.Free()
-
+ 
 	addr := &net.TCPAddr{Port: tlsPort}
 	// Buffer of 512: enough to absorb a burst of 512 connections being pushed
 	// to ChanListener before the http.Server goroutine accepts them.
@@ -215,7 +212,7 @@ func RunLoopHTTPS(
 //
 // Drives the handshake state machine (and peek/export for prototype mode) for
 // ALL connections on a single goroutine.  This eliminates one goroutine and one
-// OS thread per connection — identical architecture to bench2gw/server.go.
+// OS thread per connection 
 //
 // Parameters:
 //
@@ -223,7 +220,7 @@ func RunLoopHTTPS(
 //	listenFD    — the raw TCP listen fd (SO_REUSEADDR, non-blocking)
 //	relayFD     — Unix relay listen fd, or -1 if not applicable
 //	chanLis     — channel-based net.Listener feeding the http.Server
-//	providerURL — faasd provider URL (for IP resolution in prototype mode)
+//	providerURL — faasd provider URL 
 //	notifier    — Prometheus completion callback (prototype mode only)
 //	skipTop1    — SUM_PROD mode: skip timing instrumentation on the gateway
 //	vanillaMode — true  → RunVanillaHTTPS (no peek, no libtlspeek)
