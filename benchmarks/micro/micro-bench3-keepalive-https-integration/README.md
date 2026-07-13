@@ -99,13 +99,18 @@ micro-bench3-keepalive-https-integration/
 
 ### 1. Gateway Build (on developer machine)
 
-The gateway build uses the gateway directory context to build the custom HTTPS gateway:
+The gateway image is cross-compiled for the Pi (arm64) and **must be built from the
+repository root**: the Dockerfile `COPY`s `wolfssl/` and the gateway sources by their
+repo-root-relative paths, so the gateway directory cannot be used as the build context.
+The tag must match the image deployed on the Pi (`romerosdd/gateway-https:latest`):
 
 ```bash
+# run from the repository root
 docker buildx build --platform linux/arm64 \
+  -f benchmarks/micro/micro-bench3-keepalive-https-integration/faas/gateway/Dockerfile \
   -t romerosdd/gateway-https:latest \
-  benchmarks/micro/micro-bench3-keepalive-https-integration/faas/gateway \
-  --push
+  --push \
+  .
 ```
 
 ### 2. C Workers Build (from repo root)

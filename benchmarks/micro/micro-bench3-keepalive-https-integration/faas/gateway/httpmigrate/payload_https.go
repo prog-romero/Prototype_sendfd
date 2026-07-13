@@ -38,7 +38,7 @@ type KAPayloadHTTPS struct {
 // Layout: KAPayload.Marshal() (160 bytes) || serial bytes.
 func (p *KAPayloadHTTPS) Marshal() []byte {
 	base := p.Base.Marshal() // 160 bytes
-	out  := make([]byte, len(base)+len(p.Serial))
+	out := make([]byte, len(base)+len(p.Serial))
 	copy(out, base)
 	copy(out[len(base):], p.Serial)
 	return out
@@ -61,7 +61,7 @@ func NewPayloadHTTPS(top1Ns uint64, targetFn string, serialBytes []byte) *KAPayl
 	}
 	if top1Ns > 0 {
 		p.Base.Top1Rdtsc = top1Ns
-		p.Base.Top1Set   = 1
+		p.Base.Top1Set = 1
 	}
 	p.Base.SetTarget(targetFn)
 	return p
@@ -98,7 +98,7 @@ func dispatchMigrateHTTPS(
 	if err := syscall.Pipe(pipeEnds[:]); err != nil {
 		return fmt.Errorf("pipe: %w", err)
 	}
-	pipeReadFD  := pipeEnds[0]
+	pipeReadFD := pipeEnds[0]
 	pipeWriteFD := pipeEnds[1]
 
 	// Connect to the provider's migration socket and send FDs + payload.

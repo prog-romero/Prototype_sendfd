@@ -298,20 +298,6 @@ func createSeqpacketSocket(path string, backlog int) (int, error) {
 	return fd, nil
 }
 
-// connectSeqpacketSocket connects a SOCK_SEQPACKET Unix domain socket to path.
-func connectSeqpacketSocket(path string) (int, error) {
-	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_SEQPACKET, 0)
-	if err != nil {
-		return -1, fmt.Errorf("socket: %w", err)
-	}
-	addr := &syscall.SockaddrUnix{Name: path}
-	if err := syscall.Connect(fd, addr); err != nil {
-		_ = syscall.Close(fd)
-		return -1, fmt.Errorf("connect %s: %w", path, err)
-	}
-	return fd, nil
-}
-
 // connectStreamSocket connects a SOCK_STREAM Unix domain socket to path.
 // Used to connect to the function worker's -fn.sock (which uses SOCK_STREAM).
 func connectStreamSocket(path string) (int, error) {

@@ -1,19 +1,23 @@
 // Package httpmigrate implements the SCM_RIGHTS keepalive HTTP migration path
 // for the OpenFaaS gateway integration benchmark.
 //
-// Protocol:
+// Protocol (provider-routed migration data path):
 //   - Gateway stamps top1_rdtsc (nanoseconds, CLOCK_MONOTONIC_RAW) just before
-//     MSG_PEEK on the accepted TCP connection.
+//     MSG_PEEK on the accepted TCP connection, and parses the target function
+//     name from the peeked request line.
 //   - Gateway sends [clientFD, pipeWriteFD] via SCM_RIGHTS + httpmigrate_ka_payload_t
-//     as regular iov data, in a single sendmsg() call, to the watchdog's UDS.
-//   - Watchdog relays the same two FDs + payload to the function's UDS.
-//   - Function worker reads top1 from payload, stamps top2 after consuming the
-//     full HTTP body, computes delta_ns, writes the JSON response, then writes
-//     8 bytes into pipeWriteFD for the gateway's Prometheus notifier.
-//   - Relay: function worker peeks the next request, detects a wrong owner,
-//     stamps a fresh top1, sets target_function, and sends [clientFD] + payload
-//     to <own-ip>-relay.sock.  The gateway relay creates a new pipe and
-//     re-dispatches to the new target container.
+//     (which carries the target function name) as regular iov data, in a single
+//     sendmsg() call, to the faasd provider's UDS (ProviderSock).
+//   - The provider resolves the target container's IP and forwards the same two
+//     FDs + payload to that container's watchdog.
+//   - The watchdog takes ownership of the client connection, feeds the request
+//     to the function, and replies directly to the client. It then writes
+//     8 bytes into pipeWriteFD so the gateway's Prometheus notifier can record
+//     the completion (duration + invocation count).
+//   - Wrong-owner keep-alive: if the next request on a kept-alive connection
+//     targets a different function, the current owner stamps a fresh top1, sets
+//     target_function, and sends [clientFD] + payload back to the provider
+//     (ProviderSock), which re-routes it to the correct container.
 //
 // Timing convention (compatible with micro-bench3-keepalive-http CSV format):
 //   - top1_rdtsc and top2_rdtsc are nanoseconds (CLOCK_MONOTONIC_RAW / UnixNano).

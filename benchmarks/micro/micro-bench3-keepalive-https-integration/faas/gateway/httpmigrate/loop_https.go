@@ -10,8 +10,15 @@
 //   - listenFD    → accept() → wolfssl_accept_start() → add clientFD to epoll
 //   - clientFD    → wolfssl_handshake_step() per event until done
 //                → tlsgw_peek_and_export_nb():
-//                    rc > 0  (/function/<name>): goroutine dispatches sendfd
-//                    rc == -1 (other path): push WolfSSLGtwConn to ChanListener
+//                    rc > 0  (/function/<name>): a goroutine sends the raw fd +
+//                             exported TLS state to the faasd-provider over a
+//                             Unix socket (ProviderSock). The provider resolves
+//                             the target container and forwards the fd + TLS
+//                             state + function name to the function's watchdog,
+//                             which resumes the session and replies DIRECTLY to
+//                             the client. The gateway keeps no fd for this conn.
+//                    rc == -1 (other path, e.g. /system/*): push WolfSSLGtwConn
+//                             to ChanListener so the local http.Server serves it.
 //
 // RunVanillaHTTPS (vanilla mode, HTTPMIGRATE_ENABLE=0 + HTTPS_ENABLE=1):
 //   - Same 4-goroutine SO_REUSEPORT architecture.
@@ -67,7 +74,7 @@ func RunVanillaHTTPS(
 		return fmt.Errorf("[vanilla-https] wolfSSL init: %w", err)
 	}
 	defer gtwCtx.Free()
- 
+
 	addr := &net.TCPAddr{Port: tlsPort}
 	// Buffer of 512: enough to absorb a burst of 512 connections being pushed
 	// to ChanListener before the http.Server goroutine accepts them.
@@ -212,15 +219,16 @@ func RunLoopHTTPS(
 //
 // Drives the handshake state machine (and peek/export for prototype mode) for
 // ALL connections on a single goroutine.  This eliminates one goroutine and one
-// OS thread per connection 
+// OS thread per connection.
 //
 // Parameters:
 //
 //	gtwCtx      — shared wolfSSL context
 //	listenFD    — the raw TCP listen fd (SO_REUSEADDR, non-blocking)
-//	relayFD     — Unix relay listen fd, or -1 if not applicable
 //	chanLis     — channel-based net.Listener feeding the http.Server
-//	providerURL — faasd provider URL 
+//	providerURL — faasd-provider URL (prototype mode): the raw fd + exported TLS
+//	              state are sent to the provider, which forwards them (with the
+//	              function name) to the function's watchdog.
 //	notifier    — Prometheus completion callback (prototype mode only)
 //	skipTop1    — SUM_PROD mode: skip timing instrumentation on the gateway
 //	vanillaMode — true  → RunVanillaHTTPS (no peek, no libtlspeek)
@@ -228,8 +236,8 @@ func RunLoopHTTPS(
 func runEpollLoop(
 	gtwCtx *WolfSSLGtwCtx,
 	listenFD int,
-	relayFD int,
-	_ string,
+	_ int, // (unused) former worker→gateway relay listen fd; the 2nd hop is now done by the faasd-provider
+	_ string, // (unused) reserved
 	chanLis *ChanListener,
 	providerURL string,
 	notifier CompletionNotifier,
@@ -250,8 +258,6 @@ func runEpollLoop(
 
 	// pending maps client fd → *wolfssl_gtw_conn_t (connections in handshake or peek).
 	pending := make(map[int]*C.wolfssl_gtw_conn_t)
-	// relayConns maps relay conn fd → partial receive state.
-	relayConns := make(map[int]*httpsRelayConn)
 
 	// closePending removes a connection from epoll and frees its wolfSSL state.
 	closePending := func(fd int) {
@@ -259,15 +265,6 @@ func runEpollLoop(
 			_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
 			C.wolfssl_conn_free(conn)
 			delete(pending, fd)
-		}
-	}
-
-	// closeRelayConn removes a relay connection from epoll and closes its fds.
-	closeRelayConn := func(fd int) {
-		if rc, ok := relayConns[fd]; ok {
-			_ = syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil)
-			rc.close()
-			delete(relayConns, fd)
 		}
 	}
 
@@ -330,73 +327,6 @@ func runEpollLoop(
 						continue
 					}
 					pending[clientFD] = conn
-				}
-				continue
-			}
-
-			// ── Relay listen socket: accept connections from workers ──────────
-			if fd == relayFD {
-				for {
-					connFD, _, aerr := syscall.Accept4(relayFD, syscall.SOCK_CLOEXEC|syscall.SOCK_NONBLOCK)
-					if aerr != nil {
-						break
-					}
-					rc := newHTTPSRelayConn(connFD, gtwCtx.SerialSize())
-					if err := syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_ADD, connFD,
-						&syscall.EpollEvent{Events: syscall.EPOLLIN | syscall.EPOLLRDHUP, Fd: int32(connFD)}); err != nil {
-						rc.close()
-						continue
-					}
-					relayConns[connFD] = rc
-				}
-				continue
-			}
-
-			// ── Relay data connection: receive fd + payload from a worker ─────
-			if rc, ok := relayConns[fd]; ok {
-				if evFlags&(syscall.EPOLLERR|syscall.EPOLLHUP|syscall.EPOLLRDHUP) != 0 {
-					closeRelayConn(fd)
-					continue
-				}
-				if evFlags&syscall.EPOLLIN != 0 {
-					done, rcErr := rc.recv()
-					if rcErr != nil {
-						closeRelayConn(fd)
-						continue
-					}
-					if !done {
-						// Partial receive — wait for more data.
-						continue
-					}
-					// Full payload received.  Extract fields before closeRelayConn
-					// clears them (closeRelayConn would also close clientFD if we
-					// don't detach it first).
-					clientFD := rc.clientFD
-					serialBytes := rc.payload[KAPayloadSize:]
-					basePay := UnmarshalPayload(rc.payload[:KAPayloadSize])
-					rc.clientFD = -1 // detach so close() doesn't double-close
-					closeRelayConn(fd)
-
-					if basePay == nil {
-						_ = syscall.Close(clientFD)
-						continue
-					}
-					targetFn := basePay.Target()
-					if targetFn == "" {
-						_ = syscall.Close(clientFD)
-						continue
-					}
-					// Copy serialBytes: rc.payload is about to be freed by GC,
-					// and the goroutine may outlive this stack frame.
-					serial := make([]byte, len(serialBytes))
-					copy(serial, serialBytes)
-					httpsPayload := &KAPayloadHTTPS{Base: *basePay, Serial: serial}
-					go func(cfd int, fn string, pl *KAPayloadHTTPS) {
-						if err := dispatchMigrateHTTPS(cfd, fn, pl, providerURL, notifier); err != nil {
-							log.Printf("[relay-https-epoll] dispatch failed fn=%s: %v\n", fn, err)
-							_ = syscall.Close(cfd)
-						}
-					}(clientFD, targetFn, httpsPayload)
 				}
 				continue
 			}
@@ -536,93 +466,6 @@ func runEpollLoop(
 			}
 		}
 	}
-}
-
-// ── httpsRelayConn — relay receive state ─────────────────────────────────────
-
-// httpsRelayConn tracks partial SCM_RIGHTS + payload reception from a worker
-// relay connection.  A worker sends a wrong-owner keep-alive connection back
-// to the gateway via this socket when it detects that the next request targets
-// a different function.
-//
-// payload layout: [KAPayloadSize bytes base] || [serialSize bytes TLS state]
-type httpsRelayConn struct {
-	fd       int
-	clientFD int
-	payload  []byte
-	off      int
-	oob      []byte // pre-allocated SCM_RIGHTS receive buffer (avoids per-call alloc)
-}
-
-func newHTTPSRelayConn(fd, serialSize int) *httpsRelayConn {
-	return &httpsRelayConn{
-		fd:       fd,
-		clientFD: -1,
-		payload:  make([]byte, KAPayloadSize+serialSize),
-		// Pre-allocate the OOB buffer once per connection.
-		// Without pre-allocation, recv() allocates this on every call — at high
-		// relay rates (hundreds per second in alternate mode) this creates
-		// measurable GC pressure.
-		oob: make([]byte, syscall.CmsgSpace(4)), // CMSG_SPACE(sizeof(int))
-	}
-}
-
-func (r *httpsRelayConn) close() {
-	if r.fd >= 0 {
-		_ = syscall.Close(r.fd)
-		r.fd = -1
-	}
-	if r.clientFD >= 0 {
-		_ = syscall.Close(r.clientFD)
-		r.clientFD = -1
-	}
-}
-
-// recv attempts a non-blocking read of payload + SCM_RIGHTS from the relay
-// connection.  Returns (true, nil) when the full payload has been received and
-// at least one fd has been extracted from the control message.
-func (r *httpsRelayConn) recv() (bool, error) {
-	// Use the pre-allocated oob buffer (avoids heap allocation per call).
-	n, oobn, _, _, err := syscall.Recvmsg(r.fd, r.payload[r.off:], r.oob, syscall.MSG_DONTWAIT)
-	if err != nil {
-		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
-			return false, nil // no data yet — wait for next EPOLLIN event
-		}
-		return false, err
-	}
-	if n == 0 {
-		return false, fmt.Errorf("relay peer closed")
-	}
-
-	// Parse the SCM_RIGHTS control message to extract the migrated fd.
-	if oobn > 0 {
-		scms, parseErr := syscall.ParseSocketControlMessage(r.oob[:oobn])
-		if parseErr == nil {
-			for _, scm := range scms {
-				fds, rightsErr := syscall.ParseUnixRights(&scm)
-				if rightsErr != nil {
-					continue
-				}
-				for _, fd := range fds {
-					if r.clientFD >= 0 {
-						// Extra fd — close it; we only expect one.
-						_ = syscall.Close(fd)
-					} else {
-						r.clientFD = fd
-					}
-				}
-			}
-		}
-	}
-
-	r.off += n
-	if r.off < len(r.payload) {
-		return false, nil // partial payload — wait for more data
-	}
-	if r.clientFD < 0 {
-		return false, fmt.Errorf("relay payload complete but no FD received")
-	}
-	return true, nil
 }
 
 // ── wrapGtwConn ──────────────────────────────────────────────────────────────

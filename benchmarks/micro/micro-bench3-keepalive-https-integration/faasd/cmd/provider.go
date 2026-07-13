@@ -101,15 +101,6 @@ nameserver 8.8.4.4`), workingDirectoryPermission); err != nil {
 
 	// HTTPMIGRATE_ENABLE=1: enable the provider-routed FD/TLS-state migration path.
 	if os.Getenv("HTTPMIGRATE_ENABLE") == "1" {
-		// Legacy function-IP lookup endpoint (kept for backward compatibility;
-		// the gateway no longer needs it now that the provider resolves IPs and
-		// forwards to the watchdog itself).
-		bootstrap.Router().HandleFunc(
-			"/system/function-ip/{name:[" + bootstrap.NameExpression + "]+}",
-			handlers.MakeFunctionIPHandler(client),
-		).Methods(http.MethodGet)
-		log.Println("[httpmigrate] /system/function-ip/ endpoint registered")
-
 		// Provider-side migration dispatcher: receives [clientFD(, pipeWriteFD)] +
 		// TLS state + target function name from the gateway (first hop) and from
 		// workers (wrong-owner keep-alive relay), resolves the container IP in

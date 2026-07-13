@@ -10,9 +10,9 @@
  *
  * The Go side runs ONE shared epoll loop that drives ALL connections:
  *   - listen fd       → accept new TCP connections
- *   - per-client fd   → drive handshake state machine, then peek+export
- *   - relay listen fd → accept relay FDs from workers
- *   - relay conn fd   → receive SCM_RIGHTS from wrong-owner workers
+ *   - per-client fd   → drive handshake state machine, then peek+export;
+ *                       the exported fd + TLS state are migrated out (via the
+ *                       faasd provider) and the fd is dropped from this loop
  *
  * This eliminates one goroutine (and one OS thread) per connection.
  * When idle, all work is blocked in a single EpollWait().

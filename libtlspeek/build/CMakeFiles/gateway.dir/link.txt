@@ -1,1 +1,0 @@
-/usr/bin/cc -O3 -DQUIET -Wall -Wextra -O2 -g CMakeFiles/gateway.dir/gateway/gateway.c.o CMakeFiles/gateway.dir/gateway/router.c.o -o gateway  -Wl,-rpath,/usr/local/lib libtlspeek.a /usr/local/lib/libwolfssl.so -lpthread 

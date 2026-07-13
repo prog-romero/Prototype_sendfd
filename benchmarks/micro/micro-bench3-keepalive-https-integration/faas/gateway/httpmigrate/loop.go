@@ -5,8 +5,10 @@
 // RunLoop replaces s.ListenAndServe() in main.go when HTTPMIGRATE_ENABLE=1.
 // It owns the raw TCP socket on tcpPort and routes each accepted connection:
 //
-//   - /function/<name> requests  →  sendfd migration path (function worker
-//     takes full ownership of the TCP connection).
+//   - /function/<name> requests  →  sendfd migration path: the raw fd is sent to
+//     the faasd-provider (ProviderSock), which forwards it — with the function
+//     name — to the function's watchdog; the watchdog then takes full ownership
+//     of the TCP connection and replies directly to the client.
 //   - Everything else             →  vanilla HTTP path via ChanListener,
 //     served by the http.Server with the gorilla/mux router.
 
@@ -25,15 +27,6 @@ import (
 
 	"golang.org/x/sys/unix"
 )
-
-// RunLoop opens a raw TCP socket on tcpPort, accepts connections, and
-// routes them to either the sendfd path or the vanilla HTTP path.
-//
-// handler is typically the gorilla/mux router from main.go.
-// providerURL is the URL of the faasd provider (e.g. "http://faasd:8081").
-// notifier is called for Prometheus metrics when a function completes.
-//
-// RunLoop blocks indefinitely.
 
 // getMonotonicNs returns monotonic nanoseconds using CLOCK_MONOTONIC_RAW.
 // If CLOCK_MONOTONIC_RAW is unavailable, it falls back to CLOCK_MONOTONIC so
