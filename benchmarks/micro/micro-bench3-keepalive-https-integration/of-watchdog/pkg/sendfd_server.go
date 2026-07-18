@@ -41,10 +41,22 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/openfaas/of-watchdog/config"
 )
 
 const kaPayloadSize = 32768 // enough for both HTTP (160B) and HTTPS (~16KB) payloads
+
+// microbenchNowNs returns a monotonic timestamp in nanoseconds
+// (CLOCK_MONOTONIC_RAW). It is system-wide, so timestamps taken here (watchdog)
+// are directly comparable with those taken in the provider on the same host.
+// [MICROBENCH] helper — used only for the migration cost measurements.
+func microbenchNowNs() int64 {
+	var ts unix.Timespec
+	_ = unix.ClockGettime(unix.CLOCK_MONOTONIC_RAW, &ts)
+	return int64(ts.Sec)*1_000_000_000 + int64(ts.Nsec)
+}
 
 // getContainerIP returns the first non-loopback IPv4 address found on any
 // network interface.  This matches what the gateway sees as the CNI address.
@@ -186,6 +198,12 @@ func acceptFullProxy(connFD int, cfg config.WatchdogConfig, handler http.Handler
 		log.Printf("[sendfd] full-proxy recvfds: %v\n", recvErr)
 		return
 	}
+
+	// [MICROBENCH] timestamp right after recvmsg completes: this is the watchdog
+	// side of the provider->watchdog sendfd hop. Pair with the provider's
+	// provider_sendfd_ts (same host, same CLOCK_MONOTONIC_RAW) to get the net
+	// sendfd time = watchdog_recvfd_ts - provider_sendfd_ts.
+	log.Printf("[MICROBENCH] watchdog_recvfd_ts=%d\n", microbenchNowNs())
 
 	// serveFullProxyConn takes ownership of fd1 and fd2 (it closes them).
 	serveFullProxyConn(fd1, fd2, payload, cfg, handler)

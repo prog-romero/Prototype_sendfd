@@ -29,6 +29,14 @@ wrk.method = "POST"
 wrk.body = body
 wrk.headers["Content-Type"] = "application/json"
 
+-- Mode NON keep-alive ("initial") : une nouvelle connexion par requête.
+-- WRK_CONN_CLOSE=1 -> on envoie "Connection: close", le serveur ferme après
+-- chaque réponse et wrk2 se reconnecte (donc handshake TLS + migration frais à
+-- chaque requête). Non défini/0 -> keep-alive (comportement par défaut de wrk2).
+if os.getenv("WRK_CONN_CLOSE") == "1" then
+  wrk.headers["Connection"] = "close"
+end
+
 request = function()
   return wrk.format("POST", path, nil, body)
 end

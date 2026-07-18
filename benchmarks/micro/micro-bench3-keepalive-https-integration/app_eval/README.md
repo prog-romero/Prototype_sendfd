@@ -1,8 +1,8 @@
 # app_eval — Évaluation macro de l'app BeFaaS IoT (vanilla vs prototype)
 
 Évaluation de la **vraie application BeFaaS IoT** sur faasd, vanilla vs prototype
-(migration `sendfd`). La charge tape le point d'entrée `objectrecognition`, qui
-déclenche la chaîne complète à 3 hops :
+(migration `sendfd`). La charge tape le point d'entrée `objectrecognition` (POST
+d'une image), qui déclenche la chaîne complète à 3 hops :
 
 ```
 client ─► objectrecognition ─► emergencydetection ─► setlightphasecalculation
@@ -10,11 +10,16 @@ client ─► objectrecognition ─► emergencydetection ─► setlightphaseca
 ```
 Chaque hop inter-fonction repasse par le gateway → **migré** en proto, **re-proxifié** en vanilla.
 
-Ce dossier contient **3 sous-benchs** + leurs scripts de plot :
+> **Mesure CPU/RPS identique à `sebs-bench/eval`** : le CPU et le réseau du Pi sont
+> relevés via **`sar`** (paquet sysstat) en une seule passe pendant chaque palier,
+> et les courbes sont tracées avec **les mêmes scripts** que sebs
+> (`plot_rps_cpu.py`, `plot_sebs_compare.py`).
+
+Ce dossier contient **3 sous-benchs** :
 
 | Sous-bench | Mesure | Script |
 |---|---|---|
-| **app_eval** (ce dossier) | rate-sweep : RPS, débit, latences p50–p99, **CPU avg/max du Pi** + **pidstat par composant** | `sweep_app_wrk2.py` |
+| **app_eval** (ce dossier) | rate-sweep : RPS, débit, latences p50–p99, **CPU + réseau du Pi via `sar`** (0–100 %, eth0 rx+tx) | `run_app_sweep.py` |
 | **base_latence/** | latence end-to-end d'**1** requête (1 connexion TCP+TLS neuve/requête) vs **taille d'image** | `base_latence/run_base_latence.py` |
 | **rate_vs_size/** | **RPS max sans erreur** pour chaque **taille d'image** | `rate_vs_size/run_rate_vs_size.py` |
 
@@ -23,29 +28,25 @@ Ce dossier contient **3 sous-benchs** + leurs scripts de plot :
 ## 0. Pré-requis (à lire une fois)
 
 - **wrk2** installé côté client (auto-détecté dans `~/wrk2/wrk`, ou `WRK2=/chemin/wrk`).
-- **SSH par clé** vers le Pi (`romero@192.168.2.2`) — nécessaire pour le monitoring CPU/pidstat.
+- **`sar` (paquet `sysstat`) installé SUR LE PI** : `sudo apt-get install -y sysstat`.
+- **SSH par clé** vers le Pi (`romero@192.168.2.2`) : le sweep lance `sar` à distance.
 - Les scripts se lancent **depuis le LAPTOP** (le client). wrk2 tape le Pi et le
-  script ssh sur le Pi pour relever le CPU. **Ne pas lancer sur le Pi** (sinon le
-  client et le serveur se disputent le CPU).
+  script `ssh` sur le Pi pour relever CPU+réseau. **Ne pas lancer sur le Pi**
+  (sinon client et serveur se disputent le CPU).
 - Le **mode voulu doit être déployé** sur le Pi (voir §1).
+- Python (plots) : `pip3 install --break-system-packages matplotlib numpy pandas`.
 
 ### ⚠️ Pièges appris (importants)
 1. **Déployer une fonction à la fois.** `deploy-all.sh` le fait déjà (boucle
-   `--filter`). Le déploiement groupé déclenche une race faasd (collision de
-   snapshots → une fonction ne se crée pas). Si une fonction manque malgré tout :
-   `faas-cli deploy -f <stack> --filter <fn>`.
+   `--filter`). Le déploiement groupé déclenche une race faasd. Si une fonction
+   manque : `faas-cli deploy -f <stack> --filter <fn>`.
 2. **Concurrence modérée** (`--concurrency 16`, pas 100/200). La chaîne a une
-   latence intrinsèque élevée (verrou Redis + `setTimeout` de
-   setlightphasecalculation + 3 hops migrés) ; à forte concurrence on noie
-   l'entrée `objectrecognition` (jimp) → elle tombe (`code=000`) et les chiffres
-   deviennent du bruit.
-3. **faasd ne doit pas flapper** pendant une campagne : faasd CE re-vérifie l'EULA
-   via Internet ; si l'Internet du Pi blippe, faasd redémarre → le gateway tombe
-   → `socket_connect_errors`. Vérifier `systemctl is-active faasd` stable.
-4. **vanilla et proto = mêmes noms de fonctions** → on ne peut pas avoir les deux
-   déployés en même temps. Séquence : déployer un mode → sweeper → déployer
-   l'autre → sweeper. Pour vanilla il faut avoir buildé+déployé les images
-   `iot-vanilla-*` (sinon on mesure du proto étiqueté « vanilla »).
+   latence intrinsèque élevée (verrou Redis + `setTimeout` + 3 hops) ; à forte
+   concurrence on noie l'entrée `objectrecognition` → bruit.
+3. **faasd ne doit pas flapper** pendant une campagne (EULA CE re-vérifiée via
+   Internet). Vérifier `systemctl is-active faasd` stable.
+4. **vanilla et proto = mêmes noms de fonctions** → pas les deux en même temps.
+   Séquence : déployer un mode → sweeper → déployer l'autre → sweeper.
 
 ---
 
@@ -55,127 +56,113 @@ Ce dossier contient **3 sous-benchs** + leurs scripts de plot :
 # sur le Pi
 cd ~/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive-https-integration/macro-befaas-iot/deploy
 
-REDIS_IP=10.62.0.1 ./deploy-all.sh proto   http     # proto,   HTTP  (port 8080)
 REDIS_IP=10.62.0.1 ./deploy-all.sh proto   https    # proto,   HTTPS (port 8443)
-REDIS_IP=10.62.0.1 ./deploy-all.sh vanilla http     # vanilla, HTTP
 REDIS_IP=10.62.0.1 ./deploy-all.sh vanilla https    # vanilla, HTTPS
+# (idem avec `http` pour le port 8080)
 
 # vérifier que les 4 fonctions sont Ready :
 faas-cli list --gateway http://127.0.0.1:8080
-# et que l'entrée répond (doit donner 200) :
+# et que l'entrée répond 200 :
 curl -s http://127.0.0.1:8080/function/objectrecognition \
   -F "image=@/tmp/red.png" -o /dev/null -w '%{http_code}\n'
 ```
 
 ---
 
-## 2. Lancer le rate-sweep (depuis le LAPTOP)
+## 2. Lancer le rate-sweep (depuis le LAPTOP) — mesure `sar`
 
-`sweep_app_wrk2.py` : pour chaque débit, RPS/latences/erreurs + CPU Pi global +
-pidstat par composant (gateway, faasd, fwatchdog-<fn>, worker-<fn>).
+`run_app_sweep.py` : pour chaque débit cible, relève RPS / latences / erreurs
+(wrk2) **et** CPU + réseau du Pi via **un seul `sar -u -n DEV`** échantillonné en
+parallèle (`pi_cpu_busy_{avg,max}_pct` sur 0–100 %, `net_kb_s_{avg,max}` = rx+tx
+sur eth0). Le **schéma CSV est identique à sebs** → mêmes scripts de plot.
 
 ```bash
 cd ~/Master2_ACS_SUPAERO_ISAE/Stage/Prototype_sendfd/benchmarks/micro/micro-bench3-keepalive-https-integration/app_eval
 
-# ===== PROTO / HTTP =====   (après ./deploy-all.sh proto http sur le Pi)
-python3 sweep_app_wrk2.py --mode proto --scheme http \
-  --gateway-ip 192.168.2.2 --pi-ssh romero@192.168.2.2 \
-  --rates 2,4,6,8,10,12,16,20 --concurrency 16 \
-  --image images/image-ambulance.jpg --duration-s 20 --timeout-s 30 --pause 5 \
-  --out results/proto_http_objreco_16c.csv
-
-# ===== VANILLA / HTTP =====   (après ./deploy-all.sh vanilla http)
-python3 sweep_app_wrk2.py --mode vanilla --scheme http \
-  --gateway-ip 192.168.2.2 --pi-ssh romero@192.168.2.2 \
-  --rates 2,4,6,8,10,12,16,20 --concurrency 16 \
-  --image images/image-ambulance.jpg --duration-s 20 --timeout-s 30 --pause 5 \
-  --out results/vanilla_http_objreco_16c.csv
-
 # ===== PROTO / HTTPS =====   (après ./deploy-all.sh proto https)
-python3 sweep_app_wrk2.py --mode proto --scheme https \
-  --gateway-ip 192.168.2.2 --pi-ssh romero@192.168.2.2 \
+python3 run_app_sweep.py --mode proto --scheme https \
+  --host 192.168.2.2 --pi-ssh romero@192.168.2.2 \
   --rates 2,4,6,8,10,12,16,20 --concurrency 16 \
   --image images/image-ambulance.jpg --duration-s 20 --timeout-s 30 --pause 5 \
   --out results/proto_https_objreco_16c.csv
 
 # ===== VANILLA / HTTPS =====   (après ./deploy-all.sh vanilla https)
-python3 sweep_app_wrk2.py --mode vanilla --scheme https \
-  --gateway-ip 192.168.2.2 --pi-ssh romero@192.168.2.2 \
+python3 run_app_sweep.py --mode vanilla --scheme https \
+  --host 192.168.2.2 --pi-ssh romero@192.168.2.2 \
   --rates 2,4,6,8,10,12,16,20 --concurrency 16 \
   --image images/image-ambulance.jpg --duration-s 20 --timeout-s 30 --pause 5 \
   --out results/vanilla_https_objreco_16c.csv
+
+# (HTTP : remplacer --scheme https par --scheme http, port 8080)
 ```
 
-Sorties :
-- CSV résumé : `results/<mode>_<scheme>_objreco_16c.csv` (1 ligne par débit).
-- pidstat par composant : `pidstat/<mode>/{cpu,ram}/<composant>.csv`
-  (`<mode>` = `vanilla` ou **`prototype`**).
-
-Paramètres ajustables : `--rates`, `--concurrency`, `--duration-s`, `--timeout-s`,
-`--threads`, `--pause`, `--image` (voir §5), `--function`.
-
----
-
-## 3. Plots de comparaison vanilla vs proto (6 métriques)
-
-`compare_two_csv_plots.py` — 6 figures : **rps**, **débit**, **cpu avg**,
-**cpu max**, **latence avg**, **total requests**. Le merge est en **OUTER join** :
-si un mode a moins de paliers (p. ex. lignes en erreur supprimées à la main), les
-paliers de l'autre mode s'affichent quand même (barre absente là où il manque).
-
+Raccourci équivalent :
 ```bash
-# --- HTTPS ---
-python3 compare_two_csv_plots.py \
-  results/vanilla_https_objreco_16c.csv results/proto_https_objreco_16c.csv \
-  --label-a Vanilla --label-b Prototype \
-  --prefix https_objreco_16c --out-dir plots/https_objreco_16c
-
-# --- HTTP ---
-python3 compare_two_csv_plots.py \
-  results/vanilla_http_objreco_16c.csv results/proto_http_objreco_16c.csv \
-  --label-a Vanilla --label-b Prototype \
-  --prefix http_objreco_16c --out-dir plots/http_objreco_16c
+./run_eval.sh proto   https
+./run_eval.sh vanilla https
 ```
-> 1er fichier = `--label-a` (Vanilla), 2e = `--label-b` (Prototype) — garde cet ordre.
+
+Sortie : `results/<mode>_<scheme>_objreco_16c.csv` (1 ligne par débit). Colonnes :
+`rate, rps, transfer_kb_s, net_kb_s_avg/max, pi_cpu_busy_avg/max_pct,
+lat_avg/p50/p99_ms, client_ms_*, total_requests, socket_*_errors, …`.
+
+> **Note perf-cost** : les colonnes `server_ms_*` / `overhead_ms_*` sont à **0**
+> (BeFaaS ne renvoie pas de temps serveur, contrairement au wrapper SeBS). Seule
+> la latence *client* (`client_ms_*`, mesurée par wrk2) est renseignée.
+
+Paramètres ajustables : `--rates`, `--concurrency`, `--threads`, `--duration-s`,
+`--timeout-s`, `--pause`, `--image` (voir §4), `--function`.
 
 ---
 
-## 4. Plots CPU par composant (courbes + camemberts)
+## 3. Plots vanilla vs proto (comme sebs-bench/eval)
 
-`plot_pidstat_cpu.py` — lit `pidstat/<mode>/cpu/*.csv` (colonne `cpu_pct` = CPU
-total du composant) et produit **3 images** :
-- `cpu_lines_vanilla.png` et `cpu_lines_prototype.png` : **une image par mode**
-  (grandes, plus lisibles), avec la **MÊME échelle Y** → comparables côte à côte.
-  Même couleur = même composant dans les deux.
-- `cpu_pies.png` : 2 camemberts rapprochés (vanilla / prototype) — part **moyenne**
-  (sur tous les débits) de CPU de chaque composant. Pas de % à l'intérieur ;
-  grande légende couleurs+noms en dessous.
+Mêmes scripts que sebs, en mode **fichiers explicites** (`--vanilla` / `--proto`).
 
+**Charge + CPU moyen (double axe, CPU gradué 0–100 %)** — génère **DEUX** figures :
 ```bash
-python3 plot_pidstat_cpu.py --pidstat-dir pidstat --out-dir plots/pidstat_cpu
+python3 plot_rps_cpu.py --scheme https \
+  --vanilla results/vanilla_https_objreco_16c.csv \
+  --proto   results/proto_https_objreco_16c.csv
+# -> results/rps_cpu_https/<dossier>_https_rps_cpu.png   (RPS atteint  + CPU)
+# -> results/rps_cpu_https/<dossier>_https_lat_cpu.png   (latence moy. + CPU)
 ```
-> Suppose que `pidstat/vanilla/cpu/` ET `pidstat/prototype/cpu/` existent (donc
-> avoir sweepé les deux modes). Sous-dossiers personnalisables : `--vanilla-name`,
-> `--proto-name`.
+> Axe gauche : rouge = Vanilla, vert = Prototype. Axe droit : CPU du Pi
+> (orange = Vanilla, bleu = Prototype, tireté), **toujours gradué jusqu'à 100 %**.
+>
+> **`--cpu-stat avg|med|q3`** (défaut `avg`) : choisit la statistique CPU tracée à
+> droite — moyenne (`pi_cpu_busy_avg_pct`), médiane (`pi_cpu_busy_med_pct`) ou 3ᵉ
+> quartile (`pi_cpu_busy_q3_pct`) — les **trois** étant collectées par le sweep. En
+> `med`/`q3`, les fichiers sont suffixés `_med`/`_q3` (`…_rps_cpu_q3.png`, …) et ne
+> remplacent donc pas la version `avg`.
+
+**Comparaison multi-métriques** (RPS, CPU avg/max, réseau %, latences, requêtes…) :
+```bash
+python3 plot_sebs_compare.py --scheme https \
+  --vanilla results/vanilla_https_objreco_16c.csv \
+  --proto   results/proto_https_objreco_16c.csv \
+  --label-a Vanilla --label-b Prototype
+```
+> 1er fichier = Vanilla, 2e = Prototype. `boxplot_sebs_compare.py` et
+> `sum_sebs_compare.py` sont aussi présents (mêmes que sebs) ; ils utilisent la
+> découverte par dossier `results/<app>/` (`--results-dir … --app …`).
 
 ---
 
-## 5. Choix de l'image (impacte la latence)
+## 4. Choix de l'image (impacte la latence)
 - `images/image-ambulance.jpg` (**défaut**) : pixel rouge → emergency →
-  `setlightphasecalculation` répond **vite** (pas de `setTimeout`). Pour comparer
-  le **coût réseau** (migration vs proxy) sans bruit applicatif.
-- `images/image-noambulance.jpg` : non-emergency → peut emprunter le chemin
-  `waitAppropriately` (≥ 2 s) + verrou Redis (comportement BeFaaS réel). Pour
-  inclure ce coût applicatif. `--image images/image-noambulance.jpg`.
+  `setlightphasecalculation` répond **vite**. Pour comparer le **coût réseau**
+  (migration vs proxy) sans bruit applicatif.
+- `images/image-noambulance.jpg` : non-emergency → chemin `waitAppropriately`
+  (≥ 2 s) + verrou Redis (comportement BeFaaS réel). `--image images/image-noambulance.jpg`.
 
 ---
 
-## 6. Les deux autres sous-benchs
+## 5. Les deux autres sous-benchs (inchangés)
 
 ### base_latence/ — latence end-to-end vs taille d'image (1 connexion/requête)
 ```bash
 cd base_latence
-# proto HTTPS, toutes les tailles (images générées 2..1024 KB) :
 python3 run_base_latence.py --mode proto --scheme https --host 192.168.2.2 \
   --sizes 2,4,8,16,32,64,128,256,512,1024 --requests 50 --rate 2 \
   --output results/proto_https.csv
@@ -185,43 +172,30 @@ python3 plot_eval.py results/proto_https.csv results/vanilla_https.csv \
 ```
 
 ### rate_vs_size/ — RPS max sans erreur par taille d'image (+ CPU + réseau)
-
-Pour CHAQUE taille d'image, balaie les débits, retient le **RPS max sans erreur**,
-et **au palier de ce max** relève AUSSI :
-- le **CPU total du Pi** (échantillonné via `--pi-ssh`, **échelle 400 %** = 4 cœurs),
-  avg ET max ;
-- le **débit réseau réel** = **upload de l'image** (`rps × taille`, que wrk2 ne
-  compte pas) **+ download** (Transfer/sec de wrk2), puis le **% du débit max de
-  la carte réseau** (`--nic-max-mbit`, def **940 Mbit/s** mesuré via iperf3).
-
-But : voir si on est limité par **le CPU** ou **la carte réseau** du Pi.
-
 ```bash
 cd rate_vs_size
-# un run = toutes les tailles d'un coup (mêmes --rates, --concurrency pour comparer) :
 python3 run_rate_vs_size.py --mode proto --scheme http --host 192.168.2.2 \
   --pi-ssh romero@192.168.2.2 --nic-max-mbit 940 \
   --sizes 2,4,8,16,32,64,128,256,512,1024 \
   --rates 2,4,6,8,10,12,16,20,30,40 --concurrency 16 \
   --duration-s 20 --timeout-s 70 --pause 5 --out results/proto_http.csv
-# (workflow taille-par-taille : ajouter --append et changer --sizes à chaque run)
-# vanilla idem -> results/vanilla_http.csv, puis histogramme + courbe :
+# vanilla idem, puis :
 python3 plot_rate_vs_size.py results/vanilla_http.csv results/proto_http.csv \
   --output plots/max_rps_vs_size_http.png
 ```
 
-> Sur le plot, au-dessus de chaque barre : `RPS` puis `C avg/max%` (CPU Pi sur
-> 400 %) puis `N %` (débit carte réseau atteint). Colonnes ajoutées au CSV résumé :
-> `cpu_avg_pct`, `cpu_max_pct`, `upload_mbit_s`, `download_mbit_s`, `net_mbit_s`,
-> `net_pct`, `nic_max_mbit` (les anciens CSV sans ces colonnes restent traçables :
-> les annotations CPU/NET valent alors 0).
-
 ---
 
-## 7. Notes méthodo
+## 6. Notes méthodo
 - wrk2 = charge à **débit constant** (open-loop) → latences corrigées de la
   coordinated-omission.
-- **`concurrency ≥ RPS_visé × latence`** sinon on mesure la limite du *client*
-  (nb de connexions / latence), pas du serveur. Mais rester modéré (cf. piège 2).
-- Démarrer modeste, monter les débits jusqu'à voir la saturation (erreurs/timeouts).
+- **`concurrency ≥ RPS_visé × latence`** sinon on mesure la limite du *client*.
+  Mais rester modéré (cf. piège 2).
+- Le sweep re-lance automatiquement un palier si wrk2 renvoie une latence `-nan`
+  (bug de durée coordinated-omission) en décalant la durée de +1 s.
 - Le mode + le schéma doivent correspondre au **déploiement courant** sur le Pi.
+
+> **Historique** : l'ancien sweep `sweep_app_wrk2.py` (CPU par composant via
+> `pidstat`) et son plot `plot_pidstat_cpu.py` restent présents pour un
+> découpage CPU *par processus* (gateway / faasd / fwatchdog / worker), mais la
+> mesure CPU/RPS de référence est désormais `run_app_sweep.py` (`sar`, comme sebs).

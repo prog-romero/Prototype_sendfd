@@ -390,7 +390,11 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
     ssl = wolfSSL_new(s_wctx);
     if (!ssl) goto done;
     wolfSSL_set_fd(ssl, fd);
+    /* [MICROBENCH] net TLS deserialization time = session restore (tls_import). */
+    uint64_t mb_de0 = now_ns();
     if (tlspeek_restore(ssl, &pl->serial) != 0) { wolfSSL_free(ssl); ssl = NULL; goto done; }
+    fprintf(stderr, "[MICROBENCH] tls_deserialize_ns=%llu\n",
+            (unsigned long long)(now_ns() - mb_de0));
     wolfSSL_set_fd(ssl, fd);
     /* The migrated session must not emit a NewSessionTicket (there is no session
      * resumption on this path): disabling it avoids interleaving a handshake
@@ -399,6 +403,9 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
     wolfSSL_no_ticket_TLSv13(ssl);
 
     for (;;) {
+        /* [MICROBENCH] remember whether this iteration assembles the FIRST
+         * (migrated) request, so we can stamp top2 once it is fully read. */
+        int mb_is_first = first;
         /* Owner peek only when the buffer is empty (start of a request). */
         if (len == 0) {
             if (first && pl->serial.request_len > 0) {
@@ -471,6 +478,14 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
             buf[len] = '\0';
         }
         if (!framed) goto done;
+
+        /* [MICROBENCH] top2 = the container has read ALL bytes of the first
+         * migrated request. Migration end-to-end cost = top2 - top1, where top1
+         * was stamped by the gateway on the first bytes seen in the socket. */
+        if (mb_is_first && pl->base.top1_set) {
+            fprintf(stderr, "[MICROBENCH] migration_ns=%llu\n",
+                    (unsigned long long)(now_ns() - pl->base.top1_rdtsc));
+        }
 
         size_t req_sz = hdr_sz + body_target;
 

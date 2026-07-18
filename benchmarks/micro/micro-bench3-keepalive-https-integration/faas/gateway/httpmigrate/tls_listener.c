@@ -1,4 +1,4 @@
-/*
+/*log for sendfd and serailisation/deserialisation have been inserted
  * tls_listener.c — wolfSSL gateway bridge: non-blocking, epoll-driven.
  *
  * KEY DESIGN (mirrors bench2gw.c):
@@ -486,6 +486,9 @@ int tlsgw_peek_and_export_nb(
         return -2;
     }
 
+    /* [MICROBENCH] start of the net TLS serialization (session-state export). */
+    uint64_t mb_ser0 = now_ns();
+
     memset(serial, 0, sizeof(*serial));
     serial->magic = TLSPEEK_MAGIC;
     set_serial_cipher(serial, wolfSSL_get_cipher_name(conn->ssl));
@@ -525,6 +528,11 @@ int tlsgw_peek_and_export_nb(
         memcpy(serial->http_request, plaintext, (size_t)copy_len);
         serial->request_len = copy_len;
     }
+
+    /* [MICROBENCH] net TLS serialization time = export of session state
+     * (keys, IVs, sequence number, session blob). Measured at the gateway. */
+    fprintf(stderr, "[MICROBENCH] tls_serialize_ns=%llu\n",
+            (unsigned long long)(now_ns() - mb_ser0));
 
     if (serial_sz_out) *serial_sz_out = (int)sizeof(tlspeek_serial_t);
 

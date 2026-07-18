@@ -6,8 +6,8 @@ Pour chaque débit cible (--rates), lance wrk2 en open-loop (POST de l'event JSO
 et relève, PAR PALIER de RPS :
   - RPS, latences, erreurs (parsés de la sortie wrk2) ;
   - CPU + RÉSEAU du Pi via UN SEUL `sar -u -n DEV` (échantillonné en parallèle) :
-      * pi_cpu_busy_{avg,max}_pct : 100 - %idle, échelle 0-100 (agrégé tous cœurs) ;
-      * net_kb_s_{avg,max}        : somme rxkB/s + txkB/s sur eth0 ;
+      * pi_cpu_busy_{avg,med,q3,max}_pct : 100 - %idle, échelle 0-100 (agrégé tous cœurs) ;
+      * net_kb_s_{avg,max}               : somme rxkB/s + txkB/s sur eth0 ;
   - PERF-COST sur toutes les requêtes du palier (plus besoin de run_perfcost.py) :
       * client_ms_{avg,p50,p99}  : latence bout-en-bout (histogramme wrk2) ;
       * server_ms_{avg,p50,p99}  : results_time du wrapper SeBS, lu dans le corps
@@ -125,7 +125,7 @@ def _compute_sar_stats(text, iface="eth0", drop_first=True):
     """Parse la sortie `sar -u -n DEV`.
     CPU : ligne dont le 2e champ == 'all'  -> busy = 100 - %idle (échelle 0-100).
     NET : ligne dont le 2e champ == iface  -> rxkB/s + txkB/s (somme in+out).
-    Retourne (cpu_avg, cpu_max, net_avg_kb_s, net_max_kb_s).
+    Retourne (cpu_avg, cpu_med, cpu_q3, cpu_max, net_avg_kb_s, net_max_kb_s).
     Ignore les en-têtes et la ligne finale 'Average:'."""
     cpu_busy, net_sum = [], []
     for line in text.splitlines():
@@ -149,12 +149,29 @@ def _compute_sar_stats(text, iface="eth0", drop_first=True):
         if len(net_sum) > 1:
             net_sum = net_sum[1:]
 
+    def _median(xs):
+        if not xs:
+            return 0.0
+        s = sorted(xs)
+        n = len(s)
+        mid = n // 2
+        return round(s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0, 2)
+
+    def _quantile(xs, q):
+        if not xs:
+            return 0.0
+        s = sorted(xs)
+        idx = min(len(s) - 1, int(round(q * (len(s) - 1))))
+        return round(s[idx], 2)
+
     def _stats(xs):
         return (round(sum(xs) / len(xs), 2), round(max(xs), 2)) if xs else (0.0, 0.0)
 
     cpu_avg, cpu_max = _stats(cpu_busy)
+    cpu_med = _median(cpu_busy)
+    cpu_q3 = _quantile(cpu_busy, 0.75)
     net_avg, net_max = _stats(net_sum)
-    return cpu_avg, cpu_max, net_avg, net_max
+    return cpu_avg, cpu_med, cpu_q3, cpu_max, net_avg, net_max
 
 
 # ── perf-cost : agrégation du server_ms (results_time) parsé par le hook Lua ──
@@ -185,12 +202,14 @@ def _read_server_ms(perf_file):
 
 
 def _run_wrk2(wrk2, lua, url, req_path, body_file, duration_s, timeout_s, threads, conc, rate,
-              perf_file=None):
+              perf_file=None, conn_close=False):
     env = os.environ.copy()
     env["WRK_BODY_FILE"] = body_file
     env["WRK_PATH"] = req_path
     if perf_file:
         env["WRK_PERF_FILE"] = perf_file      # le hook Lua y logge chaque server_ms
+    if conn_close:
+        env["WRK_CONN_CLOSE"] = "1"           # mode "initial" : 1 connexion / requête
     actual_threads = min(threads, conc)
     cmd = [wrk2, f"-t{actual_threads}", f"-c{conc}", f"-d{duration_s}s", f"-R{rate}",
            "--timeout", f"{timeout_s}s", "--latency", "-s", lua, url]
@@ -222,6 +241,9 @@ def main():
     p.add_argument("--duration-s", type=int, default=20)
     p.add_argument("--timeout-s", type=int, default=30)
     p.add_argument("--pause", type=int, default=5)
+    p.add_argument("--conn-mode", choices=["keepalive", "initial"], default="keepalive",
+                   help="keepalive (défaut) = connexions réutilisées ; "
+                        "initial = une NOUVELLE connexion par requête (Connection: close)")
     p.add_argument("--pi-ssh", default="romero@192.168.2.2")
     p.add_argument("--out", required=True)
     args = p.parse_args()
@@ -242,6 +264,7 @@ def main():
     print(f"url   : {url}")
     print(f"event : {body_file}")
     print(f"rates : {rates}   concurrency: {args.concurrency}   duration: {args.duration_s}s")
+    print(f"conn  : {args.conn_mode}   (initial = 1 connexion/requête ; keepalive = réutilisées)")
     print(f"out   : {args.out}\n")
 
     rows = []
@@ -268,13 +291,14 @@ def main():
             sar_proc = _start_pi_sar(args.pi_ssh, max(3, dur))
             rc, out = _run_wrk2(wrk2, lua, url, req_path, body_file,
                                 dur, args.timeout_s, args.threads,
-                                args.concurrency, rate, perf_file=perf_file)
+                                args.concurrency, rate, perf_file=perf_file,
+                                conn_close=(args.conn_mode == "initial"))
             try:
                 sar_out, _ = sar_proc.communicate(timeout=dur + args.timeout_s + 30)
             except subprocess.TimeoutExpired:
                 sar_proc.kill()
                 sar_out, _ = sar_proc.communicate()
-            cpu_avg, cpu_max, net_avg, net_max = _compute_sar_stats(sar_out)
+            cpu_avg, cpu_med, cpu_q3, cpu_max, net_avg, net_max = _compute_sar_stats(sar_out)
             d = _parse(out)
             if not (d["avg_ms"] == 0.0 and d["total_requests"] > 0):
                 break
@@ -306,7 +330,7 @@ def main():
         total_errors = (d["errors_non2xx"] + d["socket_connect_errors"]
                         + d["socket_read_errors"] + d["socket_write_errors"]
                         + d["socket_timeout_errors"])
-        print(f"  R={rate:<4} -> rps={d['rps']:8.2f}  cpu={cpu_avg:5.1f}/{cpu_max:.1f}%"
+        print(f"  R={rate:<4} -> rps={d['rps']:8.2f}  cpu(avg/med/q3/max)={cpu_avg:5.1f}/{cpu_med:5.1f}/{cpu_q3:5.1f}/{cpu_max:.1f}%"
               f"  net={net_avg:8.1f}kB/s"
               f"  cli/srv/ovh={cli_avg:6.1f}/{srv_avg:6.1f}/{ovh_avg:6.1f}ms"
               f"  err={total_errors}  (n_srv={len(server_vals)})")
@@ -314,11 +338,13 @@ def main():
         rows.append({
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "mode": args.mode, "scheme": args.scheme, "function": args.function,
+            "conn_mode": args.conn_mode,
             "rate": rate, "concurrency": args.concurrency,
             "rps": d["rps"],
             "transfer_kb_s": d["transfer_kb_s"],          # wrk2 (compat plots)
             "net_kb_s_avg": net_avg, "net_kb_s_max": net_max,   # sar eth0 (rx+tx)
-            "pi_cpu_busy_avg_pct": cpu_avg, "pi_cpu_busy_max_pct": cpu_max,  # sar 0-100
+            "pi_cpu_busy_avg_pct": cpu_avg, "pi_cpu_busy_med_pct": cpu_med,
+            "pi_cpu_busy_q3_pct": cpu_q3, "pi_cpu_busy_max_pct": cpu_max,  # sar 0-100 (avg/méd/Q3/max)
             "lat_avg_ms": d["avg_ms"], "lat_p50_ms": d["p50_ms"], "lat_p99_ms": d["p99_ms"],
             "client_ms_avg": cli_avg, "client_ms_p50": cli_p50, "client_ms_p99": cli_p99,
             "server_ms_avg": srv_avg, "server_ms_p50": srv_p50, "server_ms_p99": srv_p99,

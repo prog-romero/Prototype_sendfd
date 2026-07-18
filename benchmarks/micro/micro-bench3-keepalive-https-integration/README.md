@@ -113,6 +113,19 @@ docker buildx build --platform linux/arm64 \
   .
 ```
 
+
+```bash
+# (c) faasd (provider) -> sendfd + MIGRATE-VERIFY
+cd benchmarks/micro/micro-bench3-keepalive-https-integration/faasd && make dist
+scp bin/faasd-arm64 romero@192.168.2.2:/tmp/faasd
+sudo install -m 755 /tmp/faasd /usr/local/bin/faasd
+sudo systemctl restart faasd faasd-provider
+
+
+``
+
+
+
 ### 2. C Workers Build (from repo root)
 
 We build both the standard `timing-fn` and the throughput-focused `sumprod-timing-fn` workers using `docker buildx`:

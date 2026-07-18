@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# run_eval.sh — lance le rate-sweep wrk2 du macro-bench BeFaaS IoT et range le
-# CSV dans results/ avec un nom normalisé.
+# run_eval.sh — lance le rate-sweep wrk2 du macro-bench BeFaaS IoT (app
+# objectrecognition) avec mesure CPU+réseau via `sar` (comme sebs-bench/eval)
+# et range le CSV dans results/ avec un nom normalisé.
 #
 #   ./run_eval.sh <vanilla|proto> <http|https> [rates] [concurrency]
 #
@@ -31,9 +32,9 @@ SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="$SELF/results/${MODE}_${SCHEME}_objreco_${CONC}c.csv"
 
 echo ">>> Sweep MODE=$MODE SCHEME=$SCHEME rates=$RATES conc=$CONC"
-python3 "$SELF/sweep_app_wrk2.py" \
+python3 "$SELF/run_app_sweep.py" \
   --mode "$MODE" --scheme "$SCHEME" \
-  --gateway-ip "$GATEWAY_IP" --pi-ssh "$PI_SSH" \
+  --host "$GATEWAY_IP" --pi-ssh "$PI_SSH" \
   --rates "$RATES" --concurrency "$CONC" \
   --image "$IMAGE" --duration-s "$DURATION" \
   --out "$OUT"

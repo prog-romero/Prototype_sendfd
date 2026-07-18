@@ -17,7 +17,18 @@ import (
 	"github.com/containerd/containerd/namespaces"
 	faasd "github.com/openfaas/faasd/pkg"
 	cninetwork "github.com/openfaas/faasd/pkg/cninetwork"
+	"golang.org/x/sys/unix"
 )
+
+// microbenchNowNs returns a monotonic timestamp in nanoseconds
+// (CLOCK_MONOTONIC_RAW). It is system-wide, so timestamps taken here (provider)
+// are directly comparable with those taken in the watchdog on the same host.
+// [MICROBENCH] helper — used only for the migration cost measurements.
+func microbenchNowNs() int64 {
+	var ts unix.Timespec
+	_ = unix.ClockGettime(unix.CLOCK_MONOTONIC_RAW, &ts)
+	return int64(ts.Sec)*1_000_000_000 + int64(ts.Nsec)
+}
 
 // migrate_dispatch.go — provider-side FD/TLS-state migration router.
 //
@@ -144,6 +155,16 @@ func handleMigrate(connFD int, client *containerd.Client, hostSocketDir string) 
 		return
 	}
 
+	// [MIGRATE-VERIFY] TEMPORARY: confirm, per response, that the request went
+	// THROUGH the provider. kind="initial": first hop from the gateway (2 FDs).
+	// kind="relay": wrong-owner keep-alive returned by a watchdog (1 FD) that the
+	// provider re-routes to the correct container. Remove once verified.
+	kind := "initial"
+	if len(fds) != 2 {
+		kind = "relay"
+	}
+	log.Printf("[MIGRATE-VERIFY] provider routed fn=%s ip=%s kind=%s\n", targetFn, ip, kind)
+
 	wdPath := filepath.Join(hostSocketDir, ip+".sock")
 	wdFD, err := connectSeqpacket(wdPath)
 	if err != nil {
@@ -158,9 +179,12 @@ func handleMigrate(connFD int, client *containerd.Client, hostSocketDir string) 
 	case 2:
 		// Gateway first hop: [clientFD, pipeWriteFD].  Forward both verbatim so
 		// the gateway keeps owning the completion pipe (metrics stay in gateway).
+		// [MICROBENCH] stamp just before sendmsg: start of provider->watchdog sendfd.
+		tSend := microbenchNowNs()
 		if err := sendFDs(wdFD, []int{fds[0], fds[1]}, payload); err != nil {
 			log.Printf("[migrate] forward (initial) to watchdog fn=%s ip=%s: %v\n", targetFn, ip, err)
 		}
+		log.Printf("[MICROBENCH] provider_sendfd_ts=%d fn=%s kind=initial\n", tSend, targetFn)
 
 	default:
 		// Worker relay of a wrong-owner keep-alive: only [clientFD] arrives.
@@ -174,12 +198,15 @@ func handleMigrate(connFD int, client *containerd.Client, hostSocketDir string) 
 		}
 		pipeR, pipeW := pipeEnds[0], pipeEnds[1]
 
+		// [MICROBENCH] stamp just before sendmsg: start of provider->watchdog sendfd.
+		tSend := microbenchNowNs()
 		if err := sendFDs(wdFD, []int{clientFD, pipeW}, payload); err != nil {
 			log.Printf("[migrate] forward (relay) to watchdog fn=%s ip=%s: %v\n", targetFn, ip, err)
 			_ = syscall.Close(pipeR)
 			_ = syscall.Close(pipeW)
 			return
 		}
+		log.Printf("[MICROBENCH] provider_sendfd_ts=%d fn=%s kind=relay\n", tSend, targetFn)
 		_ = syscall.Close(pipeW) // our copy; the function holds its own duplicate
 		go drainAndClosePipe(pipeR)
 	}
