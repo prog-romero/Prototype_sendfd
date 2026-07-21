@@ -5,10 +5,12 @@
 // Wire layout sent via sendfd2WithState (same sendmsg path as HTTP):
 //
 //   [0  .. 159] : KAPayload (160 bytes) — timing + target function name
-//   [160 .. N ] : raw tlspeek_serial_t bytes — TLS session state for worker
+//   [160 .. N ] : COMPACT tlspeek_serial_t — TLS session state for the worker
 //
-// The worker reads this as: httpmigrate_ka_payload_https_t
-// (base 160-byte header, then the serial blob)
+// The serial is packed to its used length by serial_pack() in tls_listener.c
+// (fixed 64-byte header, then length-prefixed tls_blob and http_request), so
+// only ~1-2 KB travel instead of the full ~24 KB struct. The watchdog unpacks
+// it with serial_unpack() in wd_bridge.c back into a full tlspeek_serial_t.
 
 package httpmigrate
 
@@ -27,11 +29,11 @@ const (
 )
 
 // KAPayloadHTTPS is the Go representation of the HTTPS wire payload.
-// It embeds KAPayload (160 bytes of timing data) followed by
-// the raw serialised TLS session state (tlspeek_serial_t, ~24 KB).
+// It embeds KAPayload (160 bytes of timing data) followed by the compact,
+// length-packed TLS session state (serial_pack output, typically ~1-2 KB).
 type KAPayloadHTTPS struct {
 	Base   KAPayload // timing info + target function name
-	Serial []byte    // raw tlspeek_serial_t bytes from C
+	Serial []byte    // compact tlspeek_serial_t bytes from C (serial_pack)
 }
 
 // Marshal serialises the HTTPS payload into a byte slice for sendmsg.

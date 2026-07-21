@@ -49,10 +49,13 @@ DEFAULT_PAYLOADS = {
 # Regex d'extraction des logs [MICROBENCH] / [MIGRATE-VERIFY] (préfixe éventuel ignoré).
 RE_SER = re.compile(r"tls_serialize_ns=(\d+)")
 RE_DES = re.compile(r"tls_deserialize_ns=(\d+)")
-RE_MIG = re.compile(r"migration_ns=(\d+)")
+RE_PT1 = re.compile(r"proto_top1_ns=(\d+)")     # proto : top1 (gateway)
+RE_PT2 = re.compile(r"proto_top2_ns=(\d+)")     # proto : top2 (watchdog)
 RE_SND = re.compile(r"provider_sendfd_ts=(\d+).*?kind=(\w+)")
 RE_RCV = re.compile(r"watchdog_recvfd_ts=(\d+)")
 RE_VER = re.compile(r"MIGRATE-VERIFY.*?kind=(\w+)")
+RE_VT1 = re.compile(r"vanilla_top1_ns=(\d+)")   # baseline vanilla : top1 (gateway)
+RE_VT2 = re.compile(r"vanilla_top2_ns=(\d+)")   # baseline vanilla : top2 (watchdog)
 
 
 def _pctl(xs, q):
@@ -104,15 +107,18 @@ def fetch_logs(pi_ssh, since_epoch, journal_cmd):
 
 def parse_logs(text):
     """Retourne, DANS L'ORDRE d'apparition, une liste par métrique."""
-    ser, des, mig, rcv = [], [], [], []
+    ser, des, rcv = [], [], []
     snd, snd_kind, ver_kind = [], [], []
+    pt1, pt2, vt1, vt2 = [], [], [], []
     for line in text.splitlines():
         m = RE_SER.search(line)
         if m: ser.append(int(m.group(1)))
         m = RE_DES.search(line)
         if m: des.append(int(m.group(1)))
-        m = RE_MIG.search(line)
-        if m: mig.append(int(m.group(1)))
+        m = RE_PT1.search(line)
+        if m: pt1.append(int(m.group(1)))
+        m = RE_PT2.search(line)
+        if m: pt2.append(int(m.group(1)))
         m = RE_RCV.search(line)
         if m: rcv.append(int(m.group(1)))
         m = RE_SND.search(line)
@@ -120,8 +126,13 @@ def parse_logs(text):
             snd.append(int(m.group(1))); snd_kind.append(m.group(2))
         m = RE_VER.search(line)
         if m: ver_kind.append(m.group(1))
-    return {"serialize": ser, "deserialize": des, "migration": mig,
-            "recv": rcv, "send": snd, "send_kind": snd_kind, "verify_kind": ver_kind}
+        m = RE_VT1.search(line)
+        if m: vt1.append(int(m.group(1)))
+        m = RE_VT2.search(line)
+        if m: vt2.append(int(m.group(1)))
+    return {"serialize": ser, "deserialize": des,
+            "recv": rcv, "send": snd, "send_kind": snd_kind, "verify_kind": ver_kind,
+            "ptop1": pt1, "ptop2": pt2, "vtop1": vt1, "vtop2": vt2}
 
 
 def main():
@@ -163,31 +174,61 @@ def main():
     logs = fetch_logs(args.pi_ssh, since, args.journal_cmd)
     d = parse_logs(logs)
 
-    counts = {k: len(v) for k, v in d.items() if k != "send_kind" and k != "verify_kind"}
+    counts = {k: len(v) for k, v in d.items() if k not in ("send_kind", "verify_kind")}
     print(f"  logs collectés : {counts}")
-    n = min(len(d["serialize"]), len(d["deserialize"]), len(d["migration"]),
-            len(d["recv"]), len(d["send"]))
+
+    # Détection du mode selon les logs présents. Dans les DEUX modes, migration_ns
+    # = top2 - top1 est calculé ICI (offline) : le gateway logge top1, le watchdog
+    # logge top2, aucun des deux ne transporte/relit top1. Les prints sont appariés
+    # par ordre (le script envoie en séquentiel, sans keep-alive).
+    #  - PROTO   : serialize (gateway) + deserialize/recv (watchdog) + sendfd
+    #              (provider->watchdog) + proto_top1_ns/proto_top2_ns.
+    #  - VANILLA : uniquement vanilla_top1_ns (gateway) + vanilla_top2_ns (watchdog).
+    proto = len(d["send"]) > 0 or len(d["serialize"]) > 0
+    vanilla = len(d["vtop1"]) > 0 and len(d["vtop2"]) > 0
+
+    if proto:
+        mode = "proto"
+        n = min(len(d["serialize"]), len(d["deserialize"]), len(d["ptop1"]),
+                len(d["ptop2"]), len(d["recv"]), len(d["send"]))
+    elif vanilla:
+        mode = "vanilla"
+        n = min(len(d["vtop1"]), len(d["vtop2"]))
+    else:
+        mode, n = "?", 0
+
     if n == 0:
         print("\n[FAIL] aucun log [MICROBENCH] apparié. Vérifie : rebuild fait ? "
-              "journald lisible (sudo) ? une seule fonction sollicitée ?", file=sys.stderr)
+              "bon mode (proto/vanilla) ? journald lisible (sudo) ? une seule fonction sollicitée ?",
+              file=sys.stderr)
         return 1
     if n != args.count:
         print(f"  [warn] {n} requêtes appariées sur {args.count} (logs manquants ou trafic parasite).")
+    print(f"  mode détecté : {mode}")
 
     # ── écriture CSV : un coût (ns) par requête ──────────────────────────────
     rows = []
     for i in range(n):
-        sendfd = d["recv"][i] - d["send"][i]     # même horloge CLOCK_MONOTONIC_RAW
-        rows.append({
-            "req": i + 1,
-            "serialize_ns": d["serialize"][i],
-            "deserialize_ns": d["deserialize"][i],
-            "sendfd_ns": sendfd,
-            "migration_ns": d["migration"][i],
-            "provider_kind": d["send_kind"][i] if i < len(d["send_kind"]) else "",
-            "provider_sendfd_ts": d["send"][i],
-            "watchdog_recvfd_ts": d["recv"][i],
-        })
+        if mode == "proto":
+            rows.append({
+                "req": i + 1,
+                "serialize_ns": d["serialize"][i],
+                "deserialize_ns": d["deserialize"][i],
+                "sendfd_ns": d["recv"][i] - d["send"][i],   # même horloge CLOCK_MONOTONIC_RAW
+                "migration_ns": d["ptop2"][i] - d["ptop1"][i],   # top2 - top1 (offline)
+                "provider_kind": d["send_kind"][i] if i < len(d["send_kind"]) else "",
+                "proto_top1_ns": d["ptop1"][i],
+                "proto_top2_ns": d["ptop2"][i],
+                "provider_sendfd_ts": d["send"][i],
+                "watchdog_recvfd_ts": d["recv"][i],
+            })
+        else:  # vanilla : différence top2 - top1 faite ici
+            rows.append({
+                "req": i + 1,
+                "migration_ns": d["vtop2"][i] - d["vtop1"][i],
+                "vanilla_top1_ns": d["vtop1"][i],
+                "vanilla_top2_ns": d["vtop2"][i],
+            })
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
@@ -198,6 +239,8 @@ def main():
     print(f"\n  {'coût':<14}{'moy(µs)':>10}{'p50(µs)':>10}{'p99(µs)':>10}")
     for key, label in [("serialize_ns", "serialize"), ("deserialize_ns", "deserialize"),
                        ("sendfd_ns", "sendfd"), ("migration_ns", "migration")]:
+        if key not in rows[0]:
+            continue
         xs = [r[key] for r in rows]
         avg = sum(xs) / len(xs)
         print(f"  {label:<14}{avg/1000:>10.1f}{_pctl(xs,0.5)/1000:>10.1f}{_pctl(xs,0.99)/1000:>10.1f}")

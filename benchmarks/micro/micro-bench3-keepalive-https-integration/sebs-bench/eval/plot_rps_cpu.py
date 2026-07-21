@@ -30,6 +30,7 @@ try:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.ticker import MultipleLocator
     import numpy as np
     import pandas as pd
 except ImportError:
@@ -69,9 +70,10 @@ def _plot_metric(app_dir: Path, app: str, scheme: str, m: pd.DataFrame,
                  rates: list[str], x: np.ndarray,
                  col_v: str, col_p: str, left_label: str, left_ylabel: str,
                  title_metric: str, out_name: str, cpu_stat: str,
-                 van_name: str, pro_name: str) -> None:
+                 van_name: str, pro_name: str, left_step: float | None = None) -> None:
     """Trace UNE figure : métrique gauche (col_v/col_p) + CPU (moyen ou médian,
-    selon cpu_stat) à droite."""
+    selon cpu_stat) à droite.
+    left_step : si défini, pas de graduation de l'axe GAUCHE (ex. 16 -> 0,16,32,…)."""
     if col_v not in m.columns or col_p not in m.columns:
         print(f"  [skip] {app}: colonne {col_v}/{col_p} absente")
         return
@@ -100,6 +102,12 @@ def _plot_metric(app_dir: Path, app: str, scheme: str, m: pd.DataFrame,
     ax.set_xticks(x)
     ax.set_xticklabels(rates)
     ax.set_ylim(bottom=0)
+    # Pas de graduation choisi pour l'axe GAUCHE (ex. RPS de 16 en 16).
+    if left_step and left_step > 0:
+        ax.yaxis.set_major_locator(MultipleLocator(left_step))
+        vmax = float(np.nanmax([m[col_v].max(), m[col_p].max()]))
+        top = (np.floor(vmax / left_step) + 1) * left_step   # multiple sup. du pas
+        ax.set_ylim(0, top)
     ax2.set_ylim(0, CPU_YMAX)          # CPU : graduation TOUJOURS jusqu'à 100
     ax.grid(axis="y", alpha=0.2, linestyle="--")
 
@@ -120,7 +128,8 @@ def _plot_metric(app_dir: Path, app: str, scheme: str, m: pd.DataFrame,
 
 
 def plot_app(app_dir: Path, app: str, scheme: str, cpu_stat: str = "avg",
-             van: Path | None = None, pro: Path | None = None) -> None:
+             van: Path | None = None, pro: Path | None = None,
+             rps_step: float | None = None) -> None:
     # fichiers explicites (--vanilla/--proto) sinon auto-découverte
     van = van or find_csv(app_dir, "vanilla", scheme)
     pro = pro or find_csv(app_dir, "proto", scheme)
@@ -142,10 +151,11 @@ def plot_app(app_dir: Path, app: str, scheme: str, cpu_stat: str = "avg",
     # -> les deux versions coexistent sans s'écraser.
     sfx = "" if cpu_stat == "avg" else f"_{cpu_stat}"
 
-    # Figure 1 : RPS atteint (gauche) + CPU (droite)
+    # Figure 1 : RPS atteint (gauche) + CPU (droite) — pas de graduation RPS = rps_step
     _plot_metric(app_dir, app, scheme, m, rates, x,
                  "rps_v", "rps_p", "RPS", "RPS atteint",
-                 "RPS", f"{app}_{scheme}_rps_cpu{sfx}.png", cpu_stat, van.name, pro.name)
+                 "RPS", f"{app}_{scheme}_rps_cpu{sfx}.png", cpu_stat, van.name, pro.name,
+                 left_step=rps_step)
 
     # Figure 2 : latence moyenne (gauche) + CPU (droite)
     _plot_metric(app_dir, app, scheme, m, rates, x,
@@ -162,6 +172,8 @@ def main() -> None:
     p.add_argument("--proto", default=None, help="chemin exact du CSV proto (override auto-découverte)")
     p.add_argument("--cpu-stat", choices=["avg", "med", "q3"], default="avg",
                    help="statistique CPU tracée à droite : avg (moyenne, défaut), med (médiane) ou q3 (3e quartile)")
+    p.add_argument("--rps-step", type=float, default=None,
+                   help="pas de graduation de l'axe RPS (ex. 16 -> 0,16,32,… ; défaut: auto)")
     args = p.parse_args()
 
     # Mode fichiers explicites : on trace juste cette paire.
@@ -170,7 +182,8 @@ def main() -> None:
         app_dir = van.parent
         app = app_dir.name
         print(f"=== RPS/Latence + CPU[{args.cpu_stat}] [{args.scheme}] {app} (fichiers explicites) ===")
-        plot_app(app_dir, app, args.scheme, cpu_stat=args.cpu_stat, van=van, pro=pro)
+        plot_app(app_dir, app, args.scheme, cpu_stat=args.cpu_stat, van=van, pro=pro,
+                 rps_step=args.rps_step)
         return
 
     root = Path(args.results_dir).expanduser().resolve()
@@ -181,7 +194,7 @@ def main() -> None:
         if not app_dir.is_dir():
             print(f"  [skip] {app}: dossier absent")
             continue
-        plot_app(app_dir, app, args.scheme, cpu_stat=args.cpu_stat)
+        plot_app(app_dir, app, args.scheme, cpu_stat=args.cpu_stat, rps_step=args.rps_step)
 
 
 if __name__ == "__main__":

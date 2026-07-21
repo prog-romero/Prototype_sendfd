@@ -142,6 +142,14 @@ func handleConn(connFD int, chanLis *ChanListener, providerURL string, notifier 
 
 	if fnName != "" {
 		// ── Sendfd / migrate path ─────────────────────────────────────────
+		// [MICROBENCH] top1 (gateway) = timestamp stamped just before the peek
+		// above. It is logged DIRECTLY here; the watchdog logs top2 on its side,
+		// and migration_ns = top2 - top1 is computed offline. top1 is no longer
+		// used for the measurement — the payload still carries it only as the
+		// wire "pre-routed" flag (top1_set), consumed by the watchdog for routing.
+		if microbenchOn {
+			log.Printf("[MICROBENCH] proto_top1_ns=%d\n", top1Ns)
+		}
 		payload := NewPayload(top1Ns, fnName)
 
 		if err := dispatchMigrate(connFD, fnName, payload, providerURL, notifier); err != nil {

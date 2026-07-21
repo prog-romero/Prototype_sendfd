@@ -37,7 +37,25 @@ if os.getenv("WRK_CONN_CLOSE") == "1" then
   wrk.headers["Connection"] = "close"
 end
 
+-- Mode ALTERNÉ : WRK_ALT_PATHS = liste de chemins séparés par des virgules
+-- (ex: "/function/graph-pagerank,/function/graph-pagerank1"). Chaque requête vise
+-- le chemin SUIVANT (round-robin). Sur une connexion keep-alive, la requête
+-- suivante cible donc une AUTRE fonction -> cas "wrong-owner" de la migration.
+local alt = os.getenv("WRK_ALT_PATHS")
+local alt_paths = {}
+if alt and alt ~= "" then
+  for p in string.gmatch(alt, "[^,]+") do
+    alt_paths[#alt_paths + 1] = p
+  end
+end
+
+local rr = 0   -- compteur par thread (chaque thread wrk2 a son propre état Lua)
 request = function()
+  if #alt_paths > 0 then
+    rr = rr + 1
+    local pth = alt_paths[((rr - 1) % #alt_paths) + 1]
+    return wrk.format("POST", pth, nil, body)
+  end
   return wrk.format("POST", path, nil, body)
 end
 

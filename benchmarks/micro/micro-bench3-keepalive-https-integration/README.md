@@ -111,6 +111,10 @@ docker buildx build --platform linux/arm64 \
   -t romerosdd/gateway-https:latest \
   --push \
   .
+
+
+sudo ctr -n openfaas    image pull docker.io/romerosdd/gateway-https:latest
+
 ```
 
 

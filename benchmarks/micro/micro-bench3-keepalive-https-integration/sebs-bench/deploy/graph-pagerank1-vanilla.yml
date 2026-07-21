@@ -1,0 +1,26 @@
+# graph-pagerank1-vanilla.yml — 2e instance de graph-pagerank (mode VANILLA).
+#
+# MÊME image que la graph-pagerank vanilla, juste un NOM différent
+# -> route /function/graph-pagerank1. Pas de migration (sendfd_enable=0), donc
+# aucun nom d'owner à régler ; SEBS_FN_NAME reste "graph-pagerank" (même code).
+#
+# Déploiement :
+#   faas-cli deploy -f sebs-bench/deploy/graph-pagerank1-vanilla.yml --gateway http://127.0.0.1:8080
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  graph-pagerank1:
+    image: romerosdd/sebs-vanilla-graph-pagerank:latest
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      sendfd_enable: "0"
+      SEBS_FN_NAME: "graph-pagerank"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"

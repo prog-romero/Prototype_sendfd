@@ -433,6 +433,15 @@ func runEpollLoop(
 					var top1Val uint64
 					if !skipTop1 {
 						top1Val = uint64(cTop1)
+						// [MICROBENCH] top1 (gateway, HTTPS) logged DIRECTLY. The
+						// watchdog logs top2 on its side and migration_ns = top2 -
+						// top1 is computed offline. top1 is no longer used for the
+						// measurement; it stays in the payload only as the wire
+						// "pre-routed" flag (top1_set) that the watchdog uses to
+						// skip the owner peek on provider-re-routed connections.
+						if microbenchOn {
+							log.Printf("[MICROBENCH] proto_top1_ns=%d\n", top1Val)
+						}
 					}
 					// Copy serial from peekBuf before the next epoll iteration
 					// overwrites it (peekBuf is reused across connections).

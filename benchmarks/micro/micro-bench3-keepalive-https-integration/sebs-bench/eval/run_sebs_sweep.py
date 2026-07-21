@@ -202,7 +202,7 @@ def _read_server_ms(perf_file):
 
 
 def _run_wrk2(wrk2, lua, url, req_path, body_file, duration_s, timeout_s, threads, conc, rate,
-              perf_file=None, conn_close=False):
+              perf_file=None, conn_close=False, alt_paths=None):
     env = os.environ.copy()
     env["WRK_BODY_FILE"] = body_file
     env["WRK_PATH"] = req_path
@@ -210,7 +210,17 @@ def _run_wrk2(wrk2, lua, url, req_path, body_file, duration_s, timeout_s, thread
         env["WRK_PERF_FILE"] = perf_file      # le hook Lua y logge chaque server_ms
     if conn_close:
         env["WRK_CONN_CLOSE"] = "1"           # mode "initial" : 1 connexion / requête
+    if alt_paths:
+        env["WRK_ALT_PATHS"] = ",".join(alt_paths)  # mode alterné : fonctions en round-robin
     actual_threads = min(threads, conc)
+    if alt_paths:
+        # wrk2 partage UN état Lua par thread : le compteur round-robin est commun
+        # à toutes les connexions du thread. Avec plusieurs connexions par thread,
+        # l'alternance d'une connexion donnée n'est PLUS garantie (elle peut rester
+        # figée sur une seule fonction). On force donc 1 connexion PAR thread
+        # (threads = concurrency) -> chaque connexion a son propre compteur ->
+        # alternance stricte garantie (P0, P1, P0, P1, …).
+        actual_threads = conc
     cmd = [wrk2, f"-t{actual_threads}", f"-c{conc}", f"-d{duration_s}s", f"-R{rate}",
            "--timeout", f"{timeout_s}s", "--latency", "-s", lua, url]
     try:
@@ -244,6 +254,11 @@ def main():
     p.add_argument("--conn-mode", choices=["keepalive", "initial"], default="keepalive",
                    help="keepalive (défaut) = connexions réutilisées ; "
                         "initial = une NOUVELLE connexion par requête (Connection: close)")
+    p.add_argument("--alt-functions", default=None,
+                   help="mode ALTERNÉ : liste de fonctions séparées par des virgules "
+                        "(ex: graph-pagerank,graph-pagerank1). Chaque requête vise la "
+                        "fonction suivante ; en keep-alive -> requête suivante = autre "
+                        "fonction sur la MÊME connexion (cas wrong-owner de la migration).")
     p.add_argument("--pi-ssh", default="romero@192.168.2.2")
     p.add_argument("--out", required=True)
     args = p.parse_args()
@@ -251,6 +266,11 @@ def main():
     port = args.port or (8443 if args.scheme == "https" else 8080)
     req_path = f"/function/{args.function}"
     url = f"{args.scheme}://{args.host}:{port}{req_path}"
+
+    # Mode alterné : liste de fonctions -> chemins /function/<nom> en round-robin.
+    alt_functions = [f.strip() for f in args.alt_functions.split(",") if f.strip()] if args.alt_functions else []
+    alt_paths = [f"/function/{f}" for f in alt_functions]
+
     body_file = str(Path(args.input).resolve())
     if not Path(body_file).is_file():
         print(f"ERREUR: event introuvable: {body_file}", file=sys.stderr)
@@ -265,6 +285,10 @@ def main():
     print(f"event : {body_file}")
     print(f"rates : {rates}   concurrency: {args.concurrency}   duration: {args.duration_s}s")
     print(f"conn  : {args.conn_mode}   (initial = 1 connexion/requête ; keepalive = réutilisées)")
+    if alt_paths:
+        print(f"ALT   : alternance round-robin sur {alt_functions} (chaque requête -> fonction suivante)")
+        print(f"        threads FORCÉ à {args.concurrency} (= concurrency) : 1 connexion/thread "
+              f"-> alternance STRICTE garantie par connexion")
     print(f"out   : {args.out}\n")
 
     rows = []
@@ -292,7 +316,8 @@ def main():
             rc, out = _run_wrk2(wrk2, lua, url, req_path, body_file,
                                 dur, args.timeout_s, args.threads,
                                 args.concurrency, rate, perf_file=perf_file,
-                                conn_close=(args.conn_mode == "initial"))
+                                conn_close=(args.conn_mode == "initial"),
+                                alt_paths=alt_paths)
             try:
                 sar_out, _ = sar_proc.communicate(timeout=dur + args.timeout_s + 30)
             except subprocess.TimeoutExpired:
@@ -339,6 +364,7 @@ def main():
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "mode": args.mode, "scheme": args.scheme, "function": args.function,
             "conn_mode": args.conn_mode,
+            "alt_functions": ",".join(alt_functions),
             "rate": rate, "concurrency": args.concurrency,
             "rps": d["rps"],
             "transfer_kb_s": d["transfer_kb_s"],          # wrk2 (compat plots)

@@ -40,11 +40,15 @@ int wd_bridge_init(const char *cert_file, const char *key_file);
  *
  * Takes ownership of client_fd and pipe_fd (both are closed before return).
  *
- *   payload      raw bytes received from the gateway: a base header, optionally
- *                followed by the serialised TLS state (HTTPS).
+ *   payload      raw bytes read over the sendfd socket alongside the client fd:
+ *                a base header, optionally followed by the serialised TLS state
+ *                (HTTPS). The gateway builds it; the provider forwards it (and,
+ *                for a wrong-owner keep-alive request, re-sends it here after
+ *                re-routing).
  *   payload_len  number of valid bytes in payload.
  *   own_fn_name  this function's name, used to decide handle-vs-relay.
- *   relay_sock   provider socket path used to relay wrong-owner connections.
+ *   relay_sock   provider socket path: a wrong-owner connection is handed BACK
+ *                to the provider (not to another watchdog) so it can re-route.
  *   gohandle     opaque cgo.Handle passed back to goInvokeHandler.
  */
 void wd_serve_conn(int client_fd, int pipe_fd,

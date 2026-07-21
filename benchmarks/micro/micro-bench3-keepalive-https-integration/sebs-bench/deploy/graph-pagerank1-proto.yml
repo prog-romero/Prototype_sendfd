@@ -1,0 +1,44 @@
+# graph-pagerank1-proto.yml — 2e instance de graph-pagerank (mode PROTOTYPE).
+#
+# MÊME image que graph-pagerank (romerosdd/sebs-fullproxy-graph-pagerank), juste
+# un NOM de fonction différent -> route /function/graph-pagerank1.
+#
+# IMPORTANT :
+#   HTTPMIGRATE_KA_FUNCTION_NAME = "graph-pagerank1"  -> nom d'OWNER du watchdog,
+#       il DOIT valoir le nom OpenFaaS (graph-pagerank1) pour que la détection
+#       wrong-owner de la migration fonctionne quand on alterne les fonctions.
+#   SEBS_FN_NAME = "graph-pagerank"  -> code métier exécuté (inchangé : c'est la
+#       même image, donc la même fonction SeBS).
+#
+# Déploiement :
+#   faas-cli deploy -f sebs-bench/deploy/graph-pagerank1-proto.yml --gateway http://127.0.0.1:8080
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+functions:
+  graph-pagerank1:
+    image: romerosdd/sebs-fullproxy-graph-pagerank:latest
+    secrets:
+      - server-crt
+      - server-key
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "graph-pagerank1"
+      SEBS_FN_NAME: "graph-pagerank"
+      MINIO_STORAGE_CONNECTION_URL: "10.62.0.1:9000"
+      MINIO_STORAGE_ACCESS_KEY: "sebsadmin"
+      MINIO_STORAGE_SECRET_KEY: "sebssecret"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"

@@ -80,8 +80,11 @@ func (c *WolfSSLGtwCtx) Free() {
 	c.ptr = nil
 }
 
-// SerialSize returns the exact byte size of a serialised TLS session state
-// (tlspeek_serial_t).  Used to pre-allocate the sendfd payload buffer.
+// SerialSize returns sizeof(tlspeek_serial_t) — the MAXIMUM serial size and the
+// scratch/output buffer the peek-and-export fills. The actual bytes shipped are
+// fewer: tlsgw_peek_and_export_nb compacts the serial in place (serial_pack) and
+// returns that smaller length. This value only sizes the pre-allocated buffer,
+// which the compact form is always guaranteed to fit within.
 func (c *WolfSSLGtwCtx) SerialSize() int {
 	return int(C.TLSGW_SERIAL_SIZE)
 }

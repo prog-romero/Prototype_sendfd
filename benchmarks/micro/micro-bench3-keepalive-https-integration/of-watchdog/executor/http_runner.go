@@ -23,7 +23,18 @@ import (
 
 	units "github.com/docker/go-units"
 	fhttputil "github.com/openfaas/faas-provider/httputil"
+	"golang.org/x/sys/unix"
 )
+
+// microbenchNowNs returns a monotonic timestamp in nanoseconds
+// (CLOCK_MONOTONIC_RAW). It is system-wide, so it is directly comparable with
+// the gateway's top1 (also CLOCK_MONOTONIC_RAW) on the same host.
+// [MICROBENCH] helper — used only for the migration-cost measurement.
+func microbenchNowNs() int64 {
+	var ts unix.Timespec
+	_ = unix.ClockGettime(unix.CLOCK_MONOTONIC_RAW, &ts)
+	return int64(ts.Sec)*1_000_000_000 + int64(ts.Nsec)
+}
 
 // HTTPFunctionRunner creates and maintains one process responsible for handling all calls
 type HTTPFunctionRunner struct {
@@ -112,6 +123,20 @@ func (f *HTTPFunctionRunner) Run(req FunctionRequest, contentLength int64, r *ht
 			bodyReader = bytes.NewReader(data)
 			bodyLen = int64(len(data))
 		}
+	}
+
+	// [MICROBENCH] top2 = the watchdog has now read the ENTIRE request: the HTTP
+	// server parsed the request line + headers before Run() was called, and the
+	// io.ReadAll above has just fully drained the body. This is the vanilla
+	// equivalent of the prototype's top2 (stamped once the full request is framed
+	// in wd_bridge.c). We log a raw CLOCK_MONOTONIC_RAW timestamp; it is paired
+	// offline with the gateway's vanilla_top1_ns to compute migration_ns = top2 -
+	// top1. It fires for every request handled here; in the prototype it is
+	// redundant (wd_bridge.c already logs migration_ns) and is simply ignored by
+	// the collector, which detects the mode. Gated by HTTPMIGRATE_MICROBENCH so a
+	// throughput run pays no per-request journald cost.
+	if microbenchOn {
+		log.Printf("[MICROBENCH] vanilla_top2_ns=%d\n", microbenchNowNs())
 	}
 
 	request, err := http.NewRequest(r.Method, upstreamURL, bodyReader)

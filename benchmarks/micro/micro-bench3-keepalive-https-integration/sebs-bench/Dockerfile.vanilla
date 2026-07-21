@@ -20,7 +20,7 @@ ARG FUNCTION_NAME=dynamic-html
 # ── Stage 1 : build du watchdog vanilla (sans CGO) ───────────────────────────
 FROM golang:latest AS watchdog-build
 WORKDIR /go/src/github.com/openfaas/of-watchdog
-COPY benchmarks/micro/micro-bench3-keepalive-http-integration/of-watchdog/ .
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/of-watchdog/ .
 RUN rm -rf vendor && go mod download
 RUN mkdir -p /out && CGO_ENABLED=0 GOOS=linux \
     go build -ldflags "-s -w" -o /out/fwatchdog .

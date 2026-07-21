@@ -23,6 +23,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +33,7 @@
 #include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
-
+ 
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
 #include <tlspeek/tlspeek.h>
@@ -77,6 +78,87 @@ static uint64_t now_ns(void)
 #endif
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+/* mb_enabled — gate the [MICROBENCH] logs (tls_deserialize_ns, proto_top2_ns).
+ * They write to stderr → journald on every migrated connection, which is a real
+ * CPU cost under load, so they are OFF unless HTTPMIGRATE_MICROBENCH=1.
+ * Evaluated once and cached. Same env var as the rest of the migration path. */
+static int mb_enabled(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("HTTPMIGRATE_MICROBENCH");
+        v = (e && e[0] == '1') ? 1 : 0;
+    }
+    return v;
+}
+
+/* ── Compact wire encoding of tlspeek_serial_t ───────────────────────────────
+ *
+ * The migration payload no longer ships the full ~24 KB tlspeek_serial_t; only
+ * the used bytes travel. Layout (native byte order, same arch on both ends):
+ *
+ *   [0 .. HDR)          fixed header = first offsetof(.,tls_blob) struct bytes
+ *   [HDR .. +4)         uint32 blob_sz
+ *   [.. + blob_sz)      tls_blob[0 .. blob_sz)
+ *   [.. + 4)            uint32 request_len
+ *   [.. + request_len)  http_request[0 .. request_len)
+ *
+ * serial_pack() must stay byte-for-byte identical to the gateway's copy in
+ * faas/gateway/httpmigrate/tls_listener.c. serial_unpack() is the inverse and
+ * re-zeros the destination so tlspeek_restore() gets a clean full struct; it
+ * validates every length so a malformed/short payload is rejected (returns -1)
+ * instead of overflowing the fixed arrays. */
+static int serial_pack(const tlspeek_serial_t *s, unsigned char *out)
+{
+    const int hdr = (int)offsetof(tlspeek_serial_t, tls_blob);
+    int off = 0;
+    memcpy(out + off, s, (size_t)hdr);
+    off += hdr;
+    uint32_t blob = s->blob_sz;
+    memcpy(out + off, &blob, sizeof(blob));
+    off += (int)sizeof(blob);
+    memcpy(out + off, s->tls_blob, blob);
+    off += (int)blob;
+    uint32_t req = (uint32_t)s->request_len;
+    memcpy(out + off, &req, sizeof(req));
+    off += (int)sizeof(req);
+    if (req) {
+        memcpy(out + off, s->http_request, req);
+        off += (int)req;
+    }
+    return off;
+}
+
+/* Returns the number of input bytes consumed, or -1 on a malformed payload. */
+static int serial_unpack(const unsigned char *in, int in_len, tlspeek_serial_t *out)
+{
+    const int hdr = (int)offsetof(tlspeek_serial_t, tls_blob);
+    if (in_len < hdr + (int)sizeof(uint32_t)) return -1;
+    memset(out, 0, sizeof(*out));
+    memcpy(out, in, (size_t)hdr);
+    int off = hdr;
+
+    uint32_t blob;
+    memcpy(&blob, in + off, sizeof(blob));
+    off += (int)sizeof(blob);
+    if (blob > TLSPEEK_MAX_EXPORT_SZ) return -1;
+    if (in_len < off + (int)blob + (int)sizeof(uint32_t)) return -1;
+    memcpy(out->tls_blob, in + off, blob);
+    off += (int)blob;
+    out->blob_sz = blob;
+
+    uint32_t req;
+    memcpy(&req, in + off, sizeof(req));
+    off += (int)sizeof(req);
+    if (req > sizeof(out->http_request) - 1) return -1;
+    if (in_len < off + (int)req) return -1;
+    if (req) memcpy(out->http_request, in + off, req);
+    off += (int)req;
+    out->request_len = (int)req;
+
+    return off;
 }
 
 static void clear_nonblocking(int fd)
@@ -268,7 +350,16 @@ static void relay_https(int fd, WOLFSSL *ssl, wd_https_payload_t *pl,
 
     int rfd = connect_seqpacket(relay_sock);
     if (rfd >= 0) {
-        (void)sendfd_payload(rfd, fd, pl, sizeof(*pl));
+        /* Ship base + compact serial (see serial_pack), not the full ~24 KB
+         * struct. The provider forwards these bytes verbatim to the correct
+         * watchdog, which unpacks them in wd_serve_conn. */
+        unsigned char *wire = malloc(sizeof(wd_base_t) + sizeof(tlspeek_serial_t));
+        if (wire) {
+            memcpy(wire, &pl->base, sizeof(wd_base_t));
+            int psz = serial_pack(&pl->serial, wire + sizeof(wd_base_t));
+            (void)sendfd_payload(rfd, fd, wire, sizeof(wd_base_t) + (size_t)psz);
+            free(wire);
+        }
         close(rfd);
     }
     close(fd);
@@ -285,7 +376,10 @@ static void serve_http_conn(int fd, int pipe_fd, const char *own,
 
     for (;;) {
         /* 1. Peek the first line to decide handle-vs-relay (no consume). */
-        unsigned char peek[1024];
+        /* Owner detection only: we just need the request line
+         * "<METHOD> /function/<name> ..." -> 256 bytes is plenty. The full
+         * request is read separately below (framing loop), not from this peek. */
+        unsigned char peek[256];
         ssize_t pn = recv(fd, peek, sizeof(peek) - 1, MSG_PEEK);
         if (pn <= 0) break;
         peek[pn] = '\0';
@@ -393,8 +487,10 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
     /* [MICROBENCH] net TLS deserialization time = session restore (tls_import). */
     uint64_t mb_de0 = now_ns();
     if (tlspeek_restore(ssl, &pl->serial) != 0) { wolfSSL_free(ssl); ssl = NULL; goto done; }
-    fprintf(stderr, "[MICROBENCH] tls_deserialize_ns=%llu\n",
-            (unsigned long long)(now_ns() - mb_de0));
+    if (mb_enabled()) {
+        fprintf(stderr, "[MICROBENCH] tls_deserialize_ns=%llu\n",
+                (unsigned long long)(now_ns() - mb_de0));
+    }
     wolfSSL_set_fd(ssl, fd);
     /* The migrated session must not emit a NewSessionTicket (there is no session
      * resumption on this path): disabling it avoids interleaving a handshake
@@ -423,7 +519,18 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
             } else {
                 tlspeek_ctx_t pctx;
                 if (tlspeek_restore_peek_ctx(&pctx, fd, &pl->serial) != 0) goto done;
-                uint8_t peek[4096];
+                /* Owner detection only: the decrypted HTTP request line is enough
+                 * to read /function/<name>, so a 256-byte output buffer suffices.
+                 *
+                 * NOTE — this size does NOT change the crypto cost. tls_read_peek()
+                 * MSG_PEEKs and AEAD-decrypts the WHOLE first TLS record (into its own
+                 * internal buffer) and only the final copy into `peek` is capped at
+                 * `size`; so 256 just limits the plaintext we copy and then scan
+                 * (memchr + parse_owner), not the bytes peeked/decrypted. That is fine
+                 * here: the first record is small in practice, and the worker re-reads
+                 * the record later with wolfSSL_read(), which verifies the AEAD tag —
+                 * this peek is used for routing only. */
+                uint8_t peek[256];
                 int pn = tls_read_peek(&pctx, peek, sizeof(peek) - 1);
                 tlspeek_free(&pctx);
                 if (pn < 0) goto done;
@@ -475,16 +582,19 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
             int n = wolfSSL_read(ssl, (char *)(buf + len), (int)(cap - len - 1));
             if (n <= 0) goto done;
             len += (size_t)n;
-            buf[len] = '\0';
+            buf[len] = '\0'; 
         }
         if (!framed) goto done;
 
-        /* [MICROBENCH] top2 = the container has read ALL bytes of the first
-         * migrated request. Migration end-to-end cost = top2 - top1, where top1
-         * was stamped by the gateway on the first bytes seen in the socket. */
-        if (mb_is_first && pl->base.top1_set) {
-            fprintf(stderr, "[MICROBENCH] migration_ns=%llu\n",
-                    (unsigned long long)(now_ns() - pl->base.top1_rdtsc));
+        /* [MICROBENCH] top2 (watchdog) = the container has read ALL bytes of the
+         * first migrated request (headers + body just fully framed above). We log
+         * it DIRECTLY as a raw CLOCK_MONOTONIC_RAW timestamp; the gateway logs
+         * top1 on its side and migration_ns = top2 - top1 is computed offline.
+         * top1 is no longer read from the payload here (the payload's top1_set is
+         * kept only as the wire "pre-routed" routing flag). */
+        if (mb_is_first && mb_enabled()) {
+            fprintf(stderr, "[MICROBENCH] proto_top2_ns=%llu\n",
+                    (unsigned long long)now_ns());
         }
 
         size_t req_sz = hdr_sz + body_target;
@@ -570,7 +680,12 @@ void wd_serve_conn(int client_fd, int pipe_fd,
     const wd_base_t *base = (const wd_base_t *)payload;
 
     if (base->magic == HTTPMIGRATE_HTTPS_MAGIC) {
-        if (!s_wctx || payload_len < (int)sizeof(wd_https_payload_t)) {
+        /* Wire = wd_base_t + compact serial (see serial_pack). Minimum size is
+         * the base plus the serial's fixed header plus the first length field. */
+        const int min_https = (int)sizeof(wd_base_t) +
+                              (int)offsetof(tlspeek_serial_t, tls_blob) +
+                              (int)sizeof(uint32_t);
+        if (!s_wctx || payload_len < min_https) {
             fprintf(stderr, "[wd-bridge] HTTPS connection but TLS not initialised / short payload\n");
             if (client_fd >= 0) close(client_fd);
             if (pipe_fd >= 0) close(pipe_fd);
@@ -582,7 +697,15 @@ void wd_serve_conn(int client_fd, int pipe_fd,
             if (pipe_fd >= 0) close(pipe_fd);
             return;
         }
-        memcpy(pl, payload, sizeof(*pl));
+        memcpy(&pl->base, payload, sizeof(wd_base_t));
+        if (serial_unpack(payload + sizeof(wd_base_t),
+                          payload_len - (int)sizeof(wd_base_t), &pl->serial) < 0) {
+            fprintf(stderr, "[wd-bridge] malformed compact TLS serial (payload_len=%d)\n", payload_len);
+            free(pl);
+            if (client_fd >= 0) close(client_fd);
+            if (pipe_fd >= 0) close(pipe_fd);
+            return;
+        }
         serve_https_conn(client_fd, pipe_fd, pl, own_fn_name, relay_sock, gohandle);
         free(pl);
     } else {

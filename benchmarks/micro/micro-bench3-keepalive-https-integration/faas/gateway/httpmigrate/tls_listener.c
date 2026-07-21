@@ -43,6 +43,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/tcp.h>     /* TCP_NODELAY */
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,6 +94,62 @@ static uint64_t now_ns(void)
 #endif
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+/* mb_enabled — gate the [MICROBENCH] logs. They write to stderr → journald on
+ * every migration, which costs real CPU under load, so they are OFF unless
+ * HTTPMIGRATE_MICROBENCH=1. Evaluated once and cached (env is immutable here).
+ * Same env var as the Go components on the migration path. */
+static int mb_enabled(void)
+{
+    static int v = -1;
+    if (v < 0) {
+        const char *e = getenv("HTTPMIGRATE_MICROBENCH");
+        v = (e && e[0] == '1') ? 1 : 0;
+    }
+    return v;
+}
+
+/* ── Compact wire encoding of tlspeek_serial_t ───────────────────────────────
+ *
+ * The struct is ~24 KB because tls_blob[16384] and http_request[8192] are fixed
+ * arrays, but only blob_sz / request_len bytes of each are meaningful. Instead
+ * of shipping the whole struct over the migration socket, serial_pack() writes
+ * only the used bytes, in this variable-length layout:
+ *
+ *   [0 .. HDR)            fixed header = the first offsetof(.,tls_blob) bytes of
+ *                         the struct (magic, cipher_suite, client_write_key,
+ *                         client_write_iv, read_seq_num)
+ *   [HDR .. HDR+4)        uint32 blob_sz
+ *   [.. + blob_sz)        tls_blob[0 .. blob_sz)
+ *   [.. + 4)              uint32 request_len
+ *   [.. + request_len)    http_request[0 .. request_len)
+ *
+ * Native byte order — same as the raw-struct memcpy the migration path already
+ * used, and gateway/watchdog run on the same architecture. serial_unpack() (in
+ * the watchdog, wd_bridge.c) is the exact inverse and re-zeros the destination
+ * struct so tlspeek_restore() sees a clean full struct. `out` must have room for
+ * a full struct (the compact form is always <= sizeof(tlspeek_serial_t)).
+ * Returns the number of bytes written. */
+static int serial_pack(const tlspeek_serial_t *s, unsigned char *out)
+{
+    const int hdr = (int)offsetof(tlspeek_serial_t, tls_blob);
+    int off = 0;
+    memcpy(out + off, s, (size_t)hdr);
+    off += hdr;
+    uint32_t blob = s->blob_sz;
+    memcpy(out + off, &blob, sizeof(blob));
+    off += (int)sizeof(blob);
+    memcpy(out + off, s->tls_blob, blob);
+    off += (int)blob;
+    uint32_t req = (uint32_t)s->request_len;
+    memcpy(out + off, &req, sizeof(req));
+    off += (int)sizeof(req);
+    if (req) {
+        memcpy(out + off, s->http_request, req);
+        off += (int)req;
+    }
+    return off;
 }
 
 /* Disable Nagle algorithm on a TCP socket.
@@ -531,10 +588,27 @@ int tlsgw_peek_and_export_nb(
 
     /* [MICROBENCH] net TLS serialization time = export of session state
      * (keys, IVs, sequence number, session blob). Measured at the gateway. */
-    fprintf(stderr, "[MICROBENCH] tls_serialize_ns=%llu\n",
-            (unsigned long long)(now_ns() - mb_ser0));
+    if (mb_enabled()) {
+        fprintf(stderr, "[MICROBENCH] tls_serialize_ns=%llu\n",
+                (unsigned long long)(now_ns() - mb_ser0));
+    }
 
-    if (serial_sz_out) *serial_sz_out = (int)sizeof(tlspeek_serial_t);
+    /* Compact the serial in place: serial_buf currently holds the full struct;
+     * pack only the used bytes into a temp buffer, then copy them back to the
+     * front of serial_buf. The Go side ships exactly *serial_sz_out bytes, so
+     * only the compact form travels (~1-2 KB instead of ~24 KB). serial_buf was
+     * sized to sizeof(tlspeek_serial_t) by the caller, so it always fits. */
+    {
+        unsigned char *packed = malloc(sizeof(tlspeek_serial_t));
+        if (!packed) {
+            wolfssl_conn_free(conn);
+            return -2;
+        }
+        int psz = serial_pack((const tlspeek_serial_t *)serial_buf, packed);
+        memcpy(serial_buf, packed, (size_t)psz);
+        free(packed);
+        if (serial_sz_out) *serial_sz_out = psz;
+    }
 
     /* Detach wolfSSL from tcp_fd — returns the raw fd for sendfd.
      * quiet_shutdown prevents sending a TLS close_notify (the worker owns

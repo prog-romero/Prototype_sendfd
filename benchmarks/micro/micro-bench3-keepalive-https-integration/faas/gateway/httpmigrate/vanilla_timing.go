@@ -170,6 +170,13 @@ func VanillaTimingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if val, loaded := vanillaTop1Map.LoadAndDelete(r.RemoteAddr); loaded {
 			top1 := val.(uint64)
+			// [MICROBENCH] log top1 (gateway) for the VANILLA migration-cost baseline.
+			// The watchdog logs top2 on its side; we pair the two and compute the
+			// difference (migration_ns = top2 - top1) offline in the CSV. Gated so a
+			// throughput run is not slowed by per-request journald writes.
+			if microbenchOn {
+				log.Printf("[MICROBENCH] vanilla_top1_ns=%d\n", top1)
+			}
 			r.Header.Set("X-Top1-Rdtsc", strconv.FormatUint(top1, 10))
 			// Also clean up insertion-time tracking.
 			vanillaInsertMu.Lock()
