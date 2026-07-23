@@ -69,7 +69,7 @@ func RunVanillaHTTPS(
 	handler http.Handler,
 	skipTop1 bool,
 ) error {
-	gtwCtx, err := NewWolfSSLGtwCtx(certFile, keyFile)
+	gtwCtx, err :=  (certFile, keyFile)
 	if err != nil {
 		return fmt.Errorf("[vanilla-https] wolfSSL init: %w", err)
 	}

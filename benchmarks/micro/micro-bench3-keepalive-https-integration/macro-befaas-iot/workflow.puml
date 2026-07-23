@@ -1,0 +1,54 @@
+@startuml
+title BeFaaS Smart-Traffic — one client request
+
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam ParticipantPadding 12
+skinparam DefaultFontName Helvetica
+skinparam DefaultFontSize 12
+skinparam sequence {
+  ArrowColor #37474F
+  LifeLineBorderColor #90A4AE
+  ParticipantBorderColor #37474F
+  ParticipantBackgroundColor #ECEFF1
+  ActorBorderColor #37474F
+  DatabaseBackgroundColor #FFF3E0
+  DatabaseBorderColor #EF6C00
+}
+
+actor Client
+participant "objectrecognition\n<i>(entry)</i>" as OR
+participant "trafficstatistics" as TS
+participant "emergencydetection" as ED
+participant "setlightphasecalculation" as SL
+database "Redis" as DB
+
+Client -> OR : POST image
+activate OR
+OR -> OR : detect objects (Jimp)
+
+OR -> TS : call(objects)
+activate TS
+TS -> DB : SET traffic-stats
+TS --> OR : statistics
+deactivate TS
+
+OR -> ED : call(objects)
+activate ED
+ED -> SL : call(emergency)
+activate SL
+SL -> DB : SET / GET\nlights, blink, lock
+SL --> ED : ok
+deactivate SL
+ED --> OR : emergency
+deactivate ED
+
+OR --> Client : 200 OK
+deactivate OR
+
+legend right
+  each call() = HTTP invocation
+  through the OpenFaaS gateway
+endlegend
+@enduml

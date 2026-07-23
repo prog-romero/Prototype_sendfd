@@ -1,0 +1,701 @@
+#!/usr/bin/env python3
+"""
+run_sweep_cpu.py — VARIANTE de run_sebs_sweep.py qui ajoute la mesure du CPU
+PAR COMPOSANT (gateway, faasd/provider, fwatchdog-<fn>, worker-<fn>) via pidstat,
+en plus du CPU global du Pi (sar).
+
+But : montrer combien de CPU gateway + provider consomment dans le chemin vanilla
+(= CPU récupérable par le container si on les court-circuite via sendfd). Un seul
+`pidstat -p <pids>` restreint aux PID résolus sur le Pi tourne EN PARALLÈLE de
+chaque palier wrk2 -> alignement temporel parfait avec le RPS/CPU déjà mesurés.
+
+Échelle : pidstat donne un %CPU PAR CŒUR (jusqu'à ncores×100). On divise par ncores
+(récupéré via `nproc`) pour être sur la MÊME échelle que sar (0-100, tout le Pi). Un
+pseudo-composant "systeme" = CPU sar - somme(composants) ferme le bilan, de sorte que
+le TOTAL du camembert = le CPU sar réellement mesuré pendant l'éval.
+
+Sorties (en plus du CSV principal, enrichi de colonnes cpu_<composant>_{avg,med,q3,max}
+et cpu_systeme_avg, TOUTES en % du Pi) :
+  <pidstat-dir>/<mode>/cpu/<composant>.csv   (colonnes rate,usr_pct,system_pct,cpu_pct)
+  où <mode> = "vanilla" | "prototype", directement traçable par plot_cpu_pies.py.
+
+Ne modifie PAS run_sebs_sweep.py : tout vit dans le dossier cpu_composant/.
+
+────────────────────────────────────────────────────────────────────────────
+run_sebs_sweep.py — rate-sweep wrk2 sur UNE fonction SeBS (vanilla vs proto).
+
+Pour chaque débit cible (--rates), lance wrk2 en open-loop (POST de l'event JSON)
+et relève, PAR PALIER de RPS :
+  - RPS, latences, erreurs (parsés de la sortie wrk2) ;
+  - CPU + RÉSEAU du Pi via UN SEUL `sar -u -n DEV` (échantillonné en parallèle) :
+      * pi_cpu_busy_{avg,med,q3,max}_pct : 100 - %idle, échelle 0-100 (agrégé tous cœurs) ;
+      * net_kb_s_{avg,max}               : somme rxkB/s + txkB/s sur eth0 ;
+  - PERF-COST sur toutes les requêtes du palier (plus besoin de run_perfcost.py) :
+      * client_ms_{avg,p50,p99}  : latence bout-en-bout (histogramme wrk2) ;
+      * server_ms_{avg,p50,p99}  : results_time du wrapper SeBS, lu dans le corps
+                                   de CHAQUE réponse via le hook Lua (post_json.lua) ;
+      * overhead_ms_{avg,p50,p99}: client - server (moyenne exacte ; p50/p99 =
+                                   différence d'agrégats -> run_perfcost.py pour l'exact).
+
+Colonnes conservées pour compare_two_csv_plots.py : rate, rps, transfer_kb_s,
+pi_cpu_busy_avg_pct, pi_cpu_busy_max_pct, lat_avg_ms, total_requests,
+socket_timeout_errors.
+
+Pré-requis : `sar` (paquet sysstat) installé sur le Pi.
+
+Exemple :
+  python3 run_sebs_sweep.py --mode proto --scheme https --host 192.168.2.2 \\
+     --function dynamic-html --input ../inputs/dynamic-html.json \\
+     --rates 5,10,20,40,60,80 --concurrency 16 --duration-s 20 \\
+     --pi-ssh romero@192.168.2.2 --out results/proto_https_dynamic-html.csv
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+# ── parsers wrk2 (identiques aux autres scripts du bench) ─────────────────────
+_LATENCY_STATS_RE = re.compile(
+    r"Latency\s+"
+    r"(?P<avg>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<avg_u>us|ms|s)\s+"
+    r"(?P<stdev>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<stdev_u>us|ms|s)\s+"
+    r"(?P<max>-?(?:nan|[0-9]+\.?[0-9]*))\s*(?P<max_u>us|ms|s)",
+    re.IGNORECASE,
+)
+_PERCENTILE_RE = re.compile(
+    r"(?P<pct>[0-9]+(?:\.[0-9]+)?)%\s+(?P<val>[0-9]+\.?[0-9]*)\s*(?P<unit>us|ms|s)"
+)
+_REQUESTS_IN_RE = re.compile(
+    r"(?P<reqs>[0-9,]+)\s+requests in\s+[0-9.]+s,\s+(?P<read>[0-9.]+)(?P<read_u>KB|MB|GB)\s+read"
+)
+_RPS_RE = re.compile(r"Requests/sec:\s+(?P<rps>[0-9.]+)")
+_TRANSFER_RE = re.compile(r"Transfer/sec:\s+(?P<val>[0-9.]+)(?P<unit>KB|MB|GB)")
+_ERRORS_RE = re.compile(r"Non-2xx or 3xx responses:\s+(?P<n>[0-9]+)")
+_SOCKET_ERRORS_RE = re.compile(
+    r"Socket errors:\s*connect\s+(?P<connect>[0-9]+),\s*read\s+(?P<read>[0-9]+),"
+    r"\s*write\s+(?P<write>[0-9]+),\s*timeout\s+(?P<timeout>[0-9]+)"
+)
+
+
+def _to_ms(v, u):
+    return v / 1000.0 if u == "us" else (v * 1000.0 if u == "s" else v)
+
+
+def _to_kb(v, u):
+    return v if u == "KB" else (v * 1024.0 if u == "MB" else (v * 1024.0 * 1024.0 if u == "GB" else v))
+
+
+def _f0(raw):
+    return 0.0 if raw.strip().lower() in {"nan", "-nan", "+nan"} else float(raw)
+
+
+def _parse(text: str) -> dict:
+    m = _LATENCY_STATS_RE.search(text)
+    avg_ms = _to_ms(_f0(m.group("avg")), m.group("avg_u")) if m else 0.0
+    pcts = {}
+    for pm in _PERCENTILE_RE.finditer(text):
+        pcts[f"p{float(pm.group('pct')):g}_ms"] = _to_ms(float(pm.group("val")), pm.group("unit"))
+    req_m = _REQUESTS_IN_RE.search(text)
+    rps_m = _RPS_RE.search(text)
+    tr_m = _TRANSFER_RE.search(text)
+    err_m = _ERRORS_RE.search(text)
+    sock_m = _SOCKET_ERRORS_RE.search(text)
+    return {
+        "rps": round(float(rps_m.group("rps")), 3) if rps_m else 0.0,
+        "transfer_kb_s": round(_to_kb(float(tr_m.group("val")), tr_m.group("unit")), 3) if tr_m else 0.0,
+        "avg_ms": round(avg_ms, 3),
+        "p99_ms": round(pcts.get("p99_ms", 0.0), 3),
+        "p50_ms": round(pcts.get("p50_ms", 0.0), 3),
+        "total_requests": int(req_m.group("reqs").replace(",", "")) if req_m else 0,
+        "errors_non2xx": int(err_m.group("n")) if err_m else 0,
+        "socket_connect_errors": int(sock_m.group("connect")) if sock_m else 0,
+        "socket_read_errors": int(sock_m.group("read")) if sock_m else 0,
+        "socket_write_errors": int(sock_m.group("write")) if sock_m else 0,
+        "socket_timeout_errors": int(sock_m.group("timeout")) if sock_m else 0,
+    }
+
+
+def _find_wrk2() -> str:
+    env = os.environ.get("WRK2")
+    if env:
+        e = os.path.expanduser(env)
+        if os.path.isfile(e) and os.access(e, os.X_OK):
+            return e
+    for c in (os.path.expanduser("~/wrk2/wrk"), os.path.expanduser("~/wrk2/wrk2")):
+        if os.path.isfile(c) and os.access(c, os.X_OK):
+            return c
+    return "wrk2"
+
+
+# ── CPU + RÉSEAU du Pi via UN SEUL sar (échelle CPU 0-100 % agrégée) ──────────
+def _start_pi_sar(pi_ssh, samples, interval_s=1):
+    """Lance `sar -u -n DEV` sur le Pi (CPU + réseau en une commande), en
+    parallèle de la charge du palier. LC_ALL=C -> format stable à parser."""
+    remote = f"LC_ALL=C sar -u -n DEV {interval_s} {samples}"
+    return subprocess.Popen(["ssh", pi_ssh, remote],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def _compute_sar_stats(text, iface="eth0", drop_first=True):
+    """Parse la sortie `sar -u -n DEV`.
+    CPU : ligne dont le 2e champ == 'all'  -> busy = 100 - %idle (échelle 0-100).
+    NET : ligne dont le 2e champ == iface  -> rxkB/s + txkB/s (somme in+out).
+    Retourne (cpu_avg, cpu_med, cpu_q3, cpu_max, net_avg_kb_s, net_max_kb_s).
+    Ignore les en-têtes et la ligne finale 'Average:'."""
+    cpu_busy, net_sum = [], []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or parts[0].startswith("Average"):
+            continue
+        tag = parts[1]
+        if tag == "all":                      # ligne CPU agrégé -> %idle = dernier champ
+            try:
+                cpu_busy.append(100.0 - float(parts[-1]))
+            except ValueError:
+                pass
+        elif tag == iface:                    # <time> IFACE rxpck txpck rxkB txkB ...
+            try:
+                net_sum.append(float(parts[4]) + float(parts[5]))
+            except (ValueError, IndexError):
+                pass
+    if drop_first:                            # jette la 1re seconde (partielle)
+        if len(cpu_busy) > 1:
+            cpu_busy = cpu_busy[1:]
+        if len(net_sum) > 1:
+            net_sum = net_sum[1:]
+
+    def _median(xs):
+        if not xs:
+            return 0.0
+        s = sorted(xs)
+        n = len(s)
+        mid = n // 2
+        return round(s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0, 2)
+
+    def _quantile(xs, q):
+        if not xs:
+            return 0.0
+        s = sorted(xs)
+        idx = min(len(s) - 1, int(round(q * (len(s) - 1))))
+        return round(s[idx], 2)
+
+    def _stats(xs):
+        return (round(sum(xs) / len(xs), 2), round(max(xs), 2)) if xs else (0.0, 0.0)
+
+    cpu_avg, cpu_max = _stats(cpu_busy)
+    cpu_med = _median(cpu_busy)
+    cpu_q3 = _quantile(cpu_busy, 0.75)
+    net_avg, net_max = _stats(net_sum)
+    return cpu_avg, cpu_med, cpu_q3, cpu_max, net_avg, net_max
+
+
+# ── CPU PAR COMPOSANT via pidstat (gateway, faasd, fwatchdog-<fn>, worker-<fn>) ─
+#
+# Un seul `pidstat -p <pids>` restreint aux PID résolus -> alignement temporel
+# parfait, aucun process parasite. Les PID partageant un label (ex: plusieurs
+# process faasd) sont SOMMÉS. Résolution : gateway via `ctr -n openfaas task ls`,
+# faasd via pgrep, et pour chaque fonction surveillée le fwatchdog via
+# `ctr -n openfaas-fn task ls` + son (ses) process enfant(s) = worker. Si
+# WORKER_COMM est vide, TOUS les enfants du fwatchdog sont pris (robuste quel que
+# soit le binaire métier : vanilla-fn-worker en vanilla, business-fn en proto).
+_PID_RESOLVE_SCRIPT = r"""
+FN_REGEX="$1"
+WORKER_COMM="$2"
+declare -A PID_LABEL
+
+GW_PID=$(ctr -n openfaas task ls 2>/dev/null | awk '$1=="gateway"{print $2}')
+[[ -n "$GW_PID" ]] && PID_LABEL[$GW_PID]="gateway"
+
+# Tous les process "faasd" partagent le comm "faasd" (même binaire) : on les
+# distingue par leur ligne de commande (/proc/<pid>/cmdline) :
+#   faasd provider -> faasd-provider (DANS le chemin par-requête : résolution + proxy)
+#   faasd up       -> faasd          (superviseur, ~idle)
+#   faasd (nu)     -> faasd-collect  (collecteur de logs, UN par container -> journald)
+for p in $(pgrep -x faasd 2>/dev/null); do
+    CMD=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null)
+    case "$CMD" in
+        *"faasd provider"*) PID_LABEL[$p]="faasd-provider" ;;
+        *"faasd up"*)       PID_LABEL[$p]="faasd" ;;
+        *)                  PID_LABEL[$p]="faasd-collect" ;;
+    esac
+done
+
+# containerd (démon) : encaisse les LoadContainer/RPC de résolution d'IP par requête.
+for p in $(pgrep -x containerd 2>/dev/null); do
+    PID_LABEL[$p]="containerd"
+done
+
+# Gros consommateurs "système" habituellement oubliés (sinon ils manquent au total) :
+#   journald         : gonflé par le log Resolve() par requête du provider
+#   containerd-shim  : runtime I/O, un par container
+#   ksoftirqd        : softirq réseau (RX/TX), un par cœur
+for p in $(pgrep -x systemd-journal 2>/dev/null); do PID_LABEL[$p]="journald"; done
+for p in $(pgrep -x containerd-shim 2>/dev/null); do PID_LABEL[$p]="containerd-shim"; done
+for p in $(pgrep ksoftirqd 2>/dev/null); do PID_LABEL[$p]="ksoftirqd"; done
+
+while read -r FN FNPID _STATUS; do
+    [[ "$FN" == "TASK" || -z "$FN" ]] && continue
+    [[ "$_STATUS" != "RUNNING" ]] && continue
+    [[ ! "$FN" =~ ^($FN_REGEX)$ ]] && continue
+    PID_LABEL[$FNPID]="fwatchdog-${FN}"
+    for CPID in $(pgrep -P "$FNPID" 2>/dev/null); do
+        if [[ -z "$WORKER_COMM" ]]; then
+            PID_LABEL[$CPID]="worker-${FN}"
+        else
+            CCOMM=$(ps -p "$CPID" -o comm= 2>/dev/null || true)
+            [[ "$CCOMM" == "$WORKER_COMM" ]] && PID_LABEL[$CPID]="worker-${FN}"
+        fi
+    done
+done < <(ctr -n openfaas-fn task ls 2>/dev/null)
+
+PARTS=()
+for pid in "${!PID_LABEL[@]}"; do
+    PARTS+=("${pid}:${PID_LABEL[$pid]}")
+done
+IFS=,
+echo "${PARTS[*]}"
+"""
+
+# pidstat -u (LC_ALL=C) : <time> UID PID %usr %system %guest %wait %CPU CPU Command
+# -> indices négatifs stables quel que soit le format de l'heure.
+_CPU_OFFSETS = {"usr_pct": -7, "system_pct": -6, "cpu_pct": -3}
+
+
+def _resolve_pidstat_pids(pi_ssh, fn_names, worker_comm=""):
+    """Retourne {pid(str): label(str)} pour gateway/faasd/fwatchdog-<fn>/worker-<fn>."""
+    fn_regex = "|".join(re.escape(f) for f in fn_names) if fn_names else "a^"
+    remote_cmd = f"sudo bash -s -- {shlex.quote(fn_regex)} {shlex.quote(worker_comm)}"
+    try:
+        r = subprocess.run(["ssh", pi_ssh, remote_cmd], input=_PID_RESOLVE_SCRIPT,
+                           capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return {}
+    pid_label = {}
+    for pair in r.stdout.strip().split(","):
+        pid, _, label = pair.partition(":")
+        if pid and label:
+            pid_label[pid] = label
+    return pid_label
+
+
+def _start_pi_pidstat(pi_ssh, pid_csv, samples, interval_s=1):
+    """Lance `pidstat -u -p <pids> 1 N` sur le Pi, en parallèle du palier."""
+    cmd = f"sudo LC_ALL=C pidstat -u -p {pid_csv} {interval_s} {samples} 2>/dev/null"
+    return subprocess.Popen(["ssh", pi_ssh, cmd],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def _parse_pidstat_per_second(text, pid_label, offsets):
+    """Reconstruit, par label, la série par-seconde de chaque métrique (PID sommés)."""
+    labels = sorted(set(pid_label.values()))
+    samples = {label: {m: [] for m in offsets} for label in labels}
+    cur = {label: {m: 0.0 for m in offsets} for label in labels}
+    last_ts = None
+    have = False
+
+    def flush():
+        for label in labels:
+            for m in offsets:
+                samples[label][m].append(cur[label][m])
+                cur[label][m] = 0.0
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Linux") or "Average" in line or "UID" in line:
+            continue
+        parts = line.split()
+        if len(parts) < 8:
+            continue
+        ts, pid = parts[0], parts[2]
+        if pid not in pid_label:
+            continue
+        label = pid_label[pid]
+        if ts != last_ts:
+            if have:
+                flush()
+            last_ts = ts
+            have = True
+        for m, idx in offsets.items():
+            try:
+                cur[label][m] += float(parts[idx])
+            except (IndexError, ValueError):
+                pass
+    if have:
+        flush()
+    return samples
+
+
+def _agg_series(xs, drop_first=True):
+    """(avg, med, q3, max) d'une série ; jette la 1re seconde (partielle)."""
+    if drop_first and len(xs) > 1:
+        xs = xs[1:]
+    if not xs:
+        return 0.0, 0.0, 0.0, 0.0
+    s = sorted(xs)
+    n = len(s)
+    avg = round(sum(s) / n, 2)
+    mid = n // 2
+    med = round(s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0, 2)
+    q3 = round(s[min(n - 1, int(round(0.75 * (n - 1))))], 2)
+    return avg, med, q3, round(max(s), 2)
+
+
+def _pidstat_component_stats(text, pid_label):
+    """Retourne {label: {"usr","system","cpu_avg","cpu_med","cpu_q3","cpu_max"}}."""
+    per_sec = _parse_pidstat_per_second(text, pid_label, _CPU_OFFSETS)
+    out = {}
+    for label, metrics in per_sec.items():
+        cpu_avg, cpu_med, cpu_q3, cpu_max = _agg_series(metrics["cpu_pct"])
+        usr_avg, *_ = _agg_series(metrics["usr_pct"])
+        sys_avg, *_ = _agg_series(metrics["system_pct"])
+        out[label] = {"usr": usr_avg, "system": sys_avg,
+                      "cpu_avg": cpu_avg, "cpu_med": cpu_med,
+                      "cpu_q3": cpu_q3, "cpu_max": cpu_max}
+    return out
+
+
+def _col(label):
+    """Nom de colonne CSV sûr pour un label de composant (tirets -> underscores)."""
+    return "cpu_" + re.sub(r"[^0-9A-Za-z]+", "_", label)
+
+
+# ── perf-cost : agrégation du server_ms (results_time) parsé par le hook Lua ──
+def _pctl(sorted_vals, q):
+    if not sorted_vals:
+        return 0.0
+    idx = min(len(sorted_vals) - 1, int(round(q * (len(sorted_vals) - 1))))
+    return sorted_vals[idx]
+
+
+def _read_server_ms(perf_file):
+    """Lit le fichier rempli par le hook Lua (un results_time µs par ligne, pour
+    chaque réponse 200 du palier). Retourne la liste des server_ms en ms."""
+    vals = []
+    try:
+        with open(perf_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    vals.append(float(line) / 1000.0)   # µs -> ms
+                except ValueError:
+                    pass
+    except FileNotFoundError:
+        pass
+    return vals
+
+
+def _run_wrk2(wrk2, lua, url, req_path, body_file, duration_s, timeout_s, threads, conc, rate,
+              perf_file=None, conn_close=False, alt_paths=None):
+    env = os.environ.copy()
+    env["WRK_BODY_FILE"] = body_file
+    env["WRK_PATH"] = req_path
+    if perf_file:
+        env["WRK_PERF_FILE"] = perf_file      # le hook Lua y logge chaque server_ms
+    if conn_close:
+        env["WRK_CONN_CLOSE"] = "1"           # mode "initial" : 1 connexion / requête
+    if alt_paths:
+        env["WRK_ALT_PATHS"] = ",".join(alt_paths)  # mode alterné : fonctions en round-robin
+    actual_threads = min(threads, conc)
+    if alt_paths:
+        # wrk2 partage UN état Lua par thread : le compteur round-robin est commun
+        # à toutes les connexions du thread. Avec plusieurs connexions par thread,
+        # l'alternance d'une connexion donnée n'est PLUS garantie (elle peut rester
+        # figée sur une seule fonction). On force donc 1 connexion PAR thread
+        # (threads = concurrency) -> chaque connexion a son propre compteur ->
+        # alternance stricte garantie (P0, P1, P0, P1, …).
+        actual_threads = conc
+    cmd = [wrk2, f"-t{actual_threads}", f"-c{conc}", f"-d{duration_s}s", f"-R{rate}",
+           "--timeout", f"{timeout_s}s", "--latency", "-s", lua, url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, env=env,
+                           timeout=duration_s + timeout_s + 40)
+    except subprocess.TimeoutExpired as exc:
+        return 124, f"wrk2 process timeout: {exc}"
+    except FileNotFoundError:
+        return 127, "wrk2 introuvable"
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def _parse_int_list(raw):
+    return [int(x.strip()) for x in raw.split(",") if x.strip()]
+
+
+def main():
+    p = argparse.ArgumentParser(description="Rate-sweep wrk2 d'une fonction SeBS (vanilla vs proto).")
+    p.add_argument("--mode", choices=["proto", "vanilla"], required=True)
+    p.add_argument("--scheme", choices=["https", "http"], default="https")
+    p.add_argument("--host", default="192.168.2.2")
+    p.add_argument("--port", type=int, default=None, help="override port (def 8443/8080)")
+    p.add_argument("--function", required=True, help="nom de la fonction (route)")
+    p.add_argument("--input", required=True, help="fichier JSON de l'event à POSTer")
+    p.add_argument("--rates", default="5,10,20,40,60,80", help="débits cibles req/s")
+    p.add_argument("--concurrency", type=int, default=32)
+    p.add_argument("--threads", type=int, default=8)
+    p.add_argument("--duration-s", type=int, default=20)
+    p.add_argument("--timeout-s", type=int, default=30)
+    p.add_argument("--pause", type=int, default=5)
+    p.add_argument("--conn-mode", choices=["keepalive", "initial"], default="keepalive",
+                   help="keepalive (défaut) = connexions réutilisées ; "
+                        "initial = une NOUVELLE connexion par requête (Connection: close)")
+    p.add_argument("--alt-functions", default=None,
+                   help="mode ALTERNÉ : liste de fonctions séparées par des virgules "
+                        "(ex: graph-pagerank,graph-pagerank1). Chaque requête vise la "
+                        "fonction suivante ; en keep-alive -> requête suivante = autre "
+                        "fonction sur la MÊME connexion (cas wrong-owner de la migration).")
+    p.add_argument("--pi-ssh", default="romero@192.168.2.2")
+    p.add_argument("--out", required=True)
+    # ── CPU par composant (pidstat) ──────────────────────────────────────────
+    p.add_argument("--no-pidstat", action="store_true",
+                   help="désactive la collecte du CPU par composant (pidstat)")
+    p.add_argument("--pidstat-dir", default=None,
+                   help="dossier des CSV par composant (déf: <dir(out)>/pidstat). "
+                        "Écrit <pidstat-dir>/<mode>/cpu/<composant>.csv")
+    p.add_argument("--worker-comm", default="",
+                   help="filtre le process métier enfant du fwatchdog par son 'comm' "
+                        "(déf: vide = tous les enfants). Ex: business-fn / vanilla-fn-work")
+    args = p.parse_args()
+
+    port = args.port or (8443 if args.scheme == "https" else 8080)
+    req_path = f"/function/{args.function}"
+    url = f"{args.scheme}://{args.host}:{port}{req_path}"
+
+    # Mode alterné : liste de fonctions -> chemins /function/<nom> en round-robin.
+    alt_functions = [f.strip() for f in args.alt_functions.split(",") if f.strip()] if args.alt_functions else []
+    alt_paths = [f"/function/{f}" for f in alt_functions]
+
+    body_file = str(Path(args.input).resolve())
+    if not Path(body_file).is_file():
+        print(f"ERREUR: event introuvable: {body_file}", file=sys.stderr)
+        sys.exit(1)
+
+    wrk2 = _find_wrk2()
+    # Le hook Lua vit dans le dossier parent (eval/client/), pas dans cpu_composant/.
+    lua = str(Path(__file__).resolve().parent.parent / "client" / "post_json.lua")
+    rates = _parse_int_list(args.rates)
+
+    print(f"=== SeBS sweep [{args.mode}/{args.scheme}] {args.function} ===")
+    print(f"url   : {url}")
+    print(f"event : {body_file}")
+    print(f"rates : {rates}   concurrency: {args.concurrency}   duration: {args.duration_s}s")
+    print(f"conn  : {args.conn_mode}   (initial = 1 connexion/requête ; keepalive = réutilisées)")
+    if alt_paths:
+        print(f"ALT   : alternance round-robin sur {alt_functions} (chaque requête -> fonction suivante)")
+        print(f"        threads FORCÉ à {args.concurrency} (= concurrency) : 1 connexion/thread "
+              f"-> alternance STRICTE garantie par connexion")
+    print(f"out   : {args.out}\n")
+
+    # ── Résolution des PID par composant (une seule fois : PID stables sur le sweep) ─
+    # <mode> pour l'arborescence pidstat : proto -> "prototype" (compat plot).
+    mode_dir = "prototype" if args.mode == "proto" else "vanilla"
+    pidstat_dir = Path(args.pidstat_dir) if args.pidstat_dir else (Path(args.out).resolve().parent / "pidstat")
+    pidstat_enabled = not args.no_pidstat
+    pid_label = {}
+    comp_labels = []          # labels ordonnés (colonnes stables sur toutes les lignes)
+    pidstat_component_rows = {}   # label -> [ {rate, rps, usr_pct, system_pct, cpu_pct}, ... ]
+    if pidstat_enabled:
+        fn_names = sorted({args.function, *alt_functions})
+        print("Résolution des PID pidstat sur le Pi (gateway/faasd/fwatchdog/worker)…")
+        pid_label = _resolve_pidstat_pids(args.pi_ssh, fn_names, args.worker_comm)
+        if not pid_label:
+            print("  [WARN] aucun PID résolu (sudo/ctr ?) — CPU par composant désactivé.")
+            pidstat_enabled = False
+        else:
+            comp_labels = sorted(set(pid_label.values()))
+            pidstat_component_rows = {lbl: [] for lbl in comp_labels}
+            print(f"  composants: {', '.join(comp_labels)}  ({len(pid_label)} PID)")
+    pid_csv = ",".join(pid_label.keys())
+
+    # Nb de cœurs du Pi : pidstat donne un %CPU PAR CŒUR (un process peut monter à
+    # ncores×100 %), alors que sar donne un %busy sur 0-100 (tout le Pi). On divise
+    # donc les %CPU pidstat par ncores pour les ramener sur la MÊME échelle que sar
+    # -> le camembert (composants + reste système) totalise le CPU réel de l'éval.
+    pi_ncores = 1
+    if pidstat_enabled:
+        try:
+            r = subprocess.run(["ssh", args.pi_ssh, "nproc"], capture_output=True, text=True, timeout=15)
+            pi_ncores = max(1, int(r.stdout.strip()))
+        except (ValueError, subprocess.SubprocessError):
+            print("  [WARN] 'nproc' illisible sur le Pi -> ncores=1 (pas de normalisation).")
+        print(f"  ncores Pi = {pi_ncores}  (%CPU pidstat ÷ {pi_ncores} -> % du Pi, échelle sar)")
+
+    rows = []
+    for rate in rates:
+        # fichier de collecte du server_ms pour CE palier (vidé à chaque rate)
+        perf_file = str(Path(args.out).resolve().parent / f".perf_{args.function}_{rate}.tmp")
+        try:
+            os.remove(perf_file)
+        except FileNotFoundError:
+            pass
+
+        # Une seule passe : wrk2 (avec hook server_ms) + sar (CPU/réseau) en même
+        # temps. wrk2 renvoie parfois une latence "-nan" pour CERTAINES valeurs de
+        # durée (bug de calibration coordinated-omission ; observé pile à -d10s,
+        # ni 8/12/15/20). Rien à voir avec le hook ni sar. On DÉCALE alors la durée
+        # de +1s à chaque re-run pour éviter la valeur pathologique.
+        max_tries = 6
+        for attempt in range(max_tries):
+            dur = args.duration_s + attempt
+            try:
+                os.remove(perf_file)
+            except FileNotFoundError:
+                pass
+            sar_proc = _start_pi_sar(args.pi_ssh, max(3, dur))
+            pidstat_proc = _start_pi_pidstat(args.pi_ssh, pid_csv, dur) if pidstat_enabled else None
+            rc, out = _run_wrk2(wrk2, lua, url, req_path, body_file,
+                                dur, args.timeout_s, args.threads,
+                                args.concurrency, rate, perf_file=perf_file,
+                                conn_close=(args.conn_mode == "initial"),
+                                alt_paths=alt_paths)
+            try:
+                sar_out, _ = sar_proc.communicate(timeout=dur + args.timeout_s + 30)
+            except subprocess.TimeoutExpired:
+                sar_proc.kill()
+                sar_out, _ = sar_proc.communicate()
+            cpu_avg, cpu_med, cpu_q3, cpu_max, net_avg, net_max = _compute_sar_stats(sar_out)
+            comp_stats = {}
+            if pidstat_proc is not None:
+                try:
+                    pidstat_out, _ = pidstat_proc.communicate(timeout=dur + args.timeout_s + 30)
+                except subprocess.TimeoutExpired:
+                    pidstat_proc.kill()
+                    pidstat_out, _ = pidstat_proc.communicate()
+                comp_stats = _pidstat_component_stats(pidstat_out, pid_label)
+            d = _parse(out)
+            if not (d["avg_ms"] == 0.0 and d["total_requests"] > 0):
+                break
+            if attempt < max_tries - 1:
+                print(f"  R={rate:<4} -> latence wrk2 = -nan à {dur}s (bug durée), re-run à {dur + 1}s…")
+        server_vals = sorted(_read_server_ms(perf_file))
+
+        # ── perf-cost sur TOUTES les requêtes du palier ──────────────────────
+        #  client_ms : latence bout-en-bout côté client   -> histogramme wrk2
+        #  server_ms : results_time du wrapper SeBS         -> hook Lua (toutes les 200)
+        #  overhead  : client - server. moyenne EXACTE ; p50/p99 = différence
+        #              d'agrégats (approx : wrk2 ne permet pas d'apparier
+        #              client & server par requête -> run_perfcost.py pour l'exact).
+        cli_avg, cli_p50, cli_p99 = d["avg_ms"], d["p50_ms"], d["p99_ms"]
+        if server_vals:
+            srv_avg = round(sum(server_vals) / len(server_vals), 3)
+            srv_p50 = round(_pctl(server_vals, 0.50), 3)
+            srv_p99 = round(_pctl(server_vals, 0.99), 3)
+        else:
+            srv_avg = srv_p50 = srv_p99 = 0.0
+        ovh_avg = round(cli_avg - srv_avg, 3)
+        ovh_p50 = round(cli_p50 - srv_p50, 3)
+        ovh_p99 = round(cli_p99 - srv_p99, 3)
+        try:
+            os.remove(perf_file)
+        except FileNotFoundError:
+            pass
+
+        total_errors = (d["errors_non2xx"] + d["socket_connect_errors"]
+                        + d["socket_read_errors"] + d["socket_write_errors"]
+                        + d["socket_timeout_errors"])
+        print(f"  R={rate:<4} -> rps={d['rps']:8.2f}  cpu(avg/med/q3/max)={cpu_avg:5.1f}/{cpu_med:5.1f}/{cpu_q3:5.1f}/{cpu_max:.1f}%"
+              f"  net={net_avg:8.1f}kB/s"
+              f"  cli/srv/ovh={cli_avg:6.1f}/{srv_avg:6.1f}/{ovh_avg:6.1f}ms"
+              f"  err={total_errors}  (n_srv={len(server_vals)})")
+
+        # ── CPU par composant : colonnes (avg/med/q3/max) + lignes CSV dédiées ──
+        # pidstat donne un %CPU PAR CŒUR (max ncores×100). On divise par ncores pour
+        # être sur la MÊME échelle que sar (0-100, tout le Pi). Un pseudo-composant
+        # "systeme" = sar_total - somme(composants) capte le résiduel non attribué
+        # (kworker/kernel/…) -> total du camembert = CPU réel de l'éval (le sar).
+        nc = float(pi_ncores)
+        comp_cols = {}
+        comp_machine = {}          # label -> cpu_avg en % du Pi
+        for lbl in comp_labels:
+            st = comp_stats.get(lbl, {})
+            m_avg = round(st.get("cpu_avg", 0.0) / nc, 2)
+            comp_machine[lbl] = m_avg
+            comp_cols[f"{_col(lbl)}_avg"] = m_avg
+            comp_cols[f"{_col(lbl)}_med"] = round(st.get("cpu_med", 0.0) / nc, 2)
+            comp_cols[f"{_col(lbl)}_q3"] = round(st.get("cpu_q3", 0.0) / nc, 2)
+            comp_cols[f"{_col(lbl)}_max"] = round(st.get("cpu_max", 0.0) / nc, 2)
+            pidstat_component_rows[lbl].append({
+                "rate": rate, "rps": d["rps"],
+                "usr_pct": round(st.get("usr", 0.0) / nc, 2),
+                "system_pct": round(st.get("system", 0.0) / nc, 2),
+                "cpu_pct": m_avg,
+            })
+        if comp_labels:
+            # reste système : résiduel non attribué à nos process, borné à [0, sar].
+            sys_cpu = round(min(cpu_avg, max(0.0, cpu_avg - sum(comp_machine.values()))), 2)
+            comp_cols["cpu_systeme_avg"] = sys_cpu
+            pidstat_component_rows.setdefault("systeme", []).append({
+                "rate": rate, "rps": d["rps"],
+                "usr_pct": 0.0, "system_pct": 0.0, "cpu_pct": sys_cpu,
+            })
+            gw = comp_machine.get("gateway", 0.0)
+            prov = comp_machine.get("faasd-provider", 0.0)
+            cont = comp_machine.get("containerd", 0.0)
+            others = sum(v for l, v in comp_machine.items()
+                         if l not in ("gateway", "faasd-provider", "containerd"))
+            tot = gw + prov + cont + others + sys_cpu
+            print(f"           CPU/comp(%Pi): gw={gw:5.1f} provider={prov:5.1f} "
+                  f"containerd={cont:5.1f} autres={others:5.1f} systeme={sys_cpu:5.1f}"
+                  f"  => total={tot:5.1f} (sar={cpu_avg})")
+
+        rows.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "mode": args.mode, "scheme": args.scheme, "function": args.function,
+            "conn_mode": args.conn_mode,
+            "alt_functions": ",".join(alt_functions),
+            "rate": rate, "concurrency": args.concurrency,
+            "rps": d["rps"],
+            "transfer_kb_s": d["transfer_kb_s"],          # wrk2 (compat plots)
+            "net_kb_s_avg": net_avg, "net_kb_s_max": net_max,   # sar eth0 (rx+tx)
+            "pi_cpu_busy_avg_pct": cpu_avg, "pi_cpu_busy_med_pct": cpu_med,
+            "pi_cpu_busy_q3_pct": cpu_q3, "pi_cpu_busy_max_pct": cpu_max,  # sar 0-100 (avg/méd/Q3/max)
+            "lat_avg_ms": d["avg_ms"], "lat_p50_ms": d["p50_ms"], "lat_p99_ms": d["p99_ms"],
+            "client_ms_avg": cli_avg, "client_ms_p50": cli_p50, "client_ms_p99": cli_p99,
+            "server_ms_avg": srv_avg, "server_ms_p50": srv_p50, "server_ms_p99": srv_p99,
+            "overhead_ms_avg": ovh_avg, "overhead_ms_p50": ovh_p50, "overhead_ms_p99": ovh_p99,
+            "server_samples": len(server_vals),
+            "total_requests": d["total_requests"],
+            "errors_non2xx": d["errors_non2xx"],
+            "socket_connect_errors": d["socket_connect_errors"],
+            "socket_read_errors": d["socket_read_errors"],
+            "socket_write_errors": d["socket_write_errors"],
+            "socket_timeout_errors": d["socket_timeout_errors"],
+            "exit_code": rc,
+            **comp_cols,
+        })
+        if args.pause > 0:
+            time.sleep(args.pause)
+
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    with open(args.out, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+    print(f"\n[ok] écrit → {args.out}")
+
+    # ── CSV par composant (un fichier/composant, une ligne/rate) ──────────────
+    # Format identique à sweep_app_wrk2.py -> directement lisible par plot_cpu_pies.py
+    #   <pidstat-dir>/<mode>/cpu/<composant>.csv : rate,usr_pct,system_pct,cpu_pct
+    if pidstat_enabled and comp_labels:
+        cpu_out_dir = pidstat_dir / mode_dir / "cpu"
+        cpu_out_dir.mkdir(parents=True, exist_ok=True)
+        for lbl in sorted(pidstat_component_rows):   # inclut le pseudo-composant "systeme"
+            fpath = cpu_out_dir / f"{lbl}.csv"
+            with open(fpath, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=["rate", "usr_pct", "system_pct", "cpu_pct"])
+                w.writeheader()
+                for r in pidstat_component_rows[lbl]:
+                    w.writerow({k: r[k] for k in ("rate", "usr_pct", "system_pct", "cpu_pct")})
+        print(f"[ok] CPU par composant → {cpu_out_dir}/  ({len(comp_labels)} fichiers)")
+
+
+if __name__ == "__main__":
+    main()
