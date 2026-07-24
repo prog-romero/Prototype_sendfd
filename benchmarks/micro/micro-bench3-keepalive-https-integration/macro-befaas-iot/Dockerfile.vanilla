@@ -74,7 +74,7 @@ ENV BEFAAS_FN_NAME=emergencydetection
 # déploiement par deploy-all.sh selon le MODE, et elle est IDENTIQUE pour vanilla
 # et proto (http://…:8080 en mode http, https://…:8443 en mode https) -> la
 # comparaison est équitable (même schéma client + inter-fonctions dans les 2 modes).
-ENV OPENFAAS_ENDPOINT="http://192.168.2.2:8080/function"
+ENV OPENFAAS_ENDPOINT="https://192.168.2.2:8443/function"
 # Cert auto-signé du gateway : node-fetch doit l'accepter pour l'éval HTTPS
 # (vanilla-https appelle aussi https://gateway:8443). Inerte en mode http.
 ENV NODE_TLS_REJECT_UNAUTHORIZED=0

@@ -9,9 +9,10 @@ provider:
 # Chemin : client → gateway faasd → provider → watchdog(HTTP) → serveur Node.
 # Les appels inter-fonctions (ctx.call) passent par OPENFAAS_ENDPOINT.
 #
-# OPENFAAS_ENDPOINT ci-dessous = HTTP (port 8080). Pour l'éval "tout HTTPS"
-# (gateway termine TLS au 8443), remplacez par https://<gw>:8443/function et
-# ajoutez NODE_TLS_REJECT_UNAUTHORIZED: "0" (voir deploy-all.sh, MODE=https).
+# OPENFAAS_ENDPOINT ci-dessous = HTTPS (port 8443) : les appels inter-fonctions
+# passent en HTTPS dans les DEUX modes (vanilla termine TLS au 8443, proto migre).
+# NODE_TLS_REJECT_UNAUTHORIZED: "0" accepte le certificat auto-signé du gateway.
+# deploy-all.sh réécrit de toute façon l'endpoint selon MODE (http|https).
 #
 # <GW> = IP du gateway joignable DEPUIS un conteneur fonction. Sur le Pi :
 #   - 192.168.2.2  (IP LAN du Pi) — défaut ci-dessous
@@ -31,7 +32,7 @@ functions:
       sendfd_enable: "0"
       IS_OPENFAAS: "1"
       BEFAAS_FN_NAME: "objectrecognition"
-      OPENFAAS_ENDPOINT: "http://192.168.2.2:8080/function"
+      OPENFAAS_ENDPOINT: "https://192.168.2.2:8443/function"
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
       REDIS_ENDPOINT: "redis://10.62.0.1:6379"
 
@@ -45,7 +46,7 @@ functions:
       sendfd_enable: "0"
       IS_OPENFAAS: "1"
       BEFAAS_FN_NAME: "emergencydetection"
-      OPENFAAS_ENDPOINT: "http://192.168.2.2:8080/function"
+      OPENFAAS_ENDPOINT: "https://192.168.2.2:8443/function"
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
       REDIS_ENDPOINT: "redis://10.62.0.1:6379"
 
@@ -59,7 +60,7 @@ functions:
       sendfd_enable: "0"
       IS_OPENFAAS: "1"
       BEFAAS_FN_NAME: "trafficstatistics"
-      OPENFAAS_ENDPOINT: "http://192.168.2.2:8080/function"
+      OPENFAAS_ENDPOINT: "https://192.168.2.2:8443/function"
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
       REDIS_ENDPOINT: "redis://10.62.0.1:6379"
 
@@ -73,6 +74,6 @@ functions:
       sendfd_enable: "0"
       IS_OPENFAAS: "1"
       BEFAAS_FN_NAME: "setlightphasecalculation"
-      OPENFAAS_ENDPOINT: "http://192.168.2.2:8080/function"
+      OPENFAAS_ENDPOINT: "https://192.168.2.2:8443/function"
       NODE_TLS_REJECT_UNAUTHORIZED: "0"
       REDIS_ENDPOINT: "redis://10.62.0.1:6379"
