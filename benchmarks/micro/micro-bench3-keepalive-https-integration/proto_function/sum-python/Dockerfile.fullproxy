@@ -1,0 +1,93 @@
+# syntax=docker/dockerfile:1
+#
+# Dockerfile.fullproxy — fonction "sum" en PYTHON (style SeBS), mode PROTOTYPE.
+# of-watchdog compilé avec CGO + wolfSSL + libtlspeek (toute la plomberie de
+# migration : peek TLS, routage, keep-alive, read/write wolfSSL, ré-export TLS),
+# qui reverse-proxy la requête migrée vers l'hôte Python (gunicorn) sur 8085.
+#
+#   docker buildx build --platform linux/arm64 \
+#     -f benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/sum-python/Dockerfile.fullproxy \
+#     -t romerosdd/sum-python-fullproxy:latest --push .
+#
+# Le contexte de build DOIT être la RACINE du dépôt.
+
+# ── Stage 1 : build wolfSSL (arm64 natif) ─────────────────────────────────────
+FROM golang:1.24-bookworm AS wolfssl-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential autoconf automake libtool ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY wolfssl/ /wolfssl-src/
+WORKDIR /wolfssl-src
+RUN ./autogen.sh && \
+    ./configure --prefix=/usr/local \
+        --enable-tls13 --enable-opensslextra --enable-atomicuser \
+        --enable-sessionexport --enable-session-ticket --enable-keylog-export \
+        --enable-aesgcm --enable-chacha --enable-hkdf --enable-aescbc \
+        --enable-shared --enable-static && \
+    make -j"$(nproc)" && make install && ldconfig
+
+# ── Stage 2 : build libtlspeek (arm64 natif) ──────────────────────────────────
+FROM wolfssl-build AS tlspeek-build
+RUN apt-get update && apt-get install -y --no-install-recommends cmake \
+ && rm -rf /var/lib/apt/lists/*
+COPY libtlspeek /libtlspeek-src
+WORKDIR /libtlspeek-src
+RUN rm -rf build && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+        -DWOLFSSL_INCLUDE=/usr/local/include \
+        -DWOLFSSL_LIB=/usr/local/lib/libwolfssl.so && \
+    make -j"$(nproc)" tlspeek && \
+    install -d /usr/local/include/tlspeek && \
+    cp -f ../lib/*.h ../common/*.h /usr/local/include/tlspeek/ && \
+    cp -f libtlspeek.a /usr/local/lib/libtlspeek.a && ldconfig
+
+# ── Stage 3 : build du watchdog CGO (toute la plomberie) ──────────────────────
+FROM golang:latest AS watchdog-build
+COPY --from=tlspeek-build /usr/local/include /usr/local/include
+COPY --from=tlspeek-build /usr/local/lib     /usr/local/lib
+RUN ldconfig
+WORKDIR /go/src/github.com/openfaas/of-watchdog
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/of-watchdog/ .
+RUN rm -rf vendor && go mod download
+RUN mkdir -p /out && CGO_ENABLED=1 go build -tags wolfssl \
+    -ldflags "-s -w" -o /out/fwatchdog .
+
+# ── Stage 4 : runtime (trixie pour la GLIBC du watchdog CGO + Python) ─────────
+FROM debian:trixie-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates python3 python3-pip \
+ && rm -rf /var/lib/apt/lists/*
+
+# libwolfssl.so partagée (le watchdog CGO en dépend au runtime).
+COPY --from=wolfssl-build /usr/local/lib/libwolfssl.so* /usr/local/lib/
+RUN ldconfig
+
+COPY --from=watchdog-build /out/fwatchdog /usr/bin/fwatchdog
+
+WORKDIR /home/app
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/sum-python/requirements.txt ./requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/sum-python/server.py ./server.py
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/sum-python/function.py ./function.py
+COPY benchmarks/micro/micro-bench3-keepalive-https-integration/proto_function/sum-python/start.sh ./start.sh
+RUN chmod +x ./start.sh
+
+ENV GUNICORN_WORKERS=4
+ENV fprocess="/home/app/start.sh"
+ENV mode=http
+ENV http_upstream_url="http://127.0.0.1:8085"
+ENV http_port=8085
+
+# Active le serveur de migration FD + le driver full-proxy dans le watchdog.
+ENV sendfd_enable=1
+ENV sendfd_full_proxy=1
+ENV sendfd_socket_dir=/run/tlsmigrate
+ENV SENDFD_SOCKET_DIR=/run/tlsmigrate
+# Identité de la fonction (route + nom du socket nommé). Surchargé par le YAML.
+ENV HTTPMIGRATE_KA_FUNCTION_NAME=sum-python-proto
+
+# Certificats pour le chemin HTTPS (même convention que les autres images proto).
+ENV HTTPS_TLS_CERT=/var/openfaas/secrets/server-crt
+ENV HTTPS_TLS_KEY=/var/openfaas/secrets/server-key
+
+CMD ["/usr/bin/fwatchdog"]

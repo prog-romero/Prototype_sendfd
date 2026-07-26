@@ -1,0 +1,16 @@
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+# sum en PYTHON (Flask+gunicorn), mode VANILLA : le watchdog reverse-proxy vers
+# gunicorn (127.0.0.1:8085), pas de sendfd. fprocess/ports sont dans l'image.
+functions:
+  sum-python-vanilla:
+    image: romerosdd/sum-python-vanilla:latest
+    fprocess: /home/app/start.sh
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      sendfd_enable: "0"

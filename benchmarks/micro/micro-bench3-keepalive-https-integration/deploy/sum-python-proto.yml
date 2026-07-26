@@ -1,0 +1,28 @@
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+# sum en PYTHON (Flask+gunicorn), mode PROTOTYPE (full-proxy) : le watchdog fait
+# toute la plomberie TLS/sendfd et reverse-proxy la requête migrée vers gunicorn.
+functions:
+  sum-python-proto:
+    image: romerosdd/sum-python-fullproxy:latest
+    fprocess: /home/app/start.sh
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      GUNICORN_WORKERS: "4"
+      HTTPMIGRATE_ENABLE: "1"
+      SENDFD_ENABLE: "1"
+      sendfd_enable: "1"
+      SENDFD_FULL_PROXY: "1"
+      sendfd_full_proxy: "1"
+      SENDFD_SOCKET_DIR: "/run/tlsmigrate"
+      sendfd_socket_dir: "/run/tlsmigrate"
+      HTTPMIGRATE_KA_FUNCTION_NAME: "sum-python-proto"
+      HTTPS_TLS_CERT: "/var/openfaas/secrets/server-crt"
+      HTTPS_TLS_KEY: "/var/openfaas/secrets/server-key"
+    secrets:
+      - server-crt
+      - server-key

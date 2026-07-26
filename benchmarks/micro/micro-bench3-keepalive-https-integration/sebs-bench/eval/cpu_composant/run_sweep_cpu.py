@@ -203,9 +203,9 @@ def _compute_sar_stats(text, iface="eth0", drop_first=True):
 # parfait, aucun process parasite. Les PID partageant un label (ex: plusieurs
 # process faasd) sont SOMMÉS. Résolution : gateway via `ctr -n openfaas task ls`,
 # faasd via pgrep, et pour chaque fonction surveillée le fwatchdog via
-# `ctr -n openfaas-fn task ls` + son (ses) process enfant(s) = worker. Si
-# WORKER_COMM est vide, TOUS les enfants du fwatchdog sont pris (robuste quel que
-# soit le binaire métier : vanilla-fn-worker en vanilla, business-fn en proto).
+# `ctr -n openfaas-fn task ls` + TOUT son sous-arbre = worker (récursif : capte
+# gunicorn maître+workers pour Python, node/C process unique). Si WORKER_COMM est
+# vide, tous les descendants sont pris (robuste quel que soit le runtime).
 _PID_RESOLVE_SCRIPT = r"""
 FN_REGEX="$1"
 WORKER_COMM="$2"
@@ -241,19 +241,30 @@ for p in $(pgrep -x systemd-journal 2>/dev/null); do PID_LABEL[$p]="journald"; d
 for p in $(pgrep -x containerd-shim 2>/dev/null); do PID_LABEL[$p]="containerd-shim"; done
 for p in $(pgrep ksoftirqd 2>/dev/null); do PID_LABEL[$p]="ksoftirqd"; done
 
+# collect_desc — marque TOUT le sous-arbre d'un fwatchdog comme "worker-<fn>",
+# récursivement. Indispensable pour Python : gunicorn lance un MAÎTRE (enfant
+# direct du fwatchdog) + N WORKERS (petits-enfants) ; ne prendre que les enfants
+# directs raterait le CPU des workers. Marche aussi pour node / C (process unique
+# -> un seul descendant). Si WORKER_COMM est fixé, on filtre par comm.
+collect_desc() {
+    local parent="$1" fn="$2" kid
+    for kid in $(pgrep -P "$parent" 2>/dev/null); do
+        if [[ -z "$WORKER_COMM" ]]; then
+            PID_LABEL[$kid]="worker-${fn}"
+        else
+            local ccomm; ccomm=$(ps -p "$kid" -o comm= 2>/dev/null || true)
+            [[ "$ccomm" == "$WORKER_COMM" ]] && PID_LABEL[$kid]="worker-${fn}"
+        fi
+        collect_desc "$kid" "$fn"
+    done
+}
+
 while read -r FN FNPID _STATUS; do
     [[ "$FN" == "TASK" || -z "$FN" ]] && continue
     [[ "$_STATUS" != "RUNNING" ]] && continue
     [[ ! "$FN" =~ ^($FN_REGEX)$ ]] && continue
     PID_LABEL[$FNPID]="fwatchdog-${FN}"
-    for CPID in $(pgrep -P "$FNPID" 2>/dev/null); do
-        if [[ -z "$WORKER_COMM" ]]; then
-            PID_LABEL[$CPID]="worker-${FN}"
-        else
-            CCOMM=$(ps -p "$CPID" -o comm= 2>/dev/null || true)
-            [[ "$CCOMM" == "$WORKER_COMM" ]] && PID_LABEL[$CPID]="worker-${FN}"
-        fi
-    done
+    collect_desc "$FNPID" "$FN"
 done < <(ctr -n openfaas-fn task ls 2>/dev/null)
 
 PARTS=()

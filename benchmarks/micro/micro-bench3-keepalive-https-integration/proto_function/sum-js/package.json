@@ -1,0 +1,10 @@
+{
+  "name": "sum-js",
+  "version": "1.0.0",
+  "description": "Fonction sum (deux nombres) — serveur JS Express, style BeFaaS.",
+  "main": "server.js",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

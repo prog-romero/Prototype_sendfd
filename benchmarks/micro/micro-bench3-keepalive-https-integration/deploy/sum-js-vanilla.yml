@@ -1,0 +1,15 @@
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+
+# sum en JS (Node/Express), mode VANILLA : le watchdog reverse-proxy vers le
+# serveur node (127.0.0.1:8085), pas de sendfd. fprocess/ports sont dans l'image.
+functions:
+  sum-js-vanilla:
+    image: romerosdd/sum-js-vanilla:latest
+    fprocess: node server.js
+    environment:
+      mode: http
+      http_upstream_url: "http://127.0.0.1:8085"
+      http_port: "8085"
+      sendfd_enable: "0"
