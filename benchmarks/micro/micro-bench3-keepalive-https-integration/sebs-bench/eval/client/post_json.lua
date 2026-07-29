@@ -15,7 +15,7 @@
 local path = os.getenv("WRK_PATH") or "/"
 local body_file = os.getenv("WRK_BODY_FILE")
 local perf_path = os.getenv("WRK_PERF_FILE")
-
+print("call of the script")
 local body = "{}"
 if body_file then
   local f = io.open(body_file, "rb")
@@ -54,6 +54,7 @@ request = function()
   if #alt_paths > 0 then
     rr = rr + 1
     local pth = alt_paths[((rr - 1) % #alt_paths) + 1]
+    print("request() -> alt path: " .. pth)
     return wrk.format("POST", pth, nil, body)
   end
   return wrk.format("POST", path, nil, body)

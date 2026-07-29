@@ -31,7 +31,7 @@ try:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.ticker import MultipleLocator
+    from matplotlib.ticker import MultipleLocator, LogLocator, ScalarFormatter, NullFormatter
     import numpy as np
     import pandas as pd
 except ImportError:
@@ -71,7 +71,8 @@ def _plot_metric(app_dir: Path, app: str, scheme: str, m: pd.DataFrame,
                  rates: list[str], x: np.ndarray,
                  col_v: str, col_p: str, left_label: str, left_ylabel: str,
                  title_metric: str, out_name: str, cpu_stat: str,
-                 van_name: str, pro_name: str, left_step: float | None = None) -> None:
+                 van_name: str, pro_name: str, left_step: float | None = None,
+                 cpu_scale: str = "log") -> None:
     """Trace UNE figure : métrique gauche (col_v/col_p) + CPU (moyen ou médian,
     selon cpu_stat) à droite.
     left_step : si défini, pas de graduation de l'axe GAUCHE (ex. 16 -> 0,16,32,…)."""
@@ -109,7 +110,23 @@ def _plot_metric(app_dir: Path, app: str, scheme: str, m: pd.DataFrame,
         vmax = float(np.nanmax([m[col_v].max(), m[col_p].max()]))
         top = (np.floor(vmax / left_step) + 1) * left_step   # multiple sup. du pas
         ax.set_ylim(0, top)
-    ax2.set_ylim(0, CPU_YMAX)          # CPU : graduation TOUJOURS jusqu'à 100
+    # ── Axe CPU (droite) : logarithmique (défaut) ou linéaire ────────────────
+    if cpu_scale == "log":
+        ax2.set_yscale("log")
+        ax2.set_xscale("log")
+
+        # Borne basse > 0 obligatoire en log : décade juste sous la plus petite
+        # valeur CPU positive (aucun point n'est ainsi tronqué).
+        cpu_series = pd.concat([m[f"{cpu_col}_v"], m[f"{cpu_col}_p"]], ignore_index=True).dropna()
+        pos = cpu_series[cpu_series > 0]
+        cpu_min = float(pos.min()) if len(pos) else 1.0
+        bottom = max(0.1, 10.0 ** np.floor(np.log10(cpu_min)))
+        ax2.set_ylim(bottom, CPU_YMAX)          # jusqu'à 100, base log
+        ax2.yaxis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 5.0)))
+        ax2.yaxis.set_major_formatter(ScalarFormatter())  # 1,2,5,10,20,50,100 (pas 10^x)
+        ax2.yaxis.set_minor_formatter(NullFormatter())
+    else:
+        ax2.set_ylim(0, CPU_YMAX)               # CPU linéaire, gradué jusqu'à 100
     ax.grid(axis="y", alpha=0.2, linestyle="--")
 
     # légende commune (les 2 axes réunis)
@@ -130,7 +147,7 @@ def _plot_metric(app_dir: Path, app: str, scheme: str, m: pd.DataFrame,
 
 def plot_app(app_dir: Path, app: str, scheme: str, cpu_stat: str = "avg",
              van: Path | None = None, pro: Path | None = None,
-             rps_step: float | None = None) -> None:
+             rps_step: float | None = None, cpu_scale: str = "log") -> None:
     # fichiers explicites (--vanilla/--proto) sinon auto-découverte
     van = van or find_csv(app_dir, "vanilla", scheme)
     pro = pro or find_csv(app_dir, "proto", scheme)
@@ -156,12 +173,13 @@ def plot_app(app_dir: Path, app: str, scheme: str, cpu_stat: str = "avg",
     _plot_metric(app_dir, app, scheme, m, rates, x,
                  "rps_v", "rps_p", "RPS", "RPS atteint",
                  "RPS", f"{app}_{scheme}_rps_cpu{sfx}.png", cpu_stat, van.name, pro.name,
-                 left_step=rps_step)
+                 left_step=rps_step, cpu_scale=cpu_scale)
 
     # Figure 2 : latence moyenne (gauche) + CPU (droite)
     _plot_metric(app_dir, app, scheme, m, rates, x,
                  "lat_avg_ms_v", "lat_avg_ms_p", "Latence", "Latence moyenne (ms)",
-                 "Latence moyenne", f"{app}_{scheme}_lat_cpu{sfx}.png", cpu_stat, van.name, pro.name)
+                 "Latence moyenne", f"{app}_{scheme}_lat_cpu{sfx}.png", cpu_stat, van.name, pro.name,
+                 cpu_scale=cpu_scale)
 
 
 def main() -> None:
@@ -175,6 +193,8 @@ def main() -> None:
                    help="statistique CPU tracée à droite : avg (moyenne, défaut), med (médiane) ou q3 (3e quartile)")
     p.add_argument("--rps-step", type=float, default=None,
                    help="pas de graduation de l'axe RPS (ex. 16 -> 0,16,32,… ; défaut: auto)")
+    p.add_argument("--cpu-scale", choices=["log", "linear"], default="log",
+                   help="échelle de l'axe CPU (droite) : log (défaut) ou linear")
     args = p.parse_args()
 
     # Mode fichiers explicites : on trace juste cette paire.
@@ -184,7 +204,7 @@ def main() -> None:
         app = app_dir.name
         print(f"=== RPS/Latence + CPU[{args.cpu_stat}] [{args.scheme}] {app} (fichiers explicites) ===")
         plot_app(app_dir, app, args.scheme, cpu_stat=args.cpu_stat, van=van, pro=pro,
-                 rps_step=args.rps_step)
+                 rps_step=args.rps_step, cpu_scale=args.cpu_scale)
         return
 
     root = Path(args.results_dir).expanduser().resolve()
@@ -195,7 +215,8 @@ def main() -> None:
         if not app_dir.is_dir():
             print(f"  [skip] {app}: dossier absent")
             continue
-        plot_app(app_dir, app, args.scheme, cpu_stat=args.cpu_stat, rps_step=args.rps_step)
+        plot_app(app_dir, app, args.scheme, cpu_stat=args.cpu_stat, rps_step=args.rps_step,
+                 cpu_scale=args.cpu_scale)
 
 
 if __name__ == "__main__":
