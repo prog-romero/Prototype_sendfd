@@ -254,3 +254,99 @@ python3 benchmarks/micro/micro-bench3-keepalive-https-integration/evaluation/plo
     --title "HTTPS Keep-Alive Migration: Vanilla vs Prototype" \
     --out benchmarks/micro/micro-bench3-keepalive-https-integration/evaluation/plots/custom_comparison.png
 ```
+
+---
+
+## Scale-from-zero for the prototype — build, redeploy & test
+
+The prototype's fast path (peek + `sendfd`) hands `/function/<name>` requests to
+the container **before** the gateway router, so the OpenFaaS scale-from-zero
+middleware never ran for migrated requests → a stopped container was never
+restarted. The fix invokes the **same** `FunctionScaler` in the migrate loops
+just before handing off the fd (HTTP **and** HTTPS), and makes the provider
+**re-resolve the container IP** if the watchdog socket is dead (a restart gives a
+new IP). Two components change → **two rebuilds**:
+
+| Component | Files changed | Artifact to rebuild |
+|---|---|---|
+| Gateway | `faas/gateway/httpmigrate/{scale,loop,loop_https}.go`, `faas/gateway/main.go` | image `romerosdd/gateway-https:latest` |
+| faasd provider | `faasd/pkg/provider/handlers/migrate_dispatch.go` | the `faasd` binary (arm64) |
+
+### 1. Build & push the gateway image (dev machine, from the repo ROOT)
+
+```bash
+cd <repo-root>
+docker buildx build --platform linux/arm64 \
+  -f benchmarks/micro/micro-bench3-keepalive-https-integration/faas/gateway/Dockerfile \
+  -t romerosdd/gateway-https:latest --push .
+```
+
+### 2. Build the faasd binary for the Pi (arm64) and copy it over
+
+```bash
+cd <repo-root>/benchmarks/micro/micro-bench3-keepalive-https-integration/faasd
+make dist                    # produces bin/faasd (amd64) AND bin/faasd-arm64
+# (fallback if make dist fails: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -mod=vendor -o bin/faasd-arm64)
+ls -la bin/faasd-arm64
+scp bin/faasd-arm64 romero@192.168.2.2:/tmp/faasd-new
+```
+
+### 3. Redeploy on the Pi
+
+```bash
+# a) install the new faasd binary (contains the provider migrate_dispatch fix)
+sudo systemctl stop faasd-provider faasd
+sudo install -m 0755 /tmp/faasd-new /usr/local/bin/faasd
+
+# b) force a fresh pull of the new gateway image (faasd caches :latest)
+sudo ctr -n openfaas image rm docker.io/romerosdd/gateway-https:latest 2>/dev/null || true
+
+# c) REQUIRED: the gateway must have scale_from_zero=true (else the fix is inactive)
+grep -n "scale_from_zero" /var/lib/faasd/docker-compose.yaml \
+  || echo ">>> ADD  '- scale_from_zero=true'  to the gateway service env <<<"
+# and be in prototype mode
+sudo grep -i "HTTPMIGRATE_ENABLE\|HTTPS_ENABLE" /var/lib/faasd/docker-compose.yaml
+
+# d) start faasd (recreates the gateway from the fresh image) then the provider
+sudo systemctl start faasd
+sleep 20
+sudo systemctl start faasd-provider
+faas-cli list
+```
+
+### 4. Test: kill a running container and check it restarts on a request
+
+```bash
+FN=graph-pagerank        # any deployed prototype (full-proxy) function
+
+# 1) confirm it is running
+sudo ctr -n openfaas-fn task ls | grep "^$FN "
+
+# 2) KILL the task — it goes STOPPED and, on its own, is NEVER restarted
+sudo ctr -n openfaas-fn task kill -s SIGKILL "$FN"
+sleep 2
+sudo ctr -n openfaas-fn task ls | grep "^$FN "        # expect: STOPPED
+
+# 3) send ONE request via the migrated HTTPS path (8443)
+curl -sk -m 30 -w "\nHTTP=%{http_code}\n" -X POST -H "Content-Type: application/json" \
+  --data '{"size":510,"seed":42}' https://192.168.2.2:8443/function/"$FN"
+
+# 4) it should now be RUNNING again with a NEW PID -> the fix worked
+sudo ctr -n openfaas-fn task ls | grep "^$FN "        # expect: RUNNING
+
+# 5) confirm the scaler fired in the gateway logs
+sudo journalctl -t openfaas:gateway -n 300 --no-pager | grep -iE "Scale.*$FN|Ready.*$FN"
+```
+
+Expected logs: `[Scale 0/20] function=graph-pagerank 0 => 1 requested` then
+`[Ready] function=graph-pagerank waited for - <t>s`. **Before** the fix, step 3
+returned `HTTP=000` and the task stayed `STOPPED`. The same test works on the
+plain-HTTP path (port `8080`).
+
+> **Known limitation (by design):** this restores scale-from-zero only for the
+> **first request of each connection** (the one that triggers migration). Once the
+> fd is migrated, keep-alive requests flow directly between client and container
+> and bypass the gateway, so a container that dies **mid-session** is not
+> auto-recovered until the client opens a **new** connection — inherent to the
+> `sendfd` data path.
+

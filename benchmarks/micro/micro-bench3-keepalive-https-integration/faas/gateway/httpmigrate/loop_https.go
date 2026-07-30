@@ -69,7 +69,7 @@ func RunVanillaHTTPS(
 	handler http.Handler,
 	skipTop1 bool,
 ) error {
-	gtwCtx, err :=  (certFile, keyFile)
+	gtwCtx, err := NewWolfSSLGtwCtx(certFile, keyFile)
 	if err != nil {
 		return fmt.Errorf("[vanilla-https] wolfSSL init: %w", err)
 	}
@@ -126,7 +126,9 @@ func RunVanillaHTTPS(
 		go func(lfd int) {
 			defer wg.Done()
 			defer syscall.Close(lfd)
-			if err := runEpollLoop(gtwCtx, lfd, -1, "", chanLis, "", nil, skipTop1, true); err != nil {
+			// vanilla path never migrates, so no scale callback (nil): the
+			// standard http.Server router applies scale-from-zero itself.
+			if err := runEpollLoop(gtwCtx, lfd, -1, "", chanLis, "", nil, skipTop1, true, nil); err != nil {
 				log.Printf("[vanilla-https] epoll loop error: %v\n", err)
 			}
 		}(lfd)
@@ -154,6 +156,7 @@ func RunLoopHTTPS(
 	providerURL string,
 	notifier CompletionNotifier,
 	skipTop1 bool,
+	scaleFn ScaleFunc,
 ) error {
 	if err := os.MkdirAll(SocketDir, 0o777); err != nil {
 		log.Printf("[httpmigrate-https] warning: mkdir %s: %v\n", SocketDir, err)
@@ -206,7 +209,7 @@ func RunLoopHTTPS(
 		go func(lfd int) {
 			defer wg.Done()
 			defer syscall.Close(lfd)
-			if err := runEpollLoop(gtwCtx, lfd, -1, "", chanLis, providerURL, notifier, skipTop1, false); err != nil {
+			if err := runEpollLoop(gtwCtx, lfd, -1, "", chanLis, providerURL, notifier, skipTop1, false, scaleFn); err != nil {
 				log.Printf("[httpmigrate-https] epoll loop error: %v\n", err)
 			}
 		}(lfd)
@@ -243,6 +246,7 @@ func runEpollLoop(
 	notifier CompletionNotifier,
 	skipTop1 bool,
 	vanillaMode bool,
+	scaleFn ScaleFunc, // scale-from-zero before migration (prototype only; nil in vanilla)
 ) error {
 	epollFD, err := syscall.EpollCreate1(0)
 	if err != nil {
@@ -449,6 +453,20 @@ func runEpollLoop(
 					copy(serial, peekBuf[:int(cSerialSz)])
 					payload := NewPayloadHTTPS(top1Val, fnName, serial)
 					go func(rfd int, fn string, pl *KAPayloadHTTPS) {
+						// Scale-from-zero BEFORE migrating, inside this goroutine so
+						// the (blocking) scaler never stalls the epoll worker. The
+						// migrate path bypasses the router's scale-from-zero, so we
+						// invoke the same scaler here. Skipped if scaleFn is nil.
+						// Unlike the HTTP path, rfd carries a live wolfSSL session
+						// (already detached), so on failure we can only close it —
+						// a plaintext error write would be garbage to the client.
+						if scaleFn != nil {
+							if err := scaleFn(fn); err != nil {
+								log.Printf("[epoll-https] scale-from-zero FAILED fn=%s: %v\n", fn, err)
+								_ = syscall.Close(rfd)
+								return
+							}
+						}
 						if err := dispatchMigrateHTTPS(rfd, fn, pl, providerURL, notifier); err != nil {
 							log.Printf("[epoll-https] dispatch FAILED fn=%s: %v\n", fn, err)
 							_ = syscall.Close(rfd)

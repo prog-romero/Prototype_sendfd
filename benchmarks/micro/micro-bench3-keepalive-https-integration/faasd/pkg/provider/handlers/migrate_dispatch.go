@@ -170,8 +170,24 @@ func handleMigrate(connFD int, client *containerd.Client, hostSocketDir string) 
 	wdPath := filepath.Join(hostSocketDir, ip+".sock")
 	wdFD, err := connectSeqpacket(wdPath)
 	if err != nil {
-		log.Printf("[migrate] connect watchdog %s (fn=%s): %v\n", wdPath, targetFn, err)
-		return
+		// The cached IP may be stale. A scale-from-zero restart DELETES the
+		// stopped task and recreates it with a NEW IP (and a new <ip>.sock),
+		// while the 5-minute IP cache still holds the old, now-dead socket. Drop
+		// the cache entry, re-resolve once against containerd/CNI, and retry so
+		// the migrated fd reaches the live container instead of the dead socket.
+		log.Printf("[migrate] connect watchdog %s (fn=%s): %v — re-resolving IP\n", wdPath, targetFn, err)
+		invalidateFunctionIP(targetFn)
+		ip, err = resolveFunctionIP(client, targetFn)
+		if err != nil {
+			log.Printf("[migrate] re-resolve IP fn=%s: %v\n", targetFn, err)
+			return
+		}
+		wdPath = filepath.Join(hostSocketDir, ip+".sock")
+		wdFD, err = connectSeqpacket(wdPath)
+		if err != nil {
+			log.Printf("[migrate] connect watchdog after re-resolve %s (fn=%s): %v\n", wdPath, targetFn, err)
+			return
+		}
 	}
 	defer syscall.Close(wdFD)
 
@@ -240,6 +256,16 @@ func parseMigrateTarget(buf []byte, n int) string {
 
 // resolveFunctionIP returns the CNI IP of a running function container, using a
 // short-lived cache to avoid hitting containerd on every request.
+// invalidateFunctionIP drops the cached IP for name so the next resolveFunctionIP
+// queries containerd/CNI afresh. Called after a failed connect to the watchdog
+// socket, which usually means the container was restarted (scale-from-zero) with
+// a new IP while the 5-minute cache still held the old one.
+func invalidateFunctionIP(name string) {
+	migrateIPMu.Lock()
+	delete(migrateIPCache, name)
+	migrateIPMu.Unlock()
+}
+
 func resolveFunctionIP(client *containerd.Client, name string) (string, error) {
 	migrateIPMu.RLock()
 	entry, ok := migrateIPCache[name]

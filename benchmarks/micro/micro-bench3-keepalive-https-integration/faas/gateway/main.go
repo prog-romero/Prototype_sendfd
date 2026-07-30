@@ -148,10 +148,35 @@ func main() {
 
 	functionProxy := faasHandlers.Proxy
 
+	// migrateScaleFunc restores scale-from-zero for the prototype (sendfd) fast
+	// path. That path intercepts /function/ requests in RunLoop/RunLoopHTTPS
+	// BEFORE the router below, so the router's MakeScalingHandler never runs for
+	// migrated requests. It stays nil (no-op) when scale_from_zero is disabled.
+	var migrateScaleFunc httpmigrate.ScaleFunc
+
 	if config.ScaleFromZero {
 		scalingFunctionCache := scaling.NewFunctionCache(scalingConfig.CacheExpiry)
 		scaler := scaling.NewFunctionScaler(scalingConfig, scalingFunctionCache)
 		functionProxy = handlers.MakeScalingHandler(functionProxy, scaler, scalingConfig, config.Namespace)
+
+		// Expose the SAME scaler to the migrate loops so a migrated request also
+		// scales its target from zero (and waits until ready) before its fd is
+		// handed to the container — vanilla-equivalent behaviour for the first
+		// request of each connection.
+		migrateScaleFunc = func(fullName string) error {
+			functionName, namespace := middleware.GetNamespace(config.Namespace, fullName)
+			res := scaler.Scale(functionName, namespace)
+			if !res.Found {
+				return fmt.Errorf("function not found: %s.%s", functionName, namespace)
+			}
+			if res.Error != nil {
+				return fmt.Errorf("scale failed for %s.%s: %w", functionName, namespace, res.Error)
+			}
+			if !res.Available {
+				return fmt.Errorf("function not ready after scale: %s.%s", functionName, namespace)
+			}
+			return nil
+		}
 	}
 
 	if config.UseNATS() {
@@ -328,10 +353,10 @@ func main() {
 				}
 			}()
 			log.Printf("[main] Prototype HTTPS mode: RunLoopHTTPS on :%d (SUM_PROD=%v)\n", tlsPort, sumProd)
-			log.Fatal(httpmigrate.RunLoopHTTPS(tlsPort, certFile, keyFile, r, config.FunctionsProviderURL.String(), completionNotifier, sumProd))
+			log.Fatal(httpmigrate.RunLoopHTTPS(tlsPort, certFile, keyFile, r, config.FunctionsProviderURL.String(), completionNotifier, sumProd, migrateScaleFunc))
 		} else {
 			log.Printf("[main] Prototype HTTP mode: RunLoop on :%d (SUM_PROD=%v)\n", tcpPort, sumProd)
-			log.Fatal(httpmigrate.RunLoop(tcpPort, r, config.FunctionsProviderURL.String(), completionNotifier))
+			log.Fatal(httpmigrate.RunLoop(tcpPort, r, config.FunctionsProviderURL.String(), completionNotifier, migrateScaleFunc))
 		}
 	} else if httpsEnable {
 		// ── VANILLA HTTPS MODE ──────────────────────────────────────────────

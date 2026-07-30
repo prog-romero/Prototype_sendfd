@@ -49,9 +49,11 @@ func getMonotonicNs() uint64 {
 // handler is typically the gorilla/mux router from main.go.
 // providerURL is the URL of the faasd provider (e.g. "http://faasd:8081").
 // notifier is called for Prometheus metrics when a function completes.
+// scaleFn (may be nil) performs scale-from-zero for a migrated function before
+// its fd is handed to the container, mirroring the vanilla router path.
 //
 // RunLoop blocks indefinitely.
-func RunLoop(tcpPort int, handler http.Handler, providerURL string, notifier CompletionNotifier) error {
+func RunLoop(tcpPort int, handler http.Handler, providerURL string, notifier CompletionNotifier, scaleFn ScaleFunc) error {
 	// Ensure the shared socket directory exists on the host (bind-mounted
 	// into containers at /run/tlsmigrate).
 	if err := os.MkdirAll(SocketDir, 0o777); err != nil {
@@ -119,14 +121,14 @@ func RunLoop(tcpPort int, handler http.Handler, providerURL string, notifier Com
 			}
 			return fmt.Errorf("accept: %w", acceptErr)
 		}
-		go handleConn(connFD, chanLis, providerURL, notifier)
+		go handleConn(connFD, chanLis, providerURL, notifier, scaleFn)
 	}
 }
 
 // handleConn is spawned for each accepted raw fd.  It stamps top1_rdtsc
 // BEFORE the MSG_PEEK call (matching the convention in the existing bench
 // and the function worker's keepalive loop).
-func handleConn(connFD int, chanLis *ChanListener, providerURL string, notifier CompletionNotifier) {
+func handleConn(connFD int, chanLis *ChanListener, providerURL string, notifier CompletionNotifier, scaleFn ScaleFunc) {
 	// ── Stamp top1 just before peeking ────────────────────────────────────
 	top1Ns := getMonotonicNs()
 
@@ -141,6 +143,23 @@ func handleConn(connFD int, chanLis *ChanListener, providerURL string, notifier 
 	fnName := parseFunctionName(peekBuf[:n])
 
 	if fnName != "" {
+		// ── Scale-from-zero BEFORE migrating ──────────────────────────────
+		// The migrate path bypasses the gorilla/mux router where the vanilla
+		// scale-from-zero middleware lives, so we invoke the same scaler here
+		// (over scaleFn) to bring a 0-replica function up before handing off its
+		// fd. Only the connection's first request reaches this point; subsequent
+		// keep-alive requests go straight to the container. Skipped if scaleFn is
+		// nil (scale_from_zero disabled). The fd here is plaintext HTTP, so on
+		// failure we can return a proper 503 to the client.
+		if scaleFn != nil {
+			if err := scaleFn(fnName); err != nil {
+				log.Printf("[loop] scale-from-zero FAILED fn=%s connFD=%d: %v\n", fnName, connFD, err)
+				writeHTTPError(connFD, http.StatusServiceUnavailable, "function unavailable: "+err.Error())
+				_ = syscall.Close(connFD)
+				return
+			}
+		}
+
 		// ── Sendfd / migrate path ─────────────────────────────────────────
 		// [MICROBENCH] top1 (gateway) = timestamp stamped just before the peek
 		// above. It is logged DIRECTLY here; the watchdog logs top2 on its side,
