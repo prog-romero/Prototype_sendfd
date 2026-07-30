@@ -32,6 +32,11 @@ except ImportError:
     print("ERREUR: matplotlib + numpy requis (pip3 install matplotlib numpy)", file=sys.stderr)
     sys.exit(1)
 
+# Article style (font + figure size).
+plt.rcParams['figure.figsize'] = 12, 5
+plt.rcParams['font.size'] = 18
+plt.rcParams['font.family'] = 'Nimbus Roman'
+
 # Composantes (ordre = ordre des barres) + couleurs validées (skill dataviz,
 # validate_palette.js) : orange / aqua / bleu / gris. L'ordre a été choisi pour
 # que chaque paire adjacente passe les gates CVD ; le gris est le bucket « Other ».
@@ -43,10 +48,10 @@ COLORS = {
     "autres":    "#9e9e9e",   # gris neutre (le reste du CPU)
 }
 LABELS = {
-    "gateway":   "gateway",
-    "faasd":     "faasd",
-    "container": "container (fwatchdog + fonction)",
-    "autres":    "autres",
+    "gateway":   "Gateway",
+    "faasd":     "FaaS Provider",
+    "container": "Container",
+    "autres":    "Others",
 }
 # Dossier runtime -> libellé affiché.
 RUNTIME_LABELS = {"sum-c": "C", "sum-js": "JS", "sum-python": "Python"}
@@ -99,7 +104,7 @@ def main() -> None:
                     help="dossiers runtime, séparés par des virgules (ordre d'affichage)")
     ap.add_argument("--min-rate", type=float, default=0.0,
                     help="ne moyenne que les débits >= min-rate (déf 0 = tous)")
-    ap.add_argument("--out", default="results/bars.png")
+    ap.add_argument("--out", default="results/bars.pdf")
     args = ap.parse_args()
 
     base = Path(args.results_dir)
@@ -117,33 +122,39 @@ def main() -> None:
         sys.exit(1)
 
     # ── figure ────────────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(2.6 + 2.3 * len(runtimes), 6.2))
+    fig, ax = plt.subplots()                           # figure size from rcParams (12, 5)
     x = np.arange(len(runtimes))
     n = len(COMPONENTS)
-    width = 0.78 / n                                   # largeur d'une barre
-    bar_w = width * 0.88                               # léger écart entre barres (spacer)
+    width = 0.78 / n                                   # width of one bar
+    bar_w = width * 0.88                               # small gap between bars (spacer)
+
+    # y-axis is scaled to the LARGEST single component value (not a fixed 0-100),
+    # so the per-component differences are easy to read.
+    ymax = max(data[rt][comp] for rt in runtimes for comp in COMPONENTS)
 
     for i, comp in enumerate(COMPONENTS):
         offs = x + (i - (n - 1) / 2.0) * width
         vals = [data[rt][comp] for rt in runtimes]
         bars = ax.bar(offs, vals, bar_w, color=COLORS[comp], label=LABELS[comp],
                       edgecolor="white", linewidth=0.8, zorder=3)
-        # Label de valeur au-dessus de chaque barre (encodage secondaire + lisibilité).
+        # Value on top of each bar.
         for b, v in zip(bars, vals):
             if v >= 0.3:
-                ax.text(b.get_x() + b.get_width() / 2, v + 0.8, f"{v:.0f}",
-                        ha="center", va="bottom", fontsize=9, color="#0b0b0b")
+                ax.text(b.get_x() + b.get_width() / 2, v + ymax * 0.01, f"{v:.0f}",
+                        ha="center", va="bottom", fontsize=12, color="#0b0b0b")
 
-    # Total (~sar) au-dessus de chaque groupe.
+    # Global CPU (~sar total) per runtime, as a clean aligned row above the bars.
+    total_y = ymax * 1.10
     for xi, rt in zip(x, runtimes):
         tot = sum(data[rt].values())
-        ax.text(xi, max(sum(data[r].values()) for r in runtimes) + 6, f"total {tot:.0f} %",
-                ha="center", va="bottom", fontsize=10, fontweight="bold", color="#52514e")
+        ax.text(xi, total_y, f"{tot:.0f}%", ha="center", va="bottom",
+                fontsize=14, color="#52514e")
 
     ax.set_xticks(x)
-    ax.set_xticklabels([RUNTIME_LABELS.get(rt, rt) for rt in runtimes], fontsize=12, fontweight="bold")
-    ax.set_ylabel("CPU %", fontsize=11)
-    ax.set_ylim(0, 100)
+    ax.set_xticklabels([RUNTIME_LABELS.get(rt, rt) for rt in runtimes])
+    ax.set_xlabel("Programming Language")
+    ax.set_ylabel("CPU (%)")
+    ax.set_ylim(0, ymax * 1.22)                        # headroom for the value + total labels
     ax.set_axisbelow(True)
     ax.grid(axis="y", color="#e6e6e2", linewidth=1, zorder=0)
     for s in ("top", "right"):
@@ -153,17 +164,23 @@ def main() -> None:
     ax.tick_params(length=0)
 
     mode_lbl = "Vanilla" if args.mode == "vanilla" else "Prototype (sendfd)"
-    suffix = "" if args.min_rate <= 0 else f"  (débits ≥ {args.min_rate:g})"
-    ax.set_title(f"CPU par composant et par runtime — {mode_lbl}{suffix}",
-                 fontsize=14, fontweight="bold", pad=14)
+    suffix = "" if args.min_rate <= 0 else f"  (rate >= {args.min_rate:g})"
+    #ax.set_title(f"CPU per component and per runtime - {mode_lbl}{suffix}", pad=34)
 
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.09), ncol=2,
-              frameon=False, fontsize=10)
-    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    # Legend at the TOP (above the bars), horizontal, one entry per component.
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=len(COMPONENTS),
+              frameon=False, fontsize=14, columnspacing=1.2, handletextpad=0.5)
+    fig.tight_layout()
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=200, bbox_inches="tight")
+    # Vector PDF for the article (use --out ....pdf). Requested savefig call is
+    # kept verbatim; fancybox is a legend option (not a savefig one) and raises
+    # TypeError on recent matplotlib, so we fall back without it to never fail.
+    try:
+        plt.savefig(out, pad_inches=0, bbox_inches='tight', fancybox=True)
+    except TypeError:
+        plt.savefig(out, pad_inches=0, bbox_inches='tight')
     plt.close(fig)
     print(f"[ok] barres → {out}")
 
