@@ -1,0 +1,298 @@
+// Copyright (c) OpenFaaS Author(s) 2021. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+
+package executor
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+
+	"log"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	units "github.com/docker/go-units"
+	fhttputil "github.com/openfaas/faas-provider/httputil"
+	"golang.org/x/sys/unix"
+)
+
+// microbenchNowNs returns a monotonic timestamp in nanoseconds
+// (CLOCK_MONOTONIC_RAW). It is system-wide, so it is directly comparable with
+// the gateway's top1 (also CLOCK_MONOTONIC_RAW) on the same host.
+// [MICROBENCH] helper — used only for the migration-cost measurement.
+func microbenchNowNs() int64 {
+	var ts unix.Timespec
+	_ = unix.ClockGettime(unix.CLOCK_MONOTONIC_RAW, &ts)
+	return int64(ts.Sec)*1_000_000_000 + int64(ts.Nsec)
+}
+
+// HTTPFunctionRunner creates and maintains one process responsible for handling all calls
+type HTTPFunctionRunner struct {
+	ExecTimeout    time.Duration // ExecTimeout the maximum duration or an upstream function call
+	ReadTimeout    time.Duration // ReadTimeout for HTTP server
+	WriteTimeout   time.Duration // WriteTimeout for HTTP Server
+	Process        string        // Process to run as fprocess
+	ProcessArgs    []string      // ProcessArgs to pass to command
+	Command        *exec.Cmd
+	StdinPipe      io.WriteCloser
+	StdoutPipe     io.ReadCloser
+	Client         *http.Client
+	UpstreamURL    *url.URL
+	BufferHTTPBody bool
+	LogPrefix      bool
+	LogBufferSize  int
+	LogCallId      bool
+	ReverseProxy   *httputil.ReverseProxy
+}
+
+// Start forks the process used for processing incoming requests
+func (f *HTTPFunctionRunner) Start() error {
+	cmd := exec.Command(f.Process, f.ProcessArgs...)
+
+	var stdinErr error
+	var stdoutErr error
+
+	f.Command = cmd
+	f.StdinPipe, stdinErr = cmd.StdinPipe()
+	if stdinErr != nil {
+		return stdinErr
+	}
+
+	f.StdoutPipe, stdoutErr = cmd.StdoutPipe()
+	if stdoutErr != nil {
+		return stdoutErr
+	}
+
+	errPipe, _ := cmd.StderrPipe()
+
+	// Logs lines from stderr and stdout to the stderr and stdout of this process
+	bindLoggingPipe("stderr", errPipe, os.Stderr, f.LogPrefix, f.LogBufferSize)
+	bindLoggingPipe("stdout", f.StdoutPipe, os.Stdout, f.LogPrefix, f.LogBufferSize)
+
+	f.Client = makeProxyClient(f.ExecTimeout)
+
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGTERM)
+
+		<-sig
+		cmd.Process.Signal(syscall.SIGTERM)
+	}()
+
+	err := cmd.Start()
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			log.Fatalf("Forked function has terminated: %s", err.Error())
+		}
+	}()
+
+	return err
+}
+
+// Run a function with a long-running process with a HTTP protocol for communication
+func (f *HTTPFunctionRunner) Run(req FunctionRequest, contentLength int64, r *http.Request, w http.ResponseWriter) error {
+	startedTime := time.Now()
+
+	upstreamURL := f.UpstreamURL.String()
+
+	if len(r.RequestURI) > 0 {
+		upstreamURL += r.RequestURI
+	}
+
+	// Buffer the entire body into a *bytes.Reader so that http.NewRequest
+	// can detect the size and set ContentLength automatically.
+	// Without this, Go's transport uses Transfer-Encoding: chunked for any
+	// body that is a generic io.Reader, which breaks vanilla C function workers
+	// that use Content-Length to know how many body bytes to read.
+	var bodyReader io.Reader = http.NoBody
+	var bodyLen int64 = 0
+	if r.Body != nil {
+		data, readErr := io.ReadAll(r.Body)
+		if readErr == nil {
+			bodyReader = bytes.NewReader(data)
+			bodyLen = int64(len(data))
+		}
+	}
+
+	// [MICROBENCH] top2 = the watchdog has now read the ENTIRE request: the HTTP
+	// server parsed the request line + headers before Run() was called, and the
+	// io.ReadAll above has just fully drained the body. This is the vanilla
+	// equivalent of the prototype's top2 (stamped once the full request is framed
+	// in wd_bridge.c). We log a raw CLOCK_MONOTONIC_RAW timestamp; it is paired
+	// offline with the gateway's vanilla_top1_ns to compute migration_ns = top2 -
+	// top1. It fires for every request handled here; in the prototype it is
+	// redundant (wd_bridge.c already logs migration_ns) and is simply ignored by
+	// the collector, which detects the mode. Gated by HTTPMIGRATE_MICROBENCH so a
+	// throughput run pays no per-request journald cost.
+	if microbenchOn {
+		log.Printf("[MICROBENCH] vanilla_top2_ns=%d\n", microbenchNowNs())
+	}
+
+	request, err := http.NewRequest(r.Method, upstreamURL, bodyReader)
+	if err != nil {
+		return err
+	}
+	// *bytes.Reader: http.NewRequest sets ContentLength = int64(len(data)).
+	// Explicitly assign again as a safety net.
+	request.ContentLength = bodyLen
+
+	for h := range r.Header {
+		request.Header.Set(h, r.Header.Get(h))
+	}
+
+	request.Host = r.Host
+	copyHeaders(request.Header, &r.Header)
+
+	execTimeout := getTimeout(r, f.ExecTimeout)
+
+	var reqCtx context.Context
+	var cancel context.CancelFunc
+
+	if execTimeout.Nanoseconds() > 0 {
+		reqCtx, cancel = context.WithTimeout(r.Context(), execTimeout)
+	} else {
+		reqCtx = r.Context()
+		cancel = func() {
+		}
+	}
+	defer cancel()
+
+	if requiresStdlibProxy(r) {
+		ww := fhttputil.NewHttpWriteInterceptor(w)
+
+		f.ReverseProxy.ServeHTTP(w, r)
+		done := time.Since(startedTime)
+
+		log.Printf("%s %s - %d - Bytes: %s (%.4fs)", r.Method, r.RequestURI, ww.Status(), units.HumanSize(float64(ww.BytesWritten())), done.Seconds())
+	} else {
+
+		res, err := f.Client.Do(request.WithContext(reqCtx))
+		if err != nil {
+			log.Printf("Upstream HTTP request error: %s\n", err.Error())
+
+			// Error unrelated to context / deadline
+			if reqCtx.Err() == nil {
+				w.Header().Set("X-Duration-Seconds", fmt.Sprintf("%f", time.Since(startedTime).Seconds()))
+				w.Header().Add("X-OpenFaaS-Internal", "of-watchdog")
+
+				w.WriteHeader(http.StatusInternalServerError)
+
+				return nil
+			}
+
+			<-reqCtx.Done()
+
+			if reqCtx.Err() != nil {
+				// Error due to timeout / deadline
+				log.Printf("Upstream HTTP killed due to exec_timeout: %s\n", f.ExecTimeout)
+				w.Header().Set("X-Duration-Seconds", fmt.Sprintf("%f", time.Since(startedTime).Seconds()))
+				w.Header().Add("X-OpenFaaS-Internal", "of-watchdog")
+
+				w.WriteHeader(http.StatusGatewayTimeout)
+				return nil
+			}
+
+			w.Header().Set("X-Duration-Seconds", fmt.Sprintf("%f", time.Since(startedTime).Seconds()))
+			w.Header().Add("X-OpenFaaS-Internal", "of-watchdog")
+
+			w.WriteHeader(http.StatusInternalServerError)
+			return err
+		}
+
+		copyHeaders(w.Header(), &res.Header)
+		done := time.Since(startedTime)
+
+		w.Header().Set("X-Duration-Seconds", fmt.Sprintf("%f", done.Seconds()))
+
+		w.WriteHeader(res.StatusCode)
+		if res.Body != nil {
+			defer res.Body.Close()
+
+			if _, err := io.Copy(w, res.Body); err != nil {
+				log.Printf("Error copying response body: %s", err)
+			}
+		}
+
+		// Exclude logging for health check probes from the kubelet which can spam
+		// log collection systems.
+		if !strings.HasPrefix(r.UserAgent(), "kube-probe") {
+			if f.LogCallId {
+				callId := r.Header.Get("X-Call-Id")
+				if callId == "" {
+					callId = "none"
+				}
+
+				log.Printf("%s %s - %s - ContentLength: %s (%.4fs) [%s]", r.Method, r.RequestURI, res.Status, units.HumanSize(float64(res.ContentLength)), done.Seconds(), callId)
+			} else {
+				log.Printf("%s %s - %s - ContentLength: %s (%.4fs)", r.Method, r.RequestURI, res.Status, units.HumanSize(float64(res.ContentLength)), done.Seconds())
+			}
+		}
+	}
+
+	return nil
+}
+
+func getTimeout(r *http.Request, defaultTimeout time.Duration) time.Duration {
+	execTimeout := defaultTimeout
+	if v := r.Header.Get("X-Timeout"); len(v) > 0 {
+		dur, err := time.ParseDuration(v)
+		if err == nil {
+			if dur <= defaultTimeout {
+				execTimeout = dur
+			}
+		}
+	}
+
+	return execTimeout
+}
+
+func copyHeaders(destination http.Header, source *http.Header) {
+	for k, v := range *source {
+		vClone := make([]string, len(v))
+		copy(vClone, v)
+		(destination)[k] = vClone
+	}
+}
+
+func makeProxyClient(dialTimeout time.Duration) *http.Client {
+	proxyClient := http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   dialTimeout,
+				KeepAlive: 10 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   100,
+			DisableKeepAlives:     false,
+			IdleConnTimeout:       500 * time.Millisecond,
+			ExpectContinueTimeout: 1500 * time.Millisecond,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	return &proxyClient
+}
+
+// requiresStdlibProxy checks if the request should be proxied using the standard library reverse proxy.
+// Support SSE, NDSJON and WebSockets through the stdlib reverse proxy
+func requiresStdlibProxy(req *http.Request) bool {
+	acceptHeader := strings.ToLower(req.Header.Get("Accept"))
+
+	return strings.Contains(acceptHeader, "text/event-stream") ||
+		strings.Contains(acceptHeader, "application/x-ndjson") ||
+		req.Header.Get("Upgrade") == "websocket"
+}
