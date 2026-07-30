@@ -105,6 +105,8 @@ def main() -> None:
     ap.add_argument("--min-rate", type=float, default=0.0,
                     help="ne moyenne que les débits >= min-rate (déf 0 = tous)")
     ap.add_argument("--out", default="results/bars.pdf")
+    ap.add_argument("--format", choices=["png", "pdf", "both"], default=None,
+                    help="format de sortie : png, pdf, ou both (déf: déduit de l'extension de --out)")
     args = ap.parse_args()
 
     base = Path(args.results_dir)
@@ -174,15 +176,26 @@ def main() -> None:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    # Vector PDF for the article (use --out ....pdf). Requested savefig call is
-    # kept verbatim; fancybox is a legend option (not a savefig one) and raises
-    # TypeError on recent matplotlib, so we fall back without it to never fail.
-    try:
-        plt.savefig(out, pad_inches=0, bbox_inches='tight', fancybox=True)
-    except TypeError:
-        plt.savefig(out, pad_inches=0, bbox_inches='tight')
+    # Output format: --format wins (png / pdf / both); otherwise it is inferred
+    # from the extension of --out (so --out foo.png -> PNG, --out foo.pdf -> PDF).
+    if args.format == "both":
+        exts = [".png", ".pdf"]
+    elif args.format:
+        exts = ["." + args.format]
+    else:
+        exts = [out.suffix or ".pdf"]
+
+    for ext in exts:
+        dst = out.with_suffix(ext)
+        # Requested savefig call is kept verbatim; fancybox is a legend option
+        # (not a savefig one) and raises TypeError on recent matplotlib, so we
+        # fall back without it to never fail.
+        try:
+            plt.savefig(dst, pad_inches=0, bbox_inches='tight', fancybox=True)
+        except TypeError:
+            plt.savefig(dst, pad_inches=0, bbox_inches='tight')
+        print(f"[ok] barres → {dst}")
     plt.close(fig)
-    print(f"[ok] barres → {out}")
 
 
 if __name__ == "__main__":
