@@ -481,22 +481,23 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
 
     clear_nonblocking(fd);
 
+    uint64_t mb_de0 = now_ns();
     ssl = wolfSSL_new(s_wctx);
     if (!ssl) goto done;
     wolfSSL_set_fd(ssl, fd);
     /* [MICROBENCH] net TLS deserialization time = session restore (tls_import). */
-    uint64_t mb_de0 = now_ns();
     if (tlspeek_restore(ssl, &pl->serial) != 0) { wolfSSL_free(ssl); ssl = NULL; goto done; }
-    if (mb_enabled()) {
-        fprintf(stderr, "[MICROBENCH] tls_deserialize_ns=%llu\n",
-                (unsigned long long)(now_ns() - mb_de0));
-    }
     wolfSSL_set_fd(ssl, fd);
     /* The migrated session must not emit a NewSessionTicket (there is no session
      * resumption on this path): disabling it avoids interleaving a handshake
      * record before the response app-data. Must be set AFTER the import, which
      * restores options.noTicketTls13 from the exported state. */
     wolfSSL_no_ticket_TLSv13(ssl);
+    uint64_t mb_de1 = (unsigned long long)(now_ns() - mb_de0);
+
+    if (mb_enabled()) {
+        fprintf(stderr, "[MICROBENCH] tls_deserialize_ns=%llu\n", mb_de1 );
+    }
 
     for (;;) {
         /* [MICROBENCH] remember whether this iteration assembles the FIRST

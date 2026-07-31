@@ -39,6 +39,14 @@ import (
 // Connection header of the produced response so the keep-alive state stays
 // consistent between the client and the watchdog.
 func invokeBusinessLogic(handler http.Handler, reqBytes []byte, shouldClose bool) []byte {
+	// Graceful shutdown: the migrated connection is driven entirely by the
+	// full-proxy and no longer transits the gateway, so this is the only place
+	// that can tell the client the function is going away. Answer 503 and force
+	// the connection closed rather than serve business logic while draining.
+	if isShuttingDown() {
+		return errorResponseBytes(http.StatusServiceUnavailable, true)
+	}
+
 	req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(reqBytes)))
 	if err != nil {
 		return errorResponseBytes(http.StatusBadRequest, shouldClose)

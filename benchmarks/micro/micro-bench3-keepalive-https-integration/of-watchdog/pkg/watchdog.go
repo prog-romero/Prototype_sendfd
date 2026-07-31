@@ -28,7 +28,20 @@ import (
 
 var (
 	acceptingConnections int32
+
+	// shuttingDown is set to 1 once a shutdown signal (SIGINT/SIGTERM) or a
+	// cancelled context starts the graceful drain. It is polled by the full-proxy
+	// C bridge (see goIsShuttingDown in fullproxy_cgo.go) and short-circuits
+	// invokeBusinessLogic on the same path, so a migrated keep-alive connection —
+	// which no longer transits the gateway — is answered with 503 and closed
+	// instead of hanging until the peer gives up.
+	shuttingDown int32
 )
+
+// isShuttingDown reports whether the watchdog has started draining.
+func isShuttingDown() bool {
+	return atomic.LoadInt32(&shuttingDown) == 1
+}
 
 type Watchdog struct {
 	config      config.WatchdogConfig
@@ -162,16 +175,21 @@ func listenUntilShutdown(s *http.Server, shutdownCtx context.Context, healthchec
 	idleConnsClosed := make(chan struct{})
 	go func() {
 		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGTERM)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
 		reason := ""
 
 		select {
-		case <-sig:
-			reason = "SIGTERM"
+		case s := <-sig:
+			reason = s.String()
 		case <-shutdownCtx.Done():
 			reason = "Context cancelled"
 		}
+
+		// Enter draining. The full-proxy bridge polls this flag (goIsShuttingDown)
+		// so a migrated keep-alive connection is answered with 503 and closed; the
+		// net/http path below drains via markUnhealthy + s.Shutdown as before.
+		atomic.StoreInt32(&shuttingDown, 1)
 
 		log.Printf("%s: no new connections in %s\n", reason, healthcheckInterval.String())
 

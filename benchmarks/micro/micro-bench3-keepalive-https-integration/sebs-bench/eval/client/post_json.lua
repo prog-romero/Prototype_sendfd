@@ -49,6 +49,17 @@ if alt and alt ~= "" then
   end
 end
 
+-- Identifiant de "client" (thread wrk2) : attribué par setup() dans le thread
+-- principal via thread:set("tid", ...), puis lisible comme variable globale dans
+-- l'état Lua de chaque thread. Avec --concurrency == --threads, 1 client = 1 thread.
+local thread_counter = 0
+function setup(thread)
+  thread:set("tid", thread_counter)
+  thread_counter = thread_counter + 1
+end
+
+local nreq = 0   -- nb de réponses vues par CE thread (état Lua par thread)
+
 local rr = 0   -- compteur par thread (chaque thread wrk2 a son propre état Lua)
 request = function()
   if #alt_paths > 0 then
@@ -74,6 +85,18 @@ if perf_path and perf_path ~= "" then
 end
 
 response = function(status, headers, body)
+  -- Affiche le code HTTP retourné pour CHAQUE requête de CHAQUE client (thread).
+  nreq = nreq + 1
+  if status ~= 200 then
+    print(string.format("[client %s] req #%d -> HTTP %d", tostring(tid), nreq, status))
+    -- Affiche aussi les headers de la réponse reçue (nom: valeur).
+    if headers then
+      for k, v in pairs(headers) do
+        print(string.format("    %s: %s", tostring(k), tostring(v)))
+      end
+    end
+  end
+  --print(string.format("[client %s] req #%d -> HTTP %d", tostring(tid), nreq, status))
   if perf_file and status == 200 then
     local rt = string.match(body, '"results_time":%s*([%d%.]+)')
     if rt then

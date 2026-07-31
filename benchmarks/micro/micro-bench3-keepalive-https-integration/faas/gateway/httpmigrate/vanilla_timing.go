@@ -120,7 +120,7 @@ func observeVanillaConn(conn net.Conn) {
 	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 	n, err := unix.Poll(fds, 5000)
 	if err != nil || n <= 0 {
-		top1 := getMonotonicNs()
+		top1 := getMonotonicNs() 
 		storeVanillaTop1(remoteAddr, top1)
 		return
 	}

@@ -78,4 +78,18 @@ extern int goInvokeHandler(uintptr_t gohandle,
                            int should_close,
                            unsigned char **resp_out, int *resp_len_out);
 
+/*
+ * goIsShuttingDown — implemented in Go (see fullproxy_cgo.go).
+ *
+ * Returns 1 once the watchdog has received SIGINT/SIGTERM (or its context was
+ * cancelled) and entered the graceful drain, 0 otherwise.
+ *
+ * A migrated keep-alive connection is driven entirely by the bridge and no
+ * longer transits the gateway, so the bridge must notice the drain itself. It
+ * arms a receive timeout on the client FD; every poll interval the blocked read
+ * wakes, the driver calls this, and if it returns 1 it writes a 503 Service
+ * Unavailable and closes the connection.
+ */
+extern int goIsShuttingDown(void);
+
 #endif /* WD_BRIDGE_H */

@@ -223,8 +223,14 @@ def _run_wrk2(wrk2, lua, url, req_path, body_file, duration_s, timeout_s, thread
         actual_threads = conc
     cmd = [wrk2, f"-t{actual_threads}", f"-c{conc}", f"-d{duration_s}s", f"-R{rate}",
            "--timeout", f"{timeout_s}s", "--latency", "-s", lua, url]
-    #print(f"  running: {' '.join(cmd)}")
-    #print(f"  env: {env}")
+    wrk_vars = {k: env[k] for k in (
+        "WRK_BODY_FILE", "WRK_PATH", "WRK_PERF_FILE", "WRK_CONN_CLOSE", "WRK_ALT_PATHS",
+    ) if k in env}
+    print("  env WRK:")
+    for k, v in wrk_vars.items():
+        print(f"   export  {k} = {v}")
+
+    print(f"  running: {' '.join(cmd)}")
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, env=env,
                            timeout=duration_s + timeout_s + 40)

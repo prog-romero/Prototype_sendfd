@@ -467,6 +467,11 @@ int tlsgw_peek_and_export_nb(
 
     if (conn->pending_len > conn->pending_off) {
         /* Path A: leftover from a previous non-function call */
+        /* [MICROBENCH] top1 = the first request bytes are available at the gateway,
+         * BEFORE any peek/decrypt (here the plaintext is already buffered from a
+         * prior call). Stamped in every path so top1 marks data arrival, not the
+         * post-decrypt point — migration_ns then includes the gateway peek+export. */
+        if (!skip_top1 && top1_ns_out) *top1_ns_out = now_ns();
         plaintext     = (const uint8_t *)conn->pending_buf + conn->pending_off;
         plaintext_len = conn->pending_len - conn->pending_off;
         from_pending  = 1;
@@ -475,6 +480,8 @@ int tlsgw_peek_and_export_nb(
         /* Path B: wolfSSL pipelining — drain internal buffer.
          * wolfSSL_read() here does NOT consume TCP bytes; wolfSSL already
          * pulled them during accept().  Reserve one byte for NUL terminator. */
+        /* [MICROBENCH] top1 stamped BEFORE the wolfSSL_read decrypt below. */
+        if (!skip_top1 && top1_ns_out) *top1_ns_out = now_ns();
         int n = wolfSSL_read(conn->ssl, conn->pending_buf,
                              (int)sizeof(conn->pending_buf) - 1);
         if (n <= 0) {
@@ -508,6 +515,11 @@ int tlsgw_peek_and_export_nb(
             return -2;
         }
 
+        /* [MICROBENCH] top1 = first request bytes present in the gateway socket,
+         * stamped BEFORE tls_read_peek (the AEAD decrypt) so migration_ns
+         * (top2 - top1) includes the gateway peek/decrypt + export + sendfd. */
+        if (!skip_top1 && top1_ns_out) *top1_ns_out = now_ns();
+
         /* Stateless TLS decrypt via libtlspeek (MSG_PEEK — does not consume) */
         int peeked = tls_read_peek(&conn->peek_ctx, peek_buf,
                                    (int)sizeof(peek_buf) - 1);
@@ -525,9 +537,8 @@ int tlsgw_peek_and_export_nb(
         plaintext_len = peeked;
     }
 
-    /* ── Step 2: stamp top1 timestamp (earliest possible point) ─────────── */
-    if (!skip_top1 && top1_ns_out)
-        *top1_ns_out = now_ns();
+    /* ── Step 2: top1 already stamped ABOVE, before the peek/decrypt in each of
+     * paths A/B/C (first request bytes present at the gateway). ─────────────── */
 
     /* ── Step 3: parse /function/<name> from the HTTP request line ───────── */
     if (!parse_fn_name(plaintext, (size_t)plaintext_len, fn_name_out, fn_name_sz)) {

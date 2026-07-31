@@ -107,6 +107,7 @@ functions:
       http_port: "8085"
       GUNICORN_WORKERS: "4"
       HTTPMIGRATE_ENABLE: "1"
+      HTTPMIGRATE_MICROBENCH: "1"
       SENDFD_ENABLE: "1"
       sendfd_enable: "1"
       SENDFD_FULL_PROXY: "1"

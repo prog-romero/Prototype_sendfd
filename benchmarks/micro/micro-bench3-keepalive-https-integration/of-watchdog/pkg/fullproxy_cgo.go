@@ -99,3 +99,17 @@ func goInvokeHandler(gohandle C.uintptr_t,
 	*respLenOut = C.int(len(resp))
 	return 0
 }
+
+// goIsShuttingDown lets the C bridge poll the watchdog's drain state. It returns
+// 1 once a shutdown signal (SIGINT/SIGTERM) or a cancelled context has started
+// draining, 0 otherwise. The bridge arms a recv timeout on the migrated client
+// FD so an idle keep-alive connection wakes periodically and calls this, then
+// answers 503 and closes instead of blocking forever on a dead-end connection.
+//
+//export goIsShuttingDown
+func goIsShuttingDown() C.int {
+	if isShuttingDown() {
+		return 1
+	}
+	return 0
+}

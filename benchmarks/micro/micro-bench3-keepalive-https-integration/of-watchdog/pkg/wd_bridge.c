@@ -168,6 +168,85 @@ static void clear_nonblocking(int fd)
         (void)fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
 }
 
+/* ── Graceful-shutdown support ───────────────────────────────────────────────
+ *
+ * On SIGINT/SIGTERM the Go watchdog sets a global drain flag (goIsShuttingDown).
+ * A migrated keep-alive connection is driven entirely here and no longer transits
+ * the gateway, so the bridge itself must notice the drain and answer 503.
+ *
+ * The catch: an idle keep-alive connection is blocked inside recv() (HTTP) or
+ * tls_read_peek()/wolfSSL_read() (HTTPS) waiting for the next request, so it never
+ * re-checks the flag. We therefore arm a receive timeout (SO_RCVTIMEO) on the
+ * client FD: every WD_DRAIN_POLL_MS the blocked read returns EAGAIN / WANT_READ,
+ * the driver re-checks goIsShuttingDown() and either keeps waiting (idle, not
+ * draining) or writes 503 and closes (draining). The timeout never drops a request
+ * in flight — a slow read simply retries — it only bounds how long an idle
+ * connection can ignore the drain. */
+#define WD_DRAIN_POLL_MS 1000
+
+/* Graceful-drain response (SIGINT/SIGTERM): 503, empty body (Content-Length: 0). */
+static const char WD_503_RESPONSE[] =
+    "HTTP/1.1 500 Service Unavailable\r\n"
+    "Content-Length: 0\r\n"
+    "Connection: close\r\n"
+    "\r\n";
+
+/* Error response: ANY watchdog failure while handling a migrated request answers
+ * 500 Internal Server Error with an empty body (Content-Length: 0), instead of
+ * silently dropping the connection. */
+static const char WD_500_RESPONSE[] =
+    "HTTP/1.1 500 Internal Server Error\r\n"
+    "Content-Length: 0\r\n"
+    "Connection: close\r\n"
+    "\r\n";
+
+/* arm_drain_timeout — make blocking reads on fd wake every WD_DRAIN_POLL_MS so
+ * the driver can poll the shutdown flag even on an otherwise idle connection. */
+static void arm_drain_timeout(int fd)
+{
+    struct timeval tv;
+    tv.tv_sec = WD_DRAIN_POLL_MS / 1000;
+    tv.tv_usec = (WD_DRAIN_POLL_MS % 1000) * 1000;
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+}
+
+/* wd_send_raw — best-effort write of a fixed response; the caller then closes.
+ * ssl != NULL selects the TLS path (wolfSSL_write); otherwise a raw send(). */
+static void wd_send_raw(int fd, WOLFSSL *ssl, const char *resp, size_t n)
+{
+    if (ssl) {
+        (void)wolfSSL_write(ssl, resp, (int)n);
+        return;
+    }
+    size_t off = 0;
+    while (off < n) {
+        ssize_t w = send(fd, resp + off, n - off, 0);
+        if (w <= 0) break;
+        off += (size_t)w;
+    }
+}
+
+/* wd_send_503 — graceful-drain response (see WD_503_RESPONSE). */
+static void wd_send_503(int fd, WOLFSSL *ssl)
+{
+    wd_send_raw(fd, ssl, WD_503_RESPONSE, sizeof(WD_503_RESPONSE) - 1);
+}
+
+/* wd_send_500 — error response (see WD_500_RESPONSE). On the HTTPS path `ssl`
+ * MUST be a restored, usable session; before the session is up (wolfSSL_new /
+ * tlspeek_restore failure) no encrypted 500 can be sent, so those sites just
+ * close. */
+static void wd_send_500(int fd, WOLFSSL *ssl)
+{
+    wd_send_raw(fd, ssl, WD_500_RESPONSE, sizeof(WD_500_RESPONSE) - 1);
+}
+
+/* is_timeout_errno — the SO_RCVTIMEO fired (idle), not a hard error. */
+static int is_timeout_errno(int e)
+{
+    return e == EAGAIN || e == EWOULDBLOCK || e == EINTR;
+}
+
 static ssize_t find_subseq(const unsigned char *b, size_t l, const char *n)
 {
     size_t nl = strlen(n);
@@ -371,17 +450,36 @@ static void serve_http_conn(int fd, int pipe_fd, const char *own,
                             const char *relay_sock, uintptr_t h)
 {
     clear_nonblocking(fd);
+    arm_drain_timeout(fd);   /* wake idle keep-alive reads to poll the drain flag */
     unsigned char *buf = NULL;
     size_t cap = 0;
+    int first = 1;           /* 1 while this iteration assembles the FIRST (migrated)
+                                request, so proto_top2 is stamped exactly once. */
 
     for (;;) {
+        /* [MICROBENCH] remember whether this iteration reads the FIRST request. */
+        int mb_is_first = first;
+
+        /* Poll the drain flag at the start of every request: if a shutdown began
+         * while data was already buffered, answer 503 before serving it. */
+        if (goIsShuttingDown()) { wd_send_503(fd, NULL); goto done; }
+
         /* 1. Peek the first line to decide handle-vs-relay (no consume). */
         /* Owner detection only: we just need the request line
          * "<METHOD> /function/<name> ..." -> 256 bytes is plenty. The full
          * request is read separately below (framing loop), not from this peek. */
         unsigned char peek[256];
         ssize_t pn = recv(fd, peek, sizeof(peek) - 1, MSG_PEEK);
-        if (pn <= 0) break;
+        if (pn <= 0) {
+            /* The recv timeout fires here on an idle keep-alive connection: if we
+             * are draining, 503 and close; otherwise keep waiting for the next
+             * request. Any other pn <= 0 is peer-close or a hard error. */
+            if (pn < 0 && is_timeout_errno(errno)) {
+                if (goIsShuttingDown()) { wd_send_503(fd, NULL); goto done; }
+                continue;
+            }
+            break;
+        }
         peek[pn] = '\0';
         if (memchr(peek, '\n', (size_t)pn)) {
             char owner[HTTPMIGRATE_TARGET_LEN];
@@ -399,22 +497,34 @@ static void serve_http_conn(int fd, int pipe_fd, const char *own,
         for (int tries = 0; tries < 4000; tries++) {
             unsigned char tmp[16384];
             ssize_t tn = recv(fd, tmp, sizeof(tmp), MSG_PEEK);
-            if (tn <= 0) goto done;
+            if (tn <= 0) {
+                if (tn < 0 && is_timeout_errno(errno)) {
+                    if (goIsShuttingDown()) { wd_send_503(fd, NULL); goto done; }
+                    continue;   /* slow client mid-headers: keep peeking */
+                }
+                wd_send_500(fd, NULL); goto done;
+            }
             size_t sep = 4;
             ssize_t e = find_subseq(tmp, (size_t)tn, "\r\n\r\n");
             if (e < 0) { e = find_subseq(tmp, (size_t)tn, "\n\n"); sep = 2; }
             if (e >= 0) { hdr_sz = (size_t)e + sep; found = 1; break; }
-            if ((size_t)tn >= sizeof(tmp)) goto done; /* header too large */
+            if ((size_t)tn >= sizeof(tmp)) { wd_send_500(fd, NULL); goto done; } /* header too large */
             usleep(500);
         }
-        if (!found) goto done;
+        if (!found) { wd_send_500(fd, NULL); goto done; }
 
         /* 3. Drain EXACTLY the headers (leave the next request untouched). */
-        if (ensure_cap(&buf, &cap, hdr_sz + 1) != 0) goto done;
+        if (ensure_cap(&buf, &cap, hdr_sz + 1) != 0) { wd_send_500(fd, NULL); goto done; }
         size_t got = 0;
         while (got < hdr_sz) {
             ssize_t n = recv(fd, buf + got, hdr_sz - got, 0);
-            if (n <= 0) goto done;
+            if (n <= 0) {
+                if (n < 0 && is_timeout_errno(errno)) {
+                    if (goIsShuttingDown()) { wd_send_503(fd, NULL); goto done; }
+                    continue;   /* slow client: resume draining headers */
+                }
+                wd_send_500(fd, NULL); goto done;
+            }
             got += (size_t)n;
         }
         buf[hdr_sz] = '\0';
@@ -424,24 +534,41 @@ static void serve_http_conn(int fd, int pipe_fd, const char *own,
         int sc = has_close((const char *)buf, hdr_sz);
 
         /* 4. Drain EXACTLY the body. */
-        if (ensure_cap(&buf, &cap, hdr_sz + body + 1) != 0) goto done;
+        if (ensure_cap(&buf, &cap, hdr_sz + body + 1) != 0) { wd_send_500(fd, NULL); goto done; }
         size_t bgot = 0;
         while (bgot < body) {
             ssize_t n = recv(fd, buf + hdr_sz + bgot, body - bgot, 0);
-            if (n <= 0) goto done;
+            if (n <= 0) {
+                if (n < 0 && is_timeout_errno(errno)) {
+                    if (goIsShuttingDown()) { wd_send_503(fd, NULL); goto done; }
+                    continue;   /* slow client: resume draining body */
+                }
+                wd_send_500(fd, NULL); goto done;
+            }
             bgot += (size_t)n;
         }
         size_t req_sz = hdr_sz + body;
         buf[req_sz] = '\0';
 
+        /* [MICROBENCH] top2 (watchdog) = the FIRST migrated request has been fully
+         * read (headers + body). Mirrors the HTTPS driver so migration_ns =
+         * top2 - top1 is available in HTTP mode too (the gateway HTTP path stamps
+         * proto_top1 in loop.go). */
+        if (mb_is_first) {
+            first = 0;
+            if (mb_enabled())
+                fprintf(stderr, "[MICROBENCH] proto_top2_ns=%llu\n",
+                        (unsigned long long)now_ns());
+        }
+
         /* 5. Business logic in Go, then write the response directly. */
         unsigned char *resp = NULL;
         int resp_len = 0;
-        if (goInvokeHandler(h, buf, (int)req_sz, sc, &resp, &resp_len) != 0) goto done;
+        if (goInvokeHandler(h, buf, (int)req_sz, sc, &resp, &resp_len) != 0) { wd_send_500(fd, NULL); goto done; }
         size_t off = 0;
         while (off < (size_t)resp_len) {
             ssize_t n = send(fd, resp + off, (size_t)resp_len - off, 0);
-            if (n <= 0) { free(resp); goto done; }
+            if (n <= 0) { free(resp); wd_send_500(fd, NULL); goto done; }
             off += (size_t)n;
         }
         free(resp);
@@ -480,25 +607,35 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
                                connection can never busy-loop a CPU forever */
 
     clear_nonblocking(fd);
+    arm_drain_timeout(fd);   /* wake idle keep-alive reads to poll the drain flag */
 
+    /* [MICROBENCH] net TLS deserialization = the FULL rebuild of the TLS session
+     * so the watchdog gains complete control of it: per-connection session-object
+     * creation (wolfSSL_new), fd binding, session-state import (tlspeek_restore)
+     * and the post-import fixups. Stamped BEFORE wolfSSL_new and logged AFTER the
+     * session is fully restored and ready — the context-creation cost is now
+     * included (previously it was not). */
+    uint64_t mb_de0 = now_ns();
     ssl = wolfSSL_new(s_wctx);
     if (!ssl) goto done;
     wolfSSL_set_fd(ssl, fd);
-    /* [MICROBENCH] net TLS deserialization time = session restore (tls_import). */
-    uint64_t mb_de0 = now_ns();
     if (tlspeek_restore(ssl, &pl->serial) != 0) { wolfSSL_free(ssl); ssl = NULL; goto done; }
-    if (mb_enabled()) {
-        fprintf(stderr, "[MICROBENCH] tls_deserialize_ns=%llu\n",
-                (unsigned long long)(now_ns() - mb_de0));
-    }
     wolfSSL_set_fd(ssl, fd);
     /* The migrated session must not emit a NewSessionTicket (there is no session
      * resumption on this path): disabling it avoids interleaving a handshake
      * record before the response app-data. Must be set AFTER the import, which
      * restores options.noTicketTls13 from the exported state. */
     wolfSSL_no_ticket_TLSv13(ssl);
+    if (mb_enabled()) {
+        fprintf(stderr, "[MICROBENCH] tls_deserialize_ns=%llu\n",
+                (unsigned long long)(now_ns() - mb_de0));
+    }
 
     for (;;) {
+        /* Poll the drain flag at the start of every request: if a shutdown began
+         * while data was already buffered, answer 503 (over TLS) before serving. */
+        if (goIsShuttingDown()) { wd_send_503(fd, ssl); goto done; }
+
         /* [MICROBENCH] remember whether this iteration assembles the FIRST
          * (migrated) request, so we can stamp top2 once it is fully read. */
         int mb_is_first = first;
@@ -507,7 +644,7 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
             if (first && pl->serial.request_len > 0) {
                 /* Replay the request the gateway consumed during the handshake. */
                 size_t pre = (size_t)pl->serial.request_len;
-                if (ensure_cap(&buf, &cap, pre + 1) != 0) goto done;
+                if (ensure_cap(&buf, &cap, pre + 1) != 0) { wd_send_500(fd, ssl); goto done; }
                 memcpy(buf, pl->serial.http_request, pre);
                 len = pre;
                 buf[len] = '\0';
@@ -518,7 +655,7 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
                  * exactly like the C worker's WS_READ_REQ initial state. */
             } else {
                 tlspeek_ctx_t pctx;
-                if (tlspeek_restore_peek_ctx(&pctx, fd, &pl->serial) != 0) goto done;
+                if (tlspeek_restore_peek_ctx(&pctx, fd, &pl->serial) != 0) { wd_send_500(fd, ssl); goto done; }
                 /* Owner detection only: the decrypted HTTP request line is enough
                  * to read /function/<name>, so a 256-byte output buffer suffices.
                  *
@@ -532,26 +669,38 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
                  * this peek is used for routing only. */
                 uint8_t peek[256];
                 int pn = tls_read_peek(&pctx, peek, sizeof(peek) - 1);
+                int peek_errno = errno;   /* capture before tlspeek_free clobbers it */
                 tlspeek_free(&pctx);
-                if (pn < 0) goto done;
+                if (pn < 0) {
+                    /* On an idle keep-alive connection the recv timeout fires here:
+                     * 503 and close if draining, otherwise keep waiting. Any other
+                     * negative return is a hard error. */
+                    if (is_timeout_errno(peek_errno)) {
+                        if (goIsShuttingDown()) { wd_send_503(fd, ssl); goto done; }
+                        continue;
+                    }
+                    wd_send_500(fd, ssl); goto done;
+                }
                 if (pn == 0) {
                     /* Partial TLS record in the kernel buffer: wait briefly for
                      * the rest, but give up after ~4s so a stalled peer cannot
                      * pin a CPU. A live keep-alive idle (no bytes at all) blocks
                      * inside tls_read_peek's recv() instead, using no CPU. */
-                    if (++peek_retries > 4000) goto done;
+                    if (goIsShuttingDown()) { wd_send_503(fd, ssl); goto done; }
+                    if (++peek_retries > 4000) { wd_send_500(fd, ssl); goto done; }
                     usleep(1000);
                     continue;
                 }
                 peek[pn] = '\0';
                 if (!memchr(peek, '\n', (size_t)pn)) {
-                    if (++peek_retries > 4000) goto done;
+                    if (goIsShuttingDown()) { wd_send_503(fd, ssl); goto done; }
+                    if (++peek_retries > 4000) { wd_send_500(fd, ssl); goto done; }
                     usleep(1000);
                     continue;
                 }
                 peek_retries = 0;
                 char owner[HTTPMIGRATE_TARGET_LEN];
-                if (!parse_owner(peek, (size_t)pn, owner, sizeof(owner))) goto done;
+                if (!parse_owner(peek, (size_t)pn, owner, sizeof(owner))) { wd_send_500(fd, ssl); goto done; }
                 if (strcmp(owner, own) != 0) {
                     relay_https(fd, ssl, pl, owner, relay_sock);
                     ssl = NULL; fd = -1;
@@ -578,13 +727,22 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
                 }
             }
             if (hdr_end >= 0 && len >= hdr_sz + body_target) { framed = 1; break; }
-            if (ensure_cap(&buf, &cap, len + 4096 + 1) != 0) goto done;
+            if (ensure_cap(&buf, &cap, len + 4096 + 1) != 0) { wd_send_500(fd, ssl); goto done; }
             int n = wolfSSL_read(ssl, (char *)(buf + len), (int)(cap - len - 1));
-            if (n <= 0) goto done;
+            if (n <= 0) {
+                /* The recv timeout surfaces as WANT_READ: 503 and close if draining,
+                 * otherwise resume reading this in-flight request. */
+                int werr = wolfSSL_get_error(ssl, n);
+                if (werr == WOLFSSL_ERROR_WANT_READ || werr == WOLFSSL_ERROR_WANT_WRITE) {
+                    if (goIsShuttingDown()) { wd_send_503(fd, ssl); goto done; }
+                    continue;
+                }
+                wd_send_500(fd, ssl); goto done;
+            }
             len += (size_t)n;
-            buf[len] = '\0'; 
+            buf[len] = '\0';
         }
-        if (!framed) goto done;
+        if (!framed) { wd_send_500(fd, ssl); goto done; }
 
         /* [MICROBENCH] top2 (watchdog) = the container has read ALL bytes of the
          * first migrated request (headers + body just fully framed above). We log
@@ -602,7 +760,7 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
         /* Business logic in Go, then write the encrypted response. */
         unsigned char *resp = NULL;
         int resp_len = 0;
-        if (goInvokeHandler(h, buf, (int)req_sz, sc, &resp, &resp_len) != 0) goto done;
+        if (goInvokeHandler(h, buf, (int)req_sz, sc, &resp, &resp_len) != 0) { wd_send_500(fd, ssl); goto done; }
         int off = 0;
         while (off < resp_len) {
             /* One TLS record per call (max TLS 1.3 app-data = 2^14). The
@@ -612,7 +770,7 @@ static void serve_https_conn(int fd, int pipe_fd, wd_https_payload_t *pl,
             int chunk = resp_len - off;
             if (chunk > 16384) chunk = 16384;
             int n = wolfSSL_write(ssl, (const char *)(resp + off), chunk);
-            if (n <= 0) { free(resp); goto done; }
+            if (n <= 0) { free(resp); wd_send_500(fd, ssl); goto done; }
             off += n;
         }
         free(resp);
